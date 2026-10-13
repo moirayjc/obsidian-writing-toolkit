@@ -1,0 +1,8 @@
+node_modules/
+# 用户个人数据与本地备份，不随插件分享
+data.json
+_backup/
+.DS_Store
+# 构建产物：发布时作为 Release 附件上传
+main.js
+*.map
