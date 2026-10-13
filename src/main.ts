@@ -7,6 +7,7 @@ import {
   Plugin,
   TFile,
   TFolder,
+  WorkspaceLeaf,
 } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import {
@@ -87,39 +88,6 @@ interface DailyHistory {
 interface DailyPomodoro {
   count: number;
   words: number;
-}
-
-interface PluginData {
-  settings: WritingToolkitSettings;
-  /** 每日净增（可正可负）：删改会往下拉 */
-  dailyHistory: DailyHistory;
-  /** 每日毛新增（只累加变多的部分）：今日目标与热力图用它 */
-  dailyGrossHistory?: DailyHistory;
-  dailyDurationHistory: DailyHistory;
-  projectHistory: Record<string, DailyHistory>;
-  projectGrossHistory?: Record<string, DailyHistory>;
-  projectDurationHistory: Record<string, DailyHistory>;
-  dailyPomodoroHistory: Record<string, DailyPomodoro>;
-  /** 每日各文件的增量明细（键为日期 → 路径 → 净增），用于事后核对"今天这个数是怎么来的" */
-  dailyFileDeltas?: Record<string, DailyHistory>;
-  /** 编辑台：当前作品根目录（重启后恢复） */
-  workbenchProject: string | null;
-  /** 编辑台：正文 / 资料 视图模式 */
-  workbenchMode: WorkbenchMode;
-  /** 编辑台：各作品的连载状态（键为作品根目录） */
-  workbenchStatus?: Record<string, WorkbenchStatus>;
-  /** 编辑台：切换面板里被隐藏的作品（键为作品根目录） */
-  hiddenProjects?: Record<string, true>;
-  /** 主页：上次停留的页面 */
-  homePage?: HomePage;
-  /** 书架：各作品的自定义封面（作品根目录 → 仓库内图片路径） */
-  projectCovers?: Record<string, string>;
-  /** 书架：卡片网格 / 列表 */
-  libraryView?: LibraryView;
-  /** 各文件最近一次已知字数（键为文件路径），用于跨会话继续算增量 */
-  fileBaselines?: Record<string, number>;
-  /** 上次建立基线档案的时间戳：晚于它的新文件才按「整份内容」计入当天 */
-  baselinesAt?: number;
 }
 
 export default class WritingToolkitPlugin extends Plugin {
@@ -218,7 +186,7 @@ export default class WritingToolkitPlugin extends Plugin {
         wordCountMode: this.settings.wordCountMode,
         showSpeed: this.settings.showSpeed,
       },
-      () => this.saveSettings(),
+      () => void this.saveSettings(),
       {
         onStart: () => this.startPomodoro(),
         onTogglePause: () => this.togglePomodoroPause(),
@@ -321,7 +289,7 @@ export default class WritingToolkitPlugin extends Plugin {
     }
 
     this.addCommand({
-      id: "open-writing-toolkit-sidebar",
+      id: "open-sidebar",
       name: "打开工具箱",
       callback: () => void this.openSidebar(),
     });
@@ -345,7 +313,7 @@ export default class WritingToolkitPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "open-writing-toolkit-settings",
+      id: "open-settings",
       name: "打开设置",
       callback: () => this.openSettings(),
     });
@@ -509,10 +477,10 @@ export default class WritingToolkitPlugin extends Plugin {
 
   onunload() {
     this.unloaded = true;
-    if (this.dailySaveTimer) clearTimeout(this.dailySaveTimer);
-    if (this.snapshotTickTimer) clearInterval(this.snapshotTickTimer);
-    if (this.dayRolloverTimer) clearInterval(this.dayRolloverTimer);
-    if (this.hintHideTimer) clearTimeout(this.hintHideTimer);
+    if (this.dailySaveTimer) window.clearTimeout(this.dailySaveTimer);
+    if (this.snapshotTickTimer) window.clearInterval(this.snapshotTickTimer);
+    if (this.dayRolloverTimer) window.clearInterval(this.dayRolloverTimer);
+    if (this.hintHideTimer) window.clearTimeout(this.hintHideTimer);
     this.immersiveHintEl?.remove();
     // 停掉番茄钟定时器，避免插件禁用/重载后旧定时器继续 tick
     this.pomodoro?.stop();
@@ -522,7 +490,7 @@ export default class WritingToolkitPlugin extends Plugin {
     this.mobileStatusBar?.destroy();
     document.body.classList.remove("wt-status-only-immersive");
     setTypewriterActive(false);
-    this.savePluginData();
+    void this.savePluginData();
   }
 
   setTypewriterMode(on: boolean) {
@@ -707,7 +675,7 @@ export default class WritingToolkitPlugin extends Plugin {
   private showImmersiveHint(): void {
     if (!this.immersiveHintEl) return;
     this.immersiveHintEl.addClass("is-visible");
-    if (this.hintHideTimer) clearTimeout(this.hintHideTimer);
+    if (this.hintHideTimer) window.clearTimeout(this.hintHideTimer);
     this.hintHideTimer = window.setTimeout(() => {
       this.immersiveHintEl?.removeClass("is-visible");
     }, 4000);
@@ -740,7 +708,22 @@ export default class WritingToolkitPlugin extends Plugin {
       this.app.workspace.getRightLeaf(false);
     if (!leaf) return;
     await leaf.setViewState({ type: WRITING_TOOLKIT_SIDEBAR, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    this.revealLeafCompat(leaf);
+  }
+
+  /**
+   * 把视图所在的标签页切到前台；侧边栏收起时先展开。
+   * 用 setActiveLeaf 代替 revealLeaf，以兼容 minAppVersion 1.4.0。
+   */
+  private revealLeafCompat(leaf: WorkspaceLeaf): void {
+    const workspace = this.app.workspace;
+    const root = leaf.getRoot();
+    if (root === workspace.leftSplit && workspace.leftSplit.collapsed) {
+      workspace.leftSplit.expand();
+    } else if (root === workspace.rightSplit && workspace.rightSplit.collapsed) {
+      workspace.rightSplit.expand();
+    }
+    workspace.setActiveLeaf(leaf, { focus: true });
   }
 
   /**
@@ -763,7 +746,7 @@ export default class WritingToolkitPlugin extends Plugin {
       }
     }
     await target.setViewState({ type, active: true });
-    workspace.revealLeaf(target);
+    this.revealLeafCompat(target);
   }
 
   /** 手机端启动时的一次自愈：把开在中间编辑区的视图挪回对应抽屉。 */
@@ -821,7 +804,7 @@ export default class WritingToolkitPlugin extends Plugin {
     }
     const existing = this.app.workspace.getLeavesOfType(WRITING_TOOLKIT_WORKBENCH)[0];
     if (existing) {
-      this.app.workspace.revealLeaf(existing);
+      this.revealLeafCompat(existing);
       return;
     }
     const leaf =
@@ -829,20 +812,20 @@ export default class WritingToolkitPlugin extends Plugin {
       this.app.workspace.getRightLeaf(false);
     if (!leaf) return;
     await leaf.setViewState({ type: WRITING_TOOLKIT_WORKBENCH, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    this.revealLeafCompat(leaf);
   }
 
   /** 打开「主页」：中间主区里的内嵌小软件（书库 / 数据统计 / 资料库）。 */
   async openHome(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(WRITING_TOOLKIT_HOME)[0];
     if (existing) {
-      await this.app.workspace.revealLeaf(existing);
+      this.revealLeafCompat(existing);
       (existing.view as WritingToolkitHome).refreshNow?.();
       return;
     }
     const leaf = this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: WRITING_TOOLKIT_HOME, active: true });
-    await this.app.workspace.revealLeaf(leaf);
+    this.revealLeafCompat(leaf);
   }
 
   /** 主页：上次停留的页面。 */
@@ -1640,7 +1623,7 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   private scheduleDailySave(): void {
-    if (this.dailySaveTimer) clearTimeout(this.dailySaveTimer);
+    if (this.dailySaveTimer) window.clearTimeout(this.dailySaveTimer);
     this.dailySaveTimer = window.setTimeout(() => {
       this.dailySaveTimer = 0;
       this.pruneDailyFileDeltas();
@@ -1789,6 +1772,16 @@ export default class WritingToolkitPlugin extends Plugin {
       console.warn(`写作工具箱：清理了 ${dropped} 条无效字数基线`);
       this.scheduleDailySave();
     }
+  }
+
+  /** 设置页的“立即保存快照”按钮入口 */
+  saveSnapshotNow(): Promise<void> {
+    return this.snapshotManager.saveSnapshotNow();
+  }
+
+  /** 设置页的“打开快照文件夹”按钮入口 */
+  openSnapshotFolder(): Promise<void> {
+    return this.snapshotManager.openSnapshotFolder();
   }
 
   async saveSettings() {

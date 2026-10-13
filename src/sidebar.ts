@@ -7,10 +7,6 @@ import { PomodoroWidget } from "./pomodoroWidget";
 
 export const WRITING_TOOLKIT_SIDEBAR = "writing-toolkit-sidebar";
 
-function formatNumber(n: number): string {
-  return n.toLocaleString("en-US");
-}
-
 export const WORD_COUNT_MODE_LABELS: Record<WordCountMode, string> = {
   webnovel: "番茄模式（含标点）",
   standard: "标准模式（汉字+字母+数字）",
@@ -204,18 +200,19 @@ export class WritingToolkitSidebar extends ItemView {
       const positionMenu = (): void => {
         const rect = input.getBoundingClientRect();
         const minWidth = Math.max(64, rect.width);
-        menu.style.minWidth = `${minWidth}px`;
-        menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
-        menu.style.top = "";
-        menu.style.bottom = "";
+        // 定位数值通过 CSS 变量传入，样式规则在 styles.css 的 .wt-combo-menu 中
+        menu.setCssProps({
+          "--wt-menu-min-width": `${minWidth}px`,
+          "--wt-menu-right": `${Math.max(8, window.innerWidth - rect.right)}px`,
+        });
         // 估算菜单高度（每项约 26px + 内边距），与上下空间比较
         const est = Math.min(220, options.length * 26 + 16);
         const spaceBelow = window.innerHeight - rect.bottom - 8;
         const spaceAbove = rect.top - 8;
         if (spaceBelow >= est || spaceBelow >= spaceAbove) {
-          menu.style.top = `${rect.bottom + 4}px`;
+          menu.setCssProps({ "--wt-menu-top": `${rect.bottom + 4}px`, "--wt-menu-bottom": "auto" });
         } else {
-          menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+          menu.setCssProps({ "--wt-menu-top": "auto", "--wt-menu-bottom": `${window.innerHeight - rect.top + 4}px` });
         }
       };
 

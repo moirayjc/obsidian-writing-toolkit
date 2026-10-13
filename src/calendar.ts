@@ -270,9 +270,11 @@ export class WritingCalendar {
     const gap = pitch >= 12 ? 3 : pitch >= 6 ? 2 : 1;
     const cell = Math.min(MAX_CELL, Math.max(MIN_CELL, pitch - gap));
 
-    this.containerEl.style.setProperty("--wt-heat-cell", `${cell}px`);
-    this.containerEl.style.setProperty("--wt-heat-gap", `${gap}px`);
-    this.containerEl.style.setProperty("--wt-heat-wd", `${WEEKDAY_COL}px`);
+    this.containerEl.setCssProps({
+      "--wt-heat-cell": `${cell}px`,
+      "--wt-heat-gap": `${gap}px`,
+      "--wt-heat-wd": `${WEEKDAY_COL}px`,
+    });
     this.layoutMonthLabels(cell + gap);
   }
 
@@ -292,12 +294,12 @@ export class WritingCalendar {
           : Number.POSITIVE_INFINITY;
         const room = nextX - x - 1.5;
 
-        entry.el.style.display = "";
-        entry.el.style.left = `${x}px`;
+        entry.el.removeClass("is-hidden");
+        entry.el.setCssProps({ "--wt-month-x": `${x}px` });
         entry.el.setText(useShort ? entry.short : entry.full);
         const used = entry.el.getBoundingClientRect().width;
         if (used > room || x < previousRight + 0.5) {
-          entry.el.style.display = "none";
+          entry.el.addClass("is-hidden");
           allFit = false;
           continue;
         }

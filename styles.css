@@ -240,6 +240,7 @@
 
 .wt-heatmap-month {
   position: absolute;
+  left: var(--wt-month-x, 0px);
   bottom: 2px;
   font-size: 9px;
   line-height: 1;
@@ -479,6 +480,10 @@
   position: fixed;
   z-index: 1000;
   display: none;
+  min-width: var(--wt-menu-min-width, 64px);
+  right: var(--wt-menu-right, auto);
+  top: var(--wt-menu-top, auto);
+  bottom: var(--wt-menu-bottom, auto);
   max-height: 220px;
   overflow-y: auto;
   padding: 4px;
@@ -6376,5 +6381,45 @@ body.wt-mobile .wt-mbar.is-on:active {
 .wt-mbar-pomo.is-hidden,
 .wt-mbar-speed.is-hidden,
 .wt-mbar-sep.is-hidden {
+  display: none;
+}
+
+/* === 排版：行高与段距（数值由 typography.ts 写入 body 的 CSS 变量） === */
+:root {
+  --wt-line-height: 1.8;
+  --wt-paragraph-spacing: 0.5em;
+}
+.cm-editor .cm-content {
+  line-height: var(--wt-line-height) !important;
+}
+.cm-editor .cm-line {
+  padding-bottom: var(--wt-paragraph-spacing) !important;
+}
+.markdown-reading-view .markdown-preview-sizer,
+.markdown-rendered .markdown-preview-sizer {
+  line-height: var(--wt-line-height) !important;
+}
+.markdown-reading-view p,
+.markdown-rendered p {
+  margin-bottom: var(--wt-paragraph-spacing) !important;
+}
+
+/* === 快照对比弹窗尺寸（原由 JS 直接写 style） === */
+.modal.wt-diff-modal {
+  width: min(1200px, 96vw);
+  height: 86vh;
+}
+
+/* === 打字机模式：底部留白随光标位置变化（数值由 typewriter.ts 写入 CSS 变量） === */
+/* 需要 !important：Obsidian 会在 .cm-content 上写入内联 padding-bottom，普通类选择器压不过内联值 */
+.cm-content.wt-typewriter-pad {
+  padding-top: 0 !important;
+  padding-bottom: var(--wt-typewriter-pad-bottom, 0px) !important;
+}
+
+/* === 通用隐藏态：状态栏段落、热力图月份等动态显示切换使用 === */
+.wt-stat.is-hidden,
+.wt-sep.is-hidden,
+.wt-heatmap-month.is-hidden {
   display: none;
 }

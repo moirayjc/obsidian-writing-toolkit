@@ -85,16 +85,18 @@ function isStandaloneMarkdownBlock(text: string): boolean {
 function paddingPlugin() {
   return ViewPlugin.fromClass(class {
     view: EditorView;
+    paddingApplied = false;
     constructor(view: EditorView) { this.view = view; }
     destroy() {
-      this.view.contentDOM.style.paddingTop = "";
-      this.view.contentDOM.style.paddingBottom = "";
+      this.view.contentDOM.removeClass("wt-typewriter-pad");
+      this.view.contentDOM.setCssProps({ "--wt-typewriter-pad-bottom": "" });
     }
     update(update: any) {
       if (!typewriterActive) {
-        if (this.view.contentDOM.style.paddingTop || this.view.contentDOM.style.paddingBottom) {
-          this.view.contentDOM.style.paddingTop = "";
-          this.view.contentDOM.style.paddingBottom = "";
+        if (this.paddingApplied) {
+          this.view.contentDOM.removeClass("wt-typewriter-pad");
+          this.view.contentDOM.setCssProps({ "--wt-typewriter-pad-bottom": "" });
+          this.paddingApplied = false;
         }
         return;
       }
@@ -106,8 +108,11 @@ function paddingPlugin() {
       const h = this.view.dom.clientHeight;
       if (!h) return;
       const target = Math.max(0, Math.round(h * typewriterOffset - this.view.defaultLineHeight / 2));
-      this.view.contentDOM.style.paddingTop = "";
-      this.view.contentDOM.style.paddingBottom = `${Math.max(0, h - target)}px`;
+      this.view.contentDOM.addClass("wt-typewriter-pad");
+      this.view.contentDOM.setCssProps({
+        "--wt-typewriter-pad-bottom": `${Math.max(0, h - target)}px`,
+      });
+      this.paddingApplied = true;
     }
   });
 }
@@ -132,15 +137,14 @@ function scrollPlugin() {
       if (!isEditing || !update.docChanged) return;
 
       this.busy = true;
-      const self = this;
-      requestAnimationFrame(function () {
-        self.busy = false;
+      window.requestAnimationFrame(() => {
+        this.busy = false;
         if (!typewriterActive) return;
-        const head = self.view.state.selection.main.head;
-        const h = self.view.dom.clientHeight;
+        const head = this.view.state.selection.main.head;
+        const h = this.view.dom.clientHeight;
         if (!h) return;
-        const margin = Math.max(0, Math.round(h * typewriterOffset - self.view.defaultLineHeight / 2));
-        self.view.dispatch({
+        const margin = Math.max(0, Math.round(h * typewriterOffset - this.view.defaultLineHeight / 2));
+        this.view.dispatch({
           effects: EditorView.scrollIntoView(head, { y: "start", yMargin: margin }),
         });
       });

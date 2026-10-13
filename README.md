@@ -1,5 +1,9 @@
 # Writing Toolkit（写作工具箱）
 
+Writing Toolkit is an Obsidian plugin for writing long-form Chinese web fiction. It provides word counting (three modes), writing speed and daily goals, a Pomodoro timer, automatic draft snapshots with diff and restore, chapter outlines, a project workbench, and writing aids such as focus and typewriter modes.
+
+> **Note:** The interface and default folder names are in Chinese. Settings and labels are not translated.
+
 为中文网络小说、长篇写作准备的 Obsidian 插件。
 
 ## 功能
@@ -36,3 +40,18 @@ npm run build    # 生产构建（类型检查后输出 main.js）
 ## 许可证
 
 [MIT](LICENSE)
+
+---
+
+## English summary
+
+- **Word count**: three modes (Chinese-friendly "Tomato" mode counting all non-blank characters, a "Standard" mode, and a native word-based mode). YAML frontmatter is skipped.
+- **Writing speed and goals**: speed is based on words added today; progress is shown in the status bar.
+- **Pomodoro timer**: focus/break cycles with optional automatic snapshots.
+- **Snapshots**: automatic draft snapshots by interval and idle time, with diff view and restore.
+- **Outlines**: chapter outlines are stored in separate sidecar files, leaving the manuscript's YAML untouched.
+- **Workbench and home**: manage chapters by project; chapter numbering shifts forward automatically after a deletion.
+- **Writing aids**: focus mode, typewriter mode, paragraph highlight, half-width punctuation fix, and hard line breaks on Enter.
+- **Mobile**: uses a mobile layout with a status bar and drawer panels.
+
+**Installation:** Turn off Restricted mode in Settings → Community plugins, then install and enable "Writing Toolkit".

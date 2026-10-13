@@ -42,7 +42,7 @@ export class TextPromptModal extends Modal {
       );
 
     // 弹窗完全渲染后再聚焦输入框
-    setTimeout(() => {
+    window.setTimeout(() => {
       this.inputEl?.focus();
     }, 50);
   }

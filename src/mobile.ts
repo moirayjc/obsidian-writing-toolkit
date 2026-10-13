@@ -33,7 +33,7 @@ export interface MenuPoint {
 
 /** 在指定坐标打开菜单：长按（触屏）与右键（桌面）共用。 */
 export function showMenuAt(menu: Menu, pt: MenuPoint): void {
-  menu.showAtPosition({ x: pt.x, y: pt.y } as never);
+  menu.showAtPosition({ x: pt.x, y: pt.y });
 }
 
 // 长按出菜单后，抑制紧随其后的 click，避免「长按打开菜单又顺手打开了文件」。
@@ -116,7 +116,7 @@ export function bindContextMenu(
     el.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      onOpen({ x: (e as MouseEvent).clientX, y: (e as MouseEvent).clientY });
+      onOpen({ x: e.clientX, y: e.clientY });
     });
   }
 }

@@ -149,14 +149,14 @@ export function relativeTime(ts: number): string {
 /** 目录名开头的排序码（如「1-1-5-2 」「P3.2-」）只是用来排顺序，展示时去掉。 */
 export function displayFolderName(name: string): string {
   const cleaned = name
-    .replace(/^[A-Za-z]{0,2}\d+(?:[.\-]\d+)*[\s.\-]+\s*/, "")
+    .replace(/^[A-Za-z]{0,2}\d+(?:[.-]\d+)*[\s.-]+\s*/, "")
     .trim();
   return cleaned || name;
 }
 
 /** 名字是否已经以排序码开头（1-1-5-4 / P3.4 / P4 这种）。 */
 function startsWithOrderCode(name: string): boolean {
-  return /^[A-Za-z]{0,2}\d+(?:[.\-]\d+)*(\s|[.\-·]|$)/.test(name);
+  return /^[A-Za-z]{0,2}\d+(?:[.-]\d+)*(\s|[.·-]|$)/.test(name);
 }
 
 function joinPath(folder: string, name: string): string {
@@ -184,7 +184,7 @@ export function displayProjectName(name: string): string {
 export function parseResourceName(base: string): { tag: string | null; name: string } {
   let tag: string | null = null;
   let rest = base;
-  const m = /^[【\[]([^】\]]{1,8})[】\]]\s*(.*)$/.exec(base);
+  const m = /^[【[]([^】\]]{1,8})[】\]]\s*(.*)$/.exec(base);
   if (m) {
     tag = m[1];
     rest = m[2];
@@ -2036,9 +2036,9 @@ export class WritingToolkitWorkbench extends ItemView {
     >();
     for (const child of root.children) {
       if (!(child instanceof TFolder)) continue;
-      const m = /^([A-Za-z]{0,2}\d+(?:[.\-]\d+)*)[\s.\-·]/.exec(child.name);
+      const m = /^([A-Za-z]{0,2}\d+(?:[.-]\d+)*)[\s.·-]/.exec(child.name);
       if (!m) continue;
-      const tail = /^(.*[.\-])(\d+)$/.exec(m[1]);
+      const tail = /^(.*[.-])(\d+)$/.exec(m[1]);
       if (!tail) continue;
       const key = tail[1];
       const fam = families.get(key) ?? { head: key, last: 0, count: 0 };
@@ -2081,7 +2081,6 @@ export class WritingToolkitWorkbench extends ItemView {
   ): Promise<void> {
     const file = entry.file;
     if (target.path === entry.volumePath) return;
-    const oldPath = file.path;
     const newPath = joinPath(target.path, file.name);
     if (this.app.vault.getAbstractFileByPath(newPath)) {
       new Notice(`「${displayFolderName(target.name)}」里已有同名文件`);
@@ -2384,11 +2383,11 @@ export class WritingToolkitWorkbench extends ItemView {
     const box = this.outlineEditorEl;
     if (!box) return;
     const input =
-      ta ?? (box.querySelector("textarea") as HTMLTextAreaElement | null);
+      ta ?? (box.querySelector<HTMLTextAreaElement>("textarea"));
     if (!input) return;
     const state =
       stateEl ??
-      (box.querySelector(".wt-wb-outline-state") as HTMLElement | null);
+      box.querySelector<HTMLElement>(".wt-wb-outline-state");
     await this.saveOutlineValue(input.value, state ?? undefined);
   }
 

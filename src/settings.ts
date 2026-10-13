@@ -81,8 +81,11 @@ export const DAILY_DISPLAY_MODE_LABELS: Record<DailyDisplayMode, string> = {
   duration: "时长",
 };
 
-export class WritingToolkitSettingTab extends PluginSettingTab {
-  plugin: Plugin & {
+/**
+ * 设置页需要的插件接口。刻意不与 Obsidian 的 Plugin 类型交叉，
+ * 避免 Plugin.settings（1.13.0 才有）被官方扫描误判为不兼容 API。
+ */
+export interface WritingToolkitPluginLike {
     settings: WritingToolkitSettings;
     dailyHistory: DailyHistory;
     saveSettings: () => Promise<void>;
@@ -99,15 +102,18 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
     repairProjectStatPaths: () => Promise<void>;
     updateStatusBarVisibility: () => void;
     refreshMobileStatusBar: () => void;
-  };
+}
+
+export class WritingToolkitSettingTab extends PluginSettingTab {
+  private wt: WritingToolkitPluginLike;
 
   private activeTabIndex: number = 0;
   private tabEls: HTMLElement[] = [];
   private panelEls: HTMLElement[] = [];
 
-  constructor(app: App, plugin: any) {
-    super(app, plugin);
-    this.plugin = plugin;
+  constructor(app: App, plugin: WritingToolkitPluginLike) {
+    super(app, plugin as unknown as Plugin);
+    this.wt = plugin;
   }
 
   /** 设置页里的一张纸卡：标题在卡内，与工具箱、主页同一套语言。 */
@@ -155,12 +161,12 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setDesc("状态栏进度条的目标值")
             .addText((text) =>
               text
-                .setValue(String(this.plugin.settings.dailyGoal))
+                .setValue(String(this.wt.settings.dailyGoal))
                 .onChange(async (val) => {
                   const num = parseInt(val, 10);
                   if (num > 0) {
-                    this.plugin.settings.dailyGoal = num;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.dailyGoal = num;
+                    await this.wt.saveSettings();
                   }
                 })
             );
@@ -172,11 +178,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               for (const [key, label] of Object.entries(WORD_COUNT_MODE_LABELS)) {
                 dd.addOption(key, label);
               }
-              dd.setValue(this.plugin.settings.wordCountMode);
+              dd.setValue(this.wt.settings.wordCountMode);
               dd.onChange(async (val) => {
-                this.plugin.settings.wordCountMode = val as WordCountMode;
-                this.plugin.setWordCountMode(val as WordCountMode);
-                await this.plugin.saveSettings();
+                this.wt.settings.wordCountMode = val as WordCountMode;
+                this.wt.setWordCountMode(val as WordCountMode);
+                await this.wt.saveSettings();
               });
             });
 
@@ -185,10 +191,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setDesc("在状态栏显示实时码字速度")
             .addToggle((toggle) =>
               toggle
-                .setValue(this.plugin.settings.showSpeed)
+                .setValue(this.wt.settings.showSpeed)
                 .onChange(async (value) => {
-                  this.plugin.settings.showSpeed = value;
-                  await this.plugin.saveSettings();
+                  this.wt.settings.showSpeed = value;
+                  await this.wt.saveSettings();
                 })
             );
 
@@ -199,9 +205,9 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               for (const [key, label] of Object.entries(DAILY_DISPLAY_MODE_LABELS)) {
                 dropdown.addOption(key, label);
               }
-              dropdown.setValue(this.plugin.settings.dailyDisplayMode).onChange(async (value) => {
-                this.plugin.settings.dailyDisplayMode = value as DailyDisplayMode;
-                await this.plugin.saveSettings();
+              dropdown.setValue(this.wt.settings.dailyDisplayMode).onChange(async (value) => {
+                this.wt.settings.dailyDisplayMode = value as DailyDisplayMode;
+                await this.wt.saveSettings();
               });
             });
 
@@ -210,11 +216,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setDesc("常规编辑时右下角状态栏保持隐藏，由侧栏统一承载；进入沉浸模式时自动显现")
             .addToggle((toggle) =>
               toggle
-                .setValue(this.plugin.settings.statusBarOnlyImmersive)
+                .setValue(this.wt.settings.statusBarOnlyImmersive)
                 .onChange(async (value) => {
-                  this.plugin.settings.statusBarOnlyImmersive = value;
-                  this.plugin.updateStatusBarVisibility();
-                  await this.plugin.saveSettings();
+                  this.wt.settings.statusBarOnlyImmersive = value;
+                  this.wt.updateStatusBarVisibility();
+                  await this.wt.saveSettings();
                 })
             );
 
@@ -225,11 +231,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             )
             .addToggle((toggle) =>
               toggle
-                .setValue(this.plugin.settings.mobileStatusBar)
+                .setValue(this.wt.settings.mobileStatusBar)
                 .onChange(async (value) => {
-                  this.plugin.settings.mobileStatusBar = value;
-                  this.plugin.refreshMobileStatusBar();
-                  await this.plugin.saveSettings();
+                  this.wt.settings.mobileStatusBar = value;
+                  this.wt.refreshMobileStatusBar();
+                  await this.wt.saveSettings();
                 })
             );
 
@@ -239,7 +245,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .addButton((button) =>
               button
                 .setButtonText("检查并修复")
-                .onClick(() => void this.plugin.repairProjectStatPaths())
+                .onClick(() => void this.wt.repairProjectStatPaths())
             );
 
           this.group("番茄钟", section, (el) => {
@@ -249,11 +255,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(5, 120, 5)
-                  .setValue(this.plugin.settings.pomodoroFocusMinutes)
+                  .setValue(this.wt.settings.pomodoroFocusMinutes)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.pomodoroFocusMinutes = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.pomodoroFocusMinutes = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -263,11 +269,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(0, 30, 1)
-                  .setValue(this.plugin.settings.pomodoroBreakMinutes)
+                  .setValue(this.wt.settings.pomodoroBreakMinutes)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.pomodoroBreakMinutes = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.pomodoroBreakMinutes = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -277,11 +283,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(2, 8, 1)
-                  .setValue(this.plugin.settings.pomodoroLongBreakEvery)
+                  .setValue(this.wt.settings.pomodoroLongBreakEvery)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.pomodoroLongBreakEvery = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.pomodoroLongBreakEvery = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -290,11 +296,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(5, 60, 5)
-                  .setValue(this.plugin.settings.pomodoroLongBreakMinutes)
+                  .setValue(this.wt.settings.pomodoroLongBreakMinutes)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.pomodoroLongBreakMinutes = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.pomodoroLongBreakMinutes = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -303,10 +309,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setDesc("每个番茄完成时自动保存一次当前草稿快照")
               .addToggle((toggle) =>
                 toggle
-                  .setValue(this.plugin.settings.pomodoroAutoSnapshot)
+                  .setValue(this.wt.settings.pomodoroAutoSnapshot)
                   .onChange(async (value) => {
-                    this.plugin.settings.pomodoroAutoSnapshot = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.pomodoroAutoSnapshot = value;
+                    await this.wt.saveSettings();
                   })
               );
           });
@@ -321,11 +327,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setDesc("光标保持在上半屏，命令面板或快捷键切换")
               .addToggle((toggle) =>
                 toggle
-                  .setValue(this.plugin.settings.typewriterMode)
+                  .setValue(this.wt.settings.typewriterMode)
                   .onChange(async (value) => {
-                    this.plugin.settings.typewriterMode = value;
-                    this.plugin.setTypewriterMode(value);
-                    await this.plugin.saveSettings();
+                    this.wt.settings.typewriterMode = value;
+                    this.wt.setTypewriterMode(value);
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -335,13 +341,13 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(20, 70, 5)
-                  .setValue(this.plugin.settings.typewriterOffset * 100)
+                  .setValue(this.wt.settings.typewriterOffset * 100)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
                     const offset = value / 100;
-                    this.plugin.settings.typewriterOffset = offset;
-                    this.plugin.setTypewriterOffset(offset);
-                    await this.plugin.saveSettings();
+                    this.wt.settings.typewriterOffset = offset;
+                    this.wt.setTypewriterOffset(offset);
+                    await this.wt.saveSettings();
                   })
               );
           });
@@ -352,10 +358,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setName("沉浸模式")
             .setDesc("隐藏外围界面，按 Esc 退出")
             .addToggle((toggle) =>
-              toggle.setValue(this.plugin.settings.immersiveMode).onChange(async (value) => {
-                this.plugin.settings.immersiveMode = value;
-                this.plugin.setImmersiveMode(value);
-                await this.plugin.saveSettings();
+              toggle.setValue(this.wt.settings.immersiveMode).onChange(async (value) => {
+                this.wt.settings.immersiveMode = value;
+                this.wt.setImmersiveMode(value);
+                await this.wt.saveSettings();
               })
             );
 
@@ -363,10 +369,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setName("高亮当前段落")
             .setDesc("突出显示当前编辑段落")
             .addToggle((toggle) =>
-              toggle.setValue(this.plugin.settings.immersiveParagraphHighlight).onChange(async (value) => {
-                this.plugin.settings.immersiveParagraphHighlight = value;
-                this.plugin.setParagraphHighlight(value);
-                await this.plugin.saveSettings();
+              toggle.setValue(this.wt.settings.immersiveParagraphHighlight).onChange(async (value) => {
+                this.wt.settings.immersiveParagraphHighlight = value;
+                this.wt.setParagraphHighlight(value);
+                await this.wt.saveSettings();
               })
             );
 
@@ -375,11 +381,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setDesc("输入中文左引号、括号和书名号时自动补全；英文标点不受影响")
             .addToggle((toggle) =>
               toggle
-                .setValue(this.plugin.settings.punctuationAssist)
+                .setValue(this.wt.settings.punctuationAssist)
                 .onChange(async (value) => {
-                  this.plugin.settings.punctuationAssist = value;
-                  this.plugin.setPunctuationAssist(value);
-                  await this.plugin.saveSettings();
+                  this.wt.settings.punctuationAssist = value;
+                  this.wt.setPunctuationAssist(value);
+                  await this.wt.saveSettings();
                 })
             );
 
@@ -388,11 +394,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setDesc("按一次回车直接插入段落分隔（空行），等同常规 Markdown 编辑器（如 Typora）的一次回车；Shift+Enter 仍为软换行，列表/标题/引用/代码块内保持 Obsidian 默认行为")
             .addToggle((toggle) =>
               toggle
-                .setValue(this.plugin.settings.hardBreakOnEnter)
+                .setValue(this.wt.settings.hardBreakOnEnter)
                 .onChange(async (value) => {
-                  this.plugin.settings.hardBreakOnEnter = value;
-                  this.plugin.setHardBreakOnEnter(value);
-                  await this.plugin.saveSettings();
+                  this.wt.settings.hardBreakOnEnter = value;
+                  this.wt.setHardBreakOnEnter(value);
+                  await this.wt.saveSettings();
                 })
             );
 
@@ -401,10 +407,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setDesc("编辑区按行显示虚线标线（像信纸），随行高对齐；空行即段落分隔处自动断开，内容显示不受影响")
             .addToggle((toggle) =>
               toggle
-                .setValue(this.plugin.settings.letterPaperMode)
+                .setValue(this.wt.settings.letterPaperMode)
                 .onChange(async (value) => {
-                  this.plugin.settings.letterPaperMode = value;
-                  await this.plugin.saveSettings();
+                  this.wt.settings.letterPaperMode = value;
+                  await this.wt.saveSettings();
                 })
             );
 
@@ -412,10 +418,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             .setName("海明威模式")
             .setDesc("锁定已有内容，只能向后追加写作，防回改；关闭后恢复自由编辑")
             .addToggle((toggle) =>
-              toggle.setValue(this.plugin.settings.hemingwayMode).onChange(async (value) => {
-                this.plugin.settings.hemingwayMode = value;
-                this.plugin.setHemingwayMode(value);
-                await this.plugin.saveSettings();
+              toggle.setValue(this.wt.settings.hemingwayMode).onChange(async (value) => {
+                this.wt.settings.hemingwayMode = value;
+                this.wt.setHemingwayMode(value);
+                await this.wt.saveSettings();
               })
             );
 
@@ -426,11 +432,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(1.2, 2.5, 0.1)
-                  .setValue(this.plugin.settings.lineHeight)
+                  .setValue(this.wt.settings.lineHeight)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.lineHeight = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.lineHeight = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -440,11 +446,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(0, 1.5, 0.1)
-                  .setValue(this.plugin.settings.paragraphSpacing)
+                  .setValue(this.wt.settings.paragraphSpacing)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.paragraphSpacing = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.paragraphSpacing = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -453,10 +459,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setDesc("正文段首缩进两字符（符合中文习惯）；纯视觉缩进，不向文档写入空格，不会被误删；标题/列表/引用/代码块不缩进")
               .addToggle((toggle) =>
                 toggle
-                  .setValue(this.plugin.settings.paragraphIndent)
+                  .setValue(this.wt.settings.paragraphIndent)
                   .onChange(async (value) => {
-                    this.plugin.settings.paragraphIndent = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.paragraphIndent = value;
+                    await this.wt.saveSettings();
                   })
               );
           });
@@ -471,10 +477,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setDesc("写作会话结束、连续写作或停止输入时自动保存当前草稿快照")
               .addToggle((toggle) =>
                 toggle
-                  .setValue(this.plugin.settings.snapshotEnabled)
+                  .setValue(this.wt.settings.snapshotEnabled)
                   .onChange(async (value) => {
-                    this.plugin.settings.snapshotEnabled = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.snapshotEnabled = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -483,10 +489,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setDesc("相对库根目录的文件夹；默认 .wt-snapshots（隐藏，不显示在侧栏），如需随坚果云同步请改为普通文件夹")
               .addText((text) =>
                 text
-                  .setValue(this.plugin.settings.snapshotFolder)
+                  .setValue(this.wt.settings.snapshotFolder)
                   .onChange(async (value) => {
-                    this.plugin.settings.snapshotFolder = value.trim();
-                    await this.plugin.saveSettings();
+                    this.wt.settings.snapshotFolder = value.trim();
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -496,11 +502,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(1, 60, 1)
-                  .setValue(this.plugin.settings.snapshotIntervalMinutes)
+                  .setValue(this.wt.settings.snapshotIntervalMinutes)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.snapshotIntervalMinutes = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.snapshotIntervalMinutes = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -510,11 +516,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(1, 15, 1)
-                  .setValue(this.plugin.settings.snapshotIdleMinutes)
+                  .setValue(this.wt.settings.snapshotIdleMinutes)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.snapshotIdleMinutes = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.snapshotIdleMinutes = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -524,11 +530,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addSlider((slider) =>
                 slider
                   .setLimits(0, 100, 5)
-                  .setValue(this.plugin.settings.snapshotMaxPerFile)
+                  .setValue(this.wt.settings.snapshotMaxPerFile)
                   .setDynamicTooltip()
                   .onChange(async (value) => {
-                    this.plugin.settings.snapshotMaxPerFile = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.snapshotMaxPerFile = value;
+                    await this.wt.saveSettings();
                   })
               );
 
@@ -537,10 +543,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setDesc("只对路径含「正文草稿」的文件自动快照；手动快照不受限制")
               .addToggle((toggle) =>
                 toggle
-                  .setValue(this.plugin.settings.snapshotOnlyDrafts)
+                  .setValue(this.wt.settings.snapshotOnlyDrafts)
                   .onChange(async (value) => {
-                    this.plugin.settings.snapshotOnlyDrafts = value;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.snapshotOnlyDrafts = value;
+                    await this.wt.saveSettings();
                   })
               );
           });
@@ -551,7 +557,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setDesc("为当前打开的笔记保存一份快照（任意 Markdown 文件均可）")
               .addButton((button) =>
                 button.setButtonText("保存当前快照").onClick(async () => {
-                  await this.plugin.saveSnapshotNow();
+                  await this.wt.saveSnapshotNow();
                 })
               );
 
@@ -559,7 +565,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .setName("打开快照文件夹")
               .addButton((button) =>
                 button.setButtonText("在系统文件管理器中打开").onClick(async () => {
-                  await this.plugin.openSnapshotFolder();
+                  await this.wt.openSnapshotFolder();
                 })
               );
           });
@@ -575,10 +581,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addText((text) =>
                 text
                   .setPlaceholder("正文草稿, 正文, 章节, 草稿, 卷, draft, chapter")
-                  .setValue(this.plugin.settings.draftKeywords ?? "")
+                  .setValue(this.wt.settings.draftKeywords ?? "")
                   .onChange(async (val) => {
-                    this.plugin.settings.draftKeywords = val.trim();
-                    await this.plugin.saveSettings();
+                    this.wt.settings.draftKeywords = val.trim();
+                    await this.wt.saveSettings();
                   })
               );
           });
@@ -591,10 +597,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 dd
                   .addOption("sidecar", "独立伴生文件（.wt-outlines，推荐）")
                   .addOption("frontmatter", "文档头部 Frontmatter（传统方式）")
-                  .setValue(this.plugin.settings.outlineStorageMode ?? "sidecar")
+                  .setValue(this.wt.settings.outlineStorageMode ?? "sidecar")
                   .onChange(async (val) => {
-                    this.plugin.settings.outlineStorageMode = val as any;
-                    await this.plugin.saveSettings();
+                    this.wt.settings.outlineStorageMode = val as any;
+                    await this.wt.saveSettings();
                   })
               );
           });
@@ -610,11 +616,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addText((text) =>
                 text
                   .setPlaceholder(DEFAULT_SETTINGS.newProjectFolder)
-                  .setValue(this.plugin.settings.newProjectFolder ?? "")
+                  .setValue(this.wt.settings.newProjectFolder ?? "")
                   .onChange(async (val) => {
-                    this.plugin.settings.newProjectFolder =
+                    this.wt.settings.newProjectFolder =
                       val.trim() || DEFAULT_SETTINGS.newProjectFolder;
-                    await this.plugin.saveSettings();
+                    await this.wt.saveSettings();
                   })
               );
           });
@@ -625,11 +631,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               .addText((text) =>
                 text
                   .setPlaceholder(DEFAULT_SETTINGS.sharedLibraryFolder)
-                  .setValue(this.plugin.settings.sharedLibraryFolder ?? "")
+                  .setValue(this.wt.settings.sharedLibraryFolder ?? "")
                   .onChange(async (val) => {
-                    this.plugin.settings.sharedLibraryFolder =
+                    this.wt.settings.sharedLibraryFolder =
                       val.trim() || DEFAULT_SETTINGS.sharedLibraryFolder;
-                    await this.plugin.saveSettings();
+                    await this.wt.saveSettings();
                   })
               );
           });

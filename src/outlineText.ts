@@ -213,7 +213,7 @@ export async function loadOutline(
     if (parsed.hasKey && parsed.value.trim() !== "") {
       return { value: parsed.value, hasKey: true, isLegacyFm: true };
     }
-  } catch (e) {
+  } catch {
     /* ignore */
   }
 

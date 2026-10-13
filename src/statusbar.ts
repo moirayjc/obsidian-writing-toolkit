@@ -93,8 +93,8 @@ export class WritingStatusBar {
   setState(state: StatusBarState): void {
     this.state = state;
     const show = state.showSpeed;
-    this.speedEl.style.display = show ? "" : "none";
-    this.speedSepEl.style.display = show ? "" : "none";
+    this.speedEl.toggleClass("is-hidden", !show);
+    this.speedSepEl.toggleClass("is-hidden", !show);
     if (this.lastDocCount >= 0) this.refresh(this.lastDocCount);
   }
 
@@ -168,8 +168,8 @@ export class WritingStatusBar {
   setPomodoro(state: PomodoroState | null): void {
     this.pomodoroPhase = state?.phase ?? "idle";
     this.pomodoroPaused = state?.paused ?? false;
-    this.pomoSepEl.style.display = "";
-    this.pomoEl.style.display = "";
+    this.pomoSepEl.removeClass("is-hidden");
+    this.pomoEl.removeClass("is-hidden");
     if (!state || state.phase === "idle") {
       this.pomoEl.setText("🍅 开始");
       this.pomoEl.setAttr("title", "开始番茄钟");
@@ -264,8 +264,6 @@ export class WritingStatusBar {
   }
 
   private refresh(wordCount: number): void {
-    const now = Date.now();
-
     let speed = 0;
     if (this.speedSamples.length >= 2) {
       const first = this.speedSamples[0];
@@ -288,8 +286,8 @@ export class WritingStatusBar {
     this.wordCountEl.setText(wordCountText);
     this.speedEl.setText(formatNumber(speed) + "字/时");
     const show = this.state.showSpeed;
-    this.speedEl.style.display = show ? "" : "none";
-    this.speedSepEl.style.display = show ? "" : "none";
+    this.speedEl.toggleClass("is-hidden", !show);
+    this.speedSepEl.toggleClass("is-hidden", !show);
     this.goalEl.setText(
       "目标 " + formatNumber(this.state.dailyGross) +
         "/" + formatNumber(this.state.dailyGoal)

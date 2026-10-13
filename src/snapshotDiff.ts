@@ -386,8 +386,7 @@ class SnapshotDiffModal extends Modal {
   onOpen(): void {
     const { modalEl, contentEl } = this;
     modalEl.addClass("wt-diff-modal");
-    modalEl.style.width = "min(1200px, 96vw)";
-    modalEl.style.height = "86vh";
+    // 弹窗尺寸由 styles.css 的 .wt-diff-modal 控制
 
     const header = contentEl.createDiv({ cls: "wt-diff-header" });
     header.createEl("div", { cls: "wt-diff-title", text: `对比 · ${this.snapshotName}` });
