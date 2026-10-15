@@ -1,6 +1,7 @@
 import { Menu, Notice, TFile, setIcon } from "obsidian";
 import { OutlineEditorModal } from "./outlineModal";
 import {
+  DEFAULT_CHAPTER_EXCLUDE_NAMES,
   DEFAULT_DRAFT_KEYWORDS,
   attachOutlineEditing,
   countChars,
@@ -127,7 +128,9 @@ export class ChapterOutlinePanel {
     if (!(active instanceof TFile)) return;
     const snapshotFolder = this.plugin.settings?.snapshotFolder ?? ".wt-snapshots";
     const keywords = this.plugin.settings?.draftKeywords ?? DEFAULT_DRAFT_KEYWORDS;
-    if (!isDraftPath(active.path, snapshotFolder, keywords)) {
+    const excludeNames =
+      this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
+    if (!isDraftPath(active.path, snapshotFolder, keywords, excludeNames)) {
       // 打开非章节文件（设定集、大纲、人物卡等），保留当前章纲，绝对不清空！
       return;
     }
@@ -201,7 +204,12 @@ export class ChapterOutlinePanel {
     }
     const active = app.workspace.getActiveFile();
     const keywords = this.plugin.settings?.draftKeywords ?? DEFAULT_DRAFT_KEYWORDS;
-    if (active instanceof TFile && isDraftPath(active.path, snapshotFolder, keywords)) {
+    const excludeNames =
+      this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
+    if (
+      active instanceof TFile &&
+      isDraftPath(active.path, snapshotFolder, keywords, excludeNames)
+    ) {
       return active;
     }
     return null;
@@ -212,11 +220,13 @@ export class ChapterOutlinePanel {
     if (!folder) return [file];
     const snapshotFolder = this.plugin.settings?.snapshotFolder ?? ".wt-snapshots";
     const keywords = this.plugin.settings?.draftKeywords ?? DEFAULT_DRAFT_KEYWORDS;
+    const excludeNames =
+      this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
     const out = (folder.children ?? []).filter(
       (c: unknown): c is TFile =>
         c instanceof TFile &&
         c.extension === "md" &&
-        isDraftPath(c.path, snapshotFolder, keywords)
+        isDraftPath(c.path, snapshotFolder, keywords, excludeNames)
     );
     out.sort((a, b) => naturalCompare(a.basename, b.basename));
     return out.length > 0 ? out : [file];

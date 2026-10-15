@@ -1,3 +1,5 @@
+import { stripInlineFormatting } from "./formatWrap";
+
 export type WordCountMode = 'webnovel' | 'standard' | 'native';
 
 const HAN_CHAR = /\p{Script=Han}/u;
@@ -52,7 +54,8 @@ export function countNative(text: string): number {
 }
 
 export function getWordCount(text: string, mode: WordCountMode): number {
-  const body = stripFrontmatter(text);
+  // 先剥 frontmatter，再剥行内格式记号（编辑工具条产物）：格式符号不虚增字数
+  const body = stripInlineFormatting(stripFrontmatter(text));
   switch (mode) {
     case 'webnovel': return countWebnovel(body);
     case 'standard': return countStandard(body);

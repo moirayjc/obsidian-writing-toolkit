@@ -1,5 +1,6 @@
 import {
   Editor,
+  editorInfoField,
   FileSystemAdapter,
   MarkdownView,
   Notice,
@@ -15,7 +16,8 @@ import {
   WritingToolkitSettings,
   WritingToolkitSettingTab,
 } from "./settings";
-import { injectTypography, removeTypography } from "./typography";
+import { applyCachedThemeTone, injectTypography, removeTypography } from "./typography";
+import { syncThemeSnippet } from "./themeSnippet";
 import {
   buildTypewriterExtensions,
   setTypewriterActive,
@@ -31,6 +33,28 @@ import {
   setHemingway,
   setHemingwayDesired,
 } from "./hemingway";
+import { buildFormatToolbar, applyFormatOnView, formatToolbarDiag } from "./formatToolbar";
+import { FormatKind } from "./formatWrap";
+import {
+  AnchorLocator,
+  formatTimestamp,
+  nextCommentId,
+  LOCATE_VIA_LABELS,
+  WtComment,
+  buildAgentPrompt,
+  docPathForSidecar,
+  isSidecarPath,
+  locateAll,
+  paragraphAt,
+  sidecarPathFor,
+} from "./comments";
+import { CommentStore } from "./commentStore";
+import { buildCommentExtensions, dispatchCommentRefresh } from "./commentDecor";
+import {
+  type CommentPanelHost,
+  type CommentPanelItem,
+  type CommentPanelModel,
+} from "./commentView";
 import { WRITING_TOOLKIT_SIDEBAR, WritingToolkitSidebar } from "./sidebar";
 import { migrateOutlineSidecar } from "./outlineText";
 import {
@@ -55,7 +79,7 @@ import {
 import { SnapshotEntry } from "./snapshot";
 import { DraftSnapshotManager } from "./snapshot";
 import { showSnapshotDiff } from "./snapshotDiff";
-import { ConfirmModal } from "./promptModal";
+import { CommentDraftModal, ConfirmModal } from "./promptModal";
 import { showNewProjectModal } from "./newProject";
 import {
   PomodoroTimer,
@@ -90,7 +114,7 @@ interface DailyPomodoro {
   words: number;
 }
 
-export default class WritingToolkitPlugin extends Plugin {
+export default class WritingToolkitPlugin extends Plugin implements CommentPanelHost {
   settings!: WritingToolkitSettings;
   dailyHistory: DailyHistory = {};
   /** 每日毛新增（不会为负）：今日目标、热力图用它，避免"重写一天显示 0 或负数" */
@@ -128,6 +152,13 @@ export default class WritingToolkitPlugin extends Plugin {
   private projectIndexCache: NovelProject[] | null = null;
   /** 正文章节路径集合缓存 */
   private chapterPathCache: Set<string> | null = null;
+  /** 上次已生效的章节识别设置（变化时让作品列表立即重建） */
+  private lastDraftKeywords: string | null = null;
+  private lastChapterExcludeNames: string | null = null;
+  /** 上次已生效的编辑工具条设置（开关/范围变化时让已浮出的工具条即时退出） */
+  private lastFormatToolbarSig: string | null = null;
+  /** 上次已生效的批注总开关（变化时刷新正文里的批注痕迹） */
+  private lastCommentsEnabled: boolean | null = null;
   dailyTotal: number = 0;
   /** 今日毛新增（只累加变多的部分） */
   dailyGross: number = 0;
@@ -161,9 +192,15 @@ export default class WritingToolkitPlugin extends Plugin {
   private lastExternalSyncText: string | null = null;
   /** 待忽略统计的程序化编辑（快照恢复/应用），按编辑器和最终文本精确匹配。 */
   private pendingProgrammaticEdit: { editor: Editor; text: string } | null = null;
+  /** 批注：批注文件的读写与缓存（按源文档路径） */
+  private commentStore!: CommentStore;
 
   async onload() {
+    // 必须在第一个 await 之前同步执行：先套上上次的配色主题，避免首帧闪成暖纸
+    applyCachedThemeTone();
     await this.loadPluginData();
+    // 让片段文件与当前设置一致（首次安装、或设置被外部修改后都会生效）
+    void syncThemeSnippet(this.app, this.settings.themeTone);
 
     // Obsidian 手机端自动套用手机版布局；桌面端可用命令手动预览。
     applyPlatformMobileClass();
@@ -241,6 +278,27 @@ export default class WritingToolkitPlugin extends Plugin {
     this.registerEditorExtension(buildPunctuationExtensions());
     this.registerEditorExtension(buildHardBreakExtensions());
     this.registerEditorExtension(buildHemingwayExtensions());
+    this.commentStore = new CommentStore(this.app);
+    this.registerEditorExtension(
+      buildFormatToolbar({
+        isEnabled: () => this.settings.formatToolbarEnabled,
+        allowsPath: (path) => this.formatToolbarAllowed(path),
+        commentsEnabled: () => this.settings.commentsEnabled,
+        commentBubbleEverywhere: () => this.settings.commentBubbleEverywhere,
+        onAddComment: (view) => this.addCommentForView(view),
+      })
+    );
+    // 批注痕迹：原文底色标记 + 行尾脚注序号。编辑器里不弹任何浮层
+    // （跟随光标的卡片会随正文滚动而「跳」），点标记只是跳到侧栏对应卡片。
+    this.registerEditorExtension(
+      buildCommentExtensions({
+        enabled: () => this.settings.commentsEnabled,
+        getComments: (path) => this.commentStore.getCached(path),
+        ensureLoaded: (path) => this.primeComments(path),
+        onRevealComment: (path, comment) =>
+          this.revealCommentInPanel(path, comment.id),
+      })
+    );
     this.pomodoro = new PomodoroTimer(
       () => this.pomodoroConfig(),
       () => this.getPomodoroCount(),
@@ -307,12 +365,6 @@ export default class WritingToolkitPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "open-chapter-outline",
-      name: "打开章纲面板（当前章节）",
-      callback: () => void this.openChapterOutline(),
-    });
-
-    this.addCommand({
       id: "open-settings",
       name: "打开设置",
       callback: () => this.openSettings(),
@@ -335,6 +387,58 @@ export default class WritingToolkitPlugin extends Plugin {
       },
     });
 
+    // 格式命令：与浮出工具条同一套逻辑，选中文字后从命令面板 / 快捷键调用
+    const formatCommands: { id: string; name: string; kind: FormatKind }[] = [
+      { id: "format-bold", name: "格式：加粗", kind: "bold" },
+      { id: "format-italic", name: "格式：斜体", kind: "italic" },
+      { id: "format-underline", name: "格式：下划线", kind: "underline" },
+      { id: "format-strike", name: "格式：删除线", kind: "strike" },
+      { id: "format-highlight", name: "格式：高亮", kind: "highlight" },
+      { id: "format-color", name: "格式：字色（上次使用的颜色）", kind: "color" },
+    ];
+    for (const cmd of formatCommands) {
+      this.addCommand({
+        id: cmd.id,
+        name: cmd.name,
+        editorCallback: (editor) => this.applyFormatToEditor(editor, cmd.kind),
+      });
+    }
+
+    // 诊断命令：气泡不出现时用它一键收集各环节状态（报告写到库里的文件）
+    this.addCommand({
+      id: "format-selfcheck",
+      name: "格式：自检（排查工具条不出现）",
+      callback: () => {
+        void this.runFormatSelfCheck();
+      },
+    });
+
+    // 批注：与 Agent 协作的核心工作流（你批注 → Agent 读批注文件改稿）
+    this.addCommand({
+      id: "comment-add",
+      name: "批注：为选中文字添加批注",
+      editorCallback: (editor) => {
+        const view = (editor as any).cm as EditorView | undefined;
+        if (view) this.addCommentForView(view);
+      },
+    });
+
+    this.addCommand({
+      id: "comment-copy-agent-prompt",
+      name: "批注：复制给 Agent 的处理指令",
+      callback: () => this.copyAgentPrompt(),
+    });
+
+    this.addCommand({
+      id: "comment-clear-resolved",
+      name: "批注：清除已处理的批注",
+      checkCallback: (checking) => {
+        if (!this.activeCommentDocPath()) return false;
+        if (!checking) void this.clearResolvedComments();
+        return true;
+      },
+    });
+
     this.addRibbonIcon("pen-line", "打开工具箱", () => {
       void this.openSidebar();
     });
@@ -346,6 +450,32 @@ export default class WritingToolkitPlugin extends Plugin {
     this.addRibbonIcon("layout-dashboard", "打开主页", () => {
       void this.openHome();
     });
+
+
+    // 右键菜单：选中文字后可直接添加批注（批注文件自身、未选中文字时不出现）
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu, editor) => {
+        if (!this.settings.commentsEnabled) return;
+        const view = (editor as any).cm as EditorView | undefined;
+        if (!view) return;
+        const path =
+          view.state.field(editorInfoField, false)?.file?.path ?? null;
+        if (!path || isSidecarPath(path)) return;
+        if (
+          !this.settings.commentBubbleEverywhere &&
+          !this.formatToolbarAllowed(path)
+        ) {
+          return;
+        }
+        if (editor.getSelection().trim() === "") return;
+        menu.addItem((item) =>
+          item
+            .setTitle("添加批注")
+            .setIcon("message-square")
+            .onClick(() => this.addCommentForView(view))
+        );
+      })
+    );
 
     // 长按出菜单后吞掉紧随其后的 click；经 registerDomEvent 注册，卸载时自动移除
     this.registerDomEvent(document, "click", handleSuppressedClick, true);
@@ -399,7 +529,25 @@ export default class WritingToolkitPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file instanceof TFile) this.handleVaultModify(file);
+        if (!(file instanceof TFile)) return;
+        // 批注文件被外部（Agent / 手动编辑）改写：缓存失效并刷新标记与面板
+        const commentDoc = this.commentStore.handleModified(file.path);
+        if (commentDoc) this.onCommentsChanged(commentDoc);
+        this.handleVaultModify(file);
+      })
+    );
+
+    // 打开文件时预加载它的批注（批注文件则预加载对应源文档的）
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          this.primeComments(
+            isSidecarPath(file.path)
+              ? docPathForSidecar(file.path)
+              : file.path
+          );
+        }
+        this.refreshCommentViews();
       })
     );
 
@@ -407,7 +555,12 @@ export default class WritingToolkitPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("create", (file) => {
         this.invalidateProjectIndex();
-        if (file instanceof TFile) this.handleVaultModify(file);
+        if (file instanceof TFile) {
+          // 外部（Agent）新写的批注文件：同样让缓存失效并刷新
+          const commentDoc = this.commentStore.handleModified(file.path);
+          if (commentDoc) this.onCommentsChanged(commentDoc);
+          this.handleVaultModify(file);
+        }
       })
     );
 
@@ -421,6 +574,22 @@ export default class WritingToolkitPlugin extends Plugin {
           this.statusBar.onFileRename(oldPath, file.path);
           this.migrateBaselineKey(oldPath, file.path);
           this.migrateCoverPaths(oldPath, file.path);
+          // 批注：侧车本身改名 → 缓存失效；源文档改名 → 把批注文件一起搬走
+          for (const docPath of this.commentStore.handleRenamed(
+            oldPath,
+            file.path
+          )) {
+            this.onCommentsChanged(docPath);
+          }
+          if (
+            file.extension === "md" &&
+            !isSidecarPath(oldPath) &&
+            !isSidecarPath(file.path) &&
+            !isInternalPath(oldPath) &&
+            !isInternalPath(file.path)
+          ) {
+            void this.migrateCommentSidecar(oldPath, file.path);
+          }
         } else if (file instanceof TFolder) {
           this.migrateProjectKeysOnRename(file.path, oldPath);
           this.migrateCoverPaths(oldPath, file.path);
@@ -448,6 +617,9 @@ export default class WritingToolkitPlugin extends Plugin {
         this.invalidateProjectIndex();
         if (file instanceof TFile) {
           this.statusBar.dropBaseline(file.path);
+          // 批注文件被删：对应文档的批注视为清空
+          const commentDoc = this.commentStore.handleDeleted(file.path);
+          if (commentDoc) this.onCommentsChanged(commentDoc);
         } else if (file instanceof TFolder) {
           this.migrateBaselinePrefix(file.path, null);
           this.dropProjectKeys(file.path);
@@ -777,13 +949,6 @@ export default class WritingToolkitPlugin extends Plugin {
     move(WRITING_TOOLKIT_SIDEBAR, "right");
   }
 
-  /** 打开工具箱侧栏并切到「章纲」，方便用快捷键直接写章纲。 */
-  private async openChapterOutline(): Promise<void> {
-    await this.openSidebar();
-    for (const leaf of this.app.workspace.getLeavesOfType(WRITING_TOOLKIT_SIDEBAR)) {
-      (leaf.view as WritingToolkitSidebar).openChapterOutline();
-    }
-  }
 
   /** 直接打开本插件的设置页（设置窗口 → 左侧列表要滚到底才能点到，太绕）。 */
   private openSettings(): void {
@@ -1288,6 +1453,7 @@ export default class WritingToolkitPlugin extends Plugin {
     if (!this.projectIndexCache) {
       this.projectIndexCache = discoverProjects(this.app, {
         draftKeywords: this.settings.draftKeywords,
+        excludeNames: this.settings.chapterExcludeNames,
         extraExcluded: [this.snapshotFolder()],
       });
       this.chapterPathCache = null;
@@ -1328,6 +1494,753 @@ export default class WritingToolkitPlugin extends Plugin {
   private getProjectForPath(path: string): string | null {
     if (isInternalPath(path)) return null;
     return projectForPath(path, this.projectIndex())?.root ?? null;
+  }
+
+  /** 编辑工具条 / 格式命令：该路径是否在生效范围内（按设置里的范围三选一）。 */
+  private formatToolbarAllowed(path: string | null): boolean {
+    const scope = this.settings.formatToolbarScope;
+    if (scope === "all") return true;
+    if (!path || isInternalPath(path)) return scope !== "library-only";
+    if (scope === "library-only") {
+      if (this.getProjectForPath(path)) return true;
+      const library = this.settings.sharedLibraryFolder.replace(/\/+$/, "");
+      return library !== "" && path.startsWith(library + "/");
+    }
+    // all-except-chapters：正文（草稿目录里的章节）里不浮出
+    return !this.chapterPaths().has(path);
+  }
+
+  /** 格式命令入口：作用于当前编辑器的主选区（范围设置与浮出工具条一致）。 */
+  private applyFormatToEditor(editor: Editor, kind: FormatKind): void {
+    const view = (editor as any).cm as EditorView | undefined;
+    if (!view) return;
+    const path = view.state.field(editorInfoField, false)?.file?.path ?? null;
+    if (!this.formatToolbarAllowed(path)) {
+      new Notice("这个文件不在格式工具的生效范围里（设置 → 写作 → 编辑工具条）");
+      return;
+    }
+    applyFormatOnView(view, kind);
+  }
+
+  /* ---------- 批注（与 Agent 协作的核心工作流） ---------- */
+
+  /**
+   * 活动文档的批注归属路径：普通文档 → 自身；批注文件 → 其源文档。
+   * 焦点在工具箱 / 批注面板等侧栏上时 getActiveFile 可能拿不到文件，
+   * 统一回退到「最近活动的 Markdown 文档」。
+   */
+  private activeCommentDocPath(): string | null {
+    const toDocPath = (path: string): string =>
+      isSidecarPath(path) ? docPathForSidecar(path) : path;
+    const file = this.app.workspace.getActiveFile();
+    if (file && file.extension === "md") return toDocPath(file.path);
+    const view = this.currentMarkdownView();
+    if (view?.file) return toDocPath(view.file.path);
+    return null;
+  }
+
+  /** 预加载某文档的批注；加载完成后刷新标记与面板。 */
+  private primeComments(docPath: string): void {
+    if (this.commentStore.getCached(docPath)) return;
+    void this.commentStore
+      .load(docPath)
+      .then(() => this.onCommentsChanged(docPath))
+      .catch((error) => console.error("写作工具箱：预加载批注失败", error));
+  }
+
+  /** 某文档的批注有变化：刷新打开中的编辑器标记 + 侧栏批注面板。 */
+  private onCommentsChanged(docPath: string): void {
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view as MarkdownView;
+      if (view.file?.path !== docPath) continue;
+      dispatchCommentRefresh(
+        ((view.editor as any)?.cm ?? undefined) as EditorView | undefined
+      );
+    }
+    this.refreshCommentViews();
+  }
+
+  /**
+   * 刷新所有打开的批注面板（独立视图 + 工具箱「批注」标签）。
+   *
+   * 逐项检查方法是否存在：侧栏叶子上的视图实例不一定是这两个类
+   * （视图被替换 / 尚未初始化完时也在 getLeavesOfType 的结果里），
+   * 直接调用会抛 "refreshComments is not a function"，
+   * 把「保存批注」这一步带着一起失败。
+   */
+  private refreshCommentViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(
+      WRITING_TOOLKIT_SIDEBAR
+    )) {
+      const view = leaf.view as unknown as Partial<WritingToolkitSidebar> | null;
+      if (typeof view?.refreshComments === "function") view.refreshComments();
+    }
+  }
+
+  /** 刷新所有打开编辑器里的批注痕迹（开关变化等全局场景用）。 */
+  refreshAllCommentDecors(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view as MarkdownView;
+      dispatchCommentRefresh(
+        ((view.editor as any)?.cm ?? undefined) as EditorView | undefined
+      );
+    }
+  }
+
+  /** 修改某文档的批注列表：读 → 改 → 存 → 刷新（批注变更的统一入口）。 */
+  private async mutateComments(
+    docPath: string,
+    mutator: (list: WtComment[]) => WtComment[]
+  ): Promise<void> {
+    try {
+      const list = await this.commentStore.reload(docPath);
+      const next = mutator([...list]);
+      await this.commentStore.save(docPath, next);
+      this.onCommentsChanged(docPath);
+    } catch (error) {
+      console.error("写作工具箱：保存批注失败", error);
+      new Notice("批注保存失败（详见控制台）");
+    }
+  }
+
+  /** 「当前工作的 Markdown 编辑器」：焦点在侧栏时回退到最近活动的文档。 */
+  private currentMarkdownView(): MarkdownView | null {
+    const direct = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (direct) return direct;
+    const leaves = this.app.workspace.getLeavesOfType("markdown");
+    if (leaves.length === 0) return null;
+    if (this.lastKnownPath) {
+      for (const leaf of leaves) {
+        const view = leaf.view as MarkdownView;
+        if (view.file?.path === this.lastKnownPath) return view;
+      }
+    }
+    return leaves.length === 1 ? (leaves[0].view as MarkdownView) : null;
+  }
+
+  /**
+   * 气泡批注按钮 / 右键菜单 / 命令 / 面板按钮：为编辑器选区添加批注。
+   *
+   * 编辑器里不再弹跟随光标的浮层（它会随正文滚动而「跳」），
+   * 改成屏幕居中的输入框：位置固定，写完直接落进批注文件。
+   */
+  addCommentForView(view: EditorView): void {
+    if (!this.settings.commentsEnabled) {
+      new Notice("批注功能已关闭（设置 → 写作 → 批注）");
+      return;
+    }
+    const path = view.state.field(editorInfoField, false)?.file?.path ?? null;
+    if (!path || isSidecarPath(path)) return;
+    const sel = view.state.selection.main;
+    const quote = view.state.sliceDoc(sel.from, sel.to).trim();
+    if (!quote) {
+      new Notice("先选中要批注的文字");
+      return;
+    }
+    const lineHint = view.state.doc.lineAt(sel.from).number;
+    // 段落与段落序号：Agent 改稿后靠它把批注迁回原文（见 comments.ts 的四层定位）
+    const paragraph = paragraphAt(view.state.doc.toString(), sel.from);
+    const sidecarName = sidecarPathFor(path).split("/").pop() ?? "";
+
+    // 先把锚点信息落盘拿到新 id；用户取消就把它删掉，不留空批注
+    let created: number | null = null;
+    void this.mutateComments(path, (list) => {
+      const id = nextCommentId(list);
+      created = id;
+      return [
+        ...list,
+        {
+          id,
+          status: "pending" as const,
+          quote,
+          paragraph: paragraph?.text.trim() ?? "",
+          paragraphHint: paragraph?.index ?? 0,
+          lineHint,
+          createdAt: formatTimestamp(),
+          content: "",
+          reply: "",
+          current: "",
+        },
+      ];
+    });
+
+    const isMyComment = (c: { id: number }) => c.id === created;
+
+    new CommentDraftModal(
+      this.app,
+      "添加批注",
+      "",
+      (content) => {
+        // created 到这里必然已赋值（落盘是同步排队的，弹窗要点两下才可能保存）
+        void this.mutateComments(path, (list) =>
+          list.map((c) => (isMyComment(c) ? { ...c, content } : c))
+        );
+        new Notice(`批注已保存到「${sidecarName}」`);
+      },
+      () => {
+        // 取消：把刚建的空批注撤掉（只删自己建的那条，不碰别人的）
+        void this.mutateComments(path, (list) =>
+          list.filter((c) => !isMyComment(c) || c.content.trim() !== "")
+        );
+      }
+    ).open();
+  }
+
+  /** 文档当前开着（且在编辑区）时的视图；没有则 null。 */
+  private markdownViewForPath(path: string): MarkdownView | null {
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view as MarkdownView;
+      if (view.file?.path === path) return view;
+    }
+    return null;
+  }
+
+  /** 打开「编辑这条批注」的输入框（屏幕居中，不再跟随光标）。 */
+  private openCommentEditor(path: string, comment: WtComment): void {
+    new CommentDraftModal(
+      this.app,
+      `批注 ${comment.id}`,
+      comment.content,
+      (content) => {
+        void this.mutateComments(path, (list) =>
+          list.map((c) => (c.id === comment.id ? { ...c, content } : c))
+        );
+      }
+    ).open();
+  }
+
+  /** 标记/取消标记某条批注为「已处理」。 */
+  private async toggleCommentResolvedFor(
+    path: string,
+    id: number
+  ): Promise<void> {
+    await this.mutateComments(path, (list) =>
+      list.map((c) =>
+        c.id === id
+          ? { ...c, status: c.status === "resolved" ? "pending" : "resolved" }
+          : c
+      )
+    );
+  }
+
+  /**
+   * 删除某条批注。
+   *
+   * 只保留「点两次」这一道确认（按钮上的「删除 → 确认」，3 秒内有效），
+   * 不再另弹居中确认框：两道确认叠在一起要连点三次才删得掉，太绕。
+   * 删掉后 6 秒内可以在提示里点「撤销」恢复，误删也有退路。
+   */
+  private async deleteCommentById(path: string, id: number): Promise<void> {
+    const list = await this.commentStore.load(path);
+    const index = list.findIndex((c) => c.id === id);
+    if (index < 0) return;
+    const removed = list[index];
+    await this.mutateComments(path, (l) => l.filter((c) => c.id !== id));
+    this.showUndoNotice(`已删除批注 #${id}`, () => {
+      void this.mutateComments(path, (l) => {
+        if (l.some((c) => c.id === id)) return l;
+        const next = [...l];
+        next.splice(Math.min(index, next.length), 0, removed);
+        return next;
+      });
+    });
+  }
+
+  /** 顶部提示 + 「撤销」按钮（批注删除用）。 */
+  private showUndoNotice(text: string, onUndo: () => void): void {
+    const fragment = document.createDocumentFragment();
+    const label = document.createElement("span");
+    label.textContent = text;
+    const undoBtn = document.createElement("button");
+    undoBtn.className = "wt-notice-undo";
+    undoBtn.textContent = "撤销";
+    fragment.append(label, undoBtn);
+    const notice = new Notice(fragment, 6000);
+    undoBtn.addEventListener("click", () => {
+      notice.hide();
+      onUndo();
+    });
+  }
+
+  /** 清除当前文档里所有已处理的批注（先确认；Agent 的回复会一起清掉）。 */
+  async clearResolvedComments(): Promise<void> {
+    const path = this.activeCommentDocPath();
+    if (!path) {
+      new Notice("先打开一篇文档");
+      return;
+    }
+    const list = await this.commentStore.load(path);
+    const resolved = list.filter((c) => c.status === "resolved").length;
+    if (resolved === 0) {
+      new Notice("这篇文档还没有已处理的批注");
+      return;
+    }
+    new ConfirmModal(
+      this.app,
+      "清除已处理的批注",
+      `将删除这篇文档里的 ${resolved} 条已处理批注（Agent 的回复会一起删掉），正文不受影响。此操作不能撤销。`,
+      "清除",
+      () => void this.doClearResolvedComments(path, resolved),
+      true
+    ).open();
+  }
+
+  /** 面板卡片：编辑某条批注（居中输入框；原文定位失败的批注也能编辑）。 */
+  editComment(id: number): void {
+    const docPath = this.activeCommentDocPath();
+    if (!docPath) return;
+    const comment = (this.commentStore.getCached(docPath) ?? []).find(
+      (c) => c.id === id
+    );
+    if (!comment) return;
+    this.openCommentEditor(docPath, comment);
+  }
+
+  /** 面板卡片：删除某条批注。 */
+  deleteComment(id: number): void {
+    const docPath = this.activeCommentDocPath();
+    if (!docPath) return;
+    void this.deleteCommentById(docPath, id);
+  }
+
+  /**
+   * 锚点失效的批注：把正文里当前选中的文字重新绑给它。
+   * 没有选区时先提示选中（选区在编辑器里会保留，用户选完再点一次即可）。
+   */
+  rebindComment(id: number): void {
+    const docPath = this.activeCommentDocPath();
+    if (!docPath) return;
+    const comment = (this.commentStore.getCached(docPath) ?? []).find(
+      (c) => c.id === id
+    );
+    if (!comment) return;
+    const view = this.markdownViewForPath(docPath) ?? this.currentMarkdownView();
+    const cm = ((view?.editor as any)?.cm ?? undefined) as
+      | EditorView
+      | undefined;
+    const sel = cm?.state.selection.main ?? null;
+    const picked =
+      cm && sel && !sel.empty
+        ? cm.state.sliceDoc(sel.from, sel.to).trim()
+        : "";
+    if (!cm || !sel || !picked) {
+      new Notice(`先在正文里选中批注 #${id} 现在对应的文字，再点一次「重新绑定」`);
+      view?.editor?.focus();
+      return;
+    }
+    const paragraph = paragraphAt(cm.state.doc.toString(), sel.from);
+    const lineHint = cm.state.doc.lineAt(sel.from).number;
+    void this.mutateComments(docPath, (list) =>
+      list.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              quote: picked,
+              paragraph: paragraph?.text.trim() ?? "",
+              paragraphHint: paragraph?.index ?? 0,
+              lineHint,
+              // 旧的「现文」已经对不上了，清掉，免得下次定位又被它带偏
+              current: "",
+            }
+          : c
+      )
+    );
+    new Notice(`已把批注 #${id} 重新绑定到选中的文字`);
+  }
+
+  /** 确认弹窗点「清除」后执行：删掉该文档全部已处理批注。 */
+  private async doClearResolvedComments(
+    path: string,
+    resolved: number
+  ): Promise<void> {
+    await this.mutateComments(path, (l) =>
+      l.filter((c) => c.status !== "resolved")
+    );
+    new Notice(`已清除 ${resolved} 条已处理批注`);
+  }
+
+  /** 复制「让 Agent 处理批注」的现成指令到剪贴板。 */
+  copyAgentPrompt(): void {
+    const docPath = this.activeCommentDocPath();
+    if (!docPath) {
+      new Notice("先打开一篇文档");
+      return;
+    }
+    void this.commentStore
+      .load(docPath)
+      .then((list) => {
+        const pending = list.filter((c) => c.status === "pending").length;
+        if (pending === 0) {
+          new Notice("这篇文档没有待处理的批注");
+          return;
+        }
+        const prompt = buildAgentPrompt(docPath, {
+          pending,
+          resolved: list.length - pending,
+        });
+        navigator.clipboard.writeText(prompt).then(
+          () =>
+            new Notice(
+              `已复制处理指令（${pending} 条待处理）：发给 Agent，它会按批注文件改稿`
+            ),
+          () => new Notice("复制到剪贴板失败")
+        );
+      })
+      .catch((error) => {
+        console.error("写作工具箱：读取批注失败", error);
+        new Notice("读取批注失败（详见控制台）");
+      });
+  }
+
+  /**
+   * 点正文里的批注标记 / 脚注号：打开工具箱侧栏的「批注」标签，
+   * 滚到那条批注的卡片并闪一下。编辑器里不再弹任何浮层。
+   */
+  revealCommentInPanel(path: string, id: number): void {
+    const reveal = () => {
+      const leaves = this.app.workspace.getLeavesOfType(WRITING_TOOLKIT_SIDEBAR);
+      for (const leaf of leaves) {
+        (leaf.view as WritingToolkitSidebar).revealCommentCard?.(id);
+      }
+      return leaves.length > 0;
+    };
+    void this.openSidebar()
+      .then(() => {
+        // 刚 setViewState 时侧栏 DOM 可能还没建好，没有就稍后再试一次
+        if (reveal()) return;
+        window.setTimeout(reveal, 120);
+      })
+      .catch(() => {
+        // 侧栏打不开（极少数布局情况）：提示一下，批注面板就在工具箱里
+        new Notice("没打开工具箱侧栏，可在左侧栏打开「工具箱」看批注列表");
+      });
+    void path;
+  }
+
+
+
+  /**
+   * 复制某篇文档的干净正文（编辑台章节列表里的复制按钮调用）。
+   *
+   * 正文里的批注标记（淡色底、行尾脚注序号）是编辑器渲染层（CM6 装饰），
+   * 不在文档文本里；批注内容另存在同目录的「.批注.md」里 —— 所以取文件文本
+   * 就是干净的正文，不需要做任何剥离。文档开着就用编辑器里正在编辑的内容。
+   */
+  async copyCleanChapter(path: string): Promise<void> {
+    if (isSidecarPath(path) || isInternalPath(path)) return;
+    let text: string | null = null;
+    const open = this.markdownViewForPath(path);
+    if (open?.editor) {
+      text = open.editor.getValue();
+    } else {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) {
+        new Notice("找不到这篇文档");
+        return;
+      }
+      try {
+        text = await this.app.vault.cachedRead(file);
+      } catch (error) {
+        console.error("写作工具箱：读取正文失败", error);
+        new Notice("读取正文失败（详见控制台）");
+        return;
+      }
+    }
+    if (text === null || text.trim() === "") {
+      new Notice("这篇文档是空的");
+      return;
+    }
+    // 去掉尾部多余空行，粘到别处不带一串空白
+    const payload = text.replace(/[ \t]+$/gm, "").replace(/\n{3,}$/g, "\n");
+    const name = path.split("/").pop()?.replace(/\.md$/i, "") ?? "本章";
+    try {
+      await navigator.clipboard.writeText(payload);
+      new Notice(`已复制「${name}」正文 ${payload.length} 字（批注标记只在编辑器里显示，不会带出去）`);
+    } catch (error) {
+      console.error("写作工具箱：复制正文失败", error);
+      new Notice("复制到剪贴板失败（详见控制台）");
+    }
+  }
+
+  /** 侧栏面板：取当前活动文档的批注模型（含定位信息，异步）。 */
+  async getCommentPanelModel(): Promise<CommentPanelModel> {
+    const docPath = this.activeCommentDocPath();
+    if (!docPath) {
+      return { docPath: null, docName: null, loading: false, items: [] };
+    }
+    const active = this.app.workspace.getActiveFile();
+    const base = (docPath.split("/").pop() ?? docPath).replace(/\.md$/i, "");
+    const docName =
+      active && isSidecarPath(active.path) ? `${base}（批注文件）` : base;
+    let loading = false;
+    if (!this.commentStore.getCached(docPath)) {
+      loading = true;
+      try {
+        await this.commentStore.load(docPath);
+      } catch (error) {
+        console.error("写作工具箱：读取批注失败", error);
+      }
+      loading = false;
+    }
+    const comments = this.commentStore.getCached(docPath) ?? [];
+    const docText = await this.readDocTextForLocate(docPath);
+    const located =
+      docText === null ? [] : locateAll(docText, comments);
+    const byId = new Map(located.map((l) => [l.comment.id, l]));
+    const items: CommentPanelItem[] = comments.map((c) => {
+      const hit = byId.get(c.id);
+      return {
+        id: c.id,
+        status: c.status,
+        quote: c.quote,
+        content: c.content,
+        reply: c.reply,
+        lineHint: c.lineHint,
+        createdAt: c.createdAt,
+        locatedLine: hit ? hit.lineFrom : null,
+        via: hit ? hit.via : null,
+      };
+    });
+    return { docPath, docName, loading, items };
+  }
+
+  /** 面板定位用：文档正开在编辑器里就用编辑器文本，否则读盘。 */
+  private async readDocTextForLocate(docPath: string): Promise<string | null> {
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view as MarkdownView;
+      if (view.file?.path === docPath && view.editor) {
+        return view.editor.getValue();
+      }
+    }
+    const file = this.app.vault.getAbstractFileByPath(docPath);
+    if (file instanceof TFile) {
+      try {
+        return await this.app.vault.cachedRead(file);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /** 侧栏面板：跳到某条批注对应的原文位置。 */
+  jumpToComment(id: number): void {
+    const docPath = this.activeCommentDocPath();
+    if (!docPath) return;
+    const comment = (this.commentStore.getCached(docPath) ?? []).find(
+      (c) => c.id === id
+    );
+    if (!comment) return;
+    const file = this.app.vault.getAbstractFileByPath(docPath);
+    if (!(file instanceof TFile)) return;
+    void this.revealCommentInDoc(file, comment);
+  }
+
+  /** 在指定路径的文档里选中这条批注的原文（面板「点击引用」跳转用）。 */
+  private revealCommentByPath(path: string, comment: WtComment): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    void this.revealCommentInDoc(file, comment);
+  }
+
+  private async revealCommentInDoc(
+    file: TFile,
+    comment: WtComment
+  ): Promise<void> {
+    let target: WorkspaceLeaf | null = null;
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      if ((leaf.view as MarkdownView).file?.path === file.path) {
+        target = leaf;
+        break;
+      }
+    }
+    if (!target) {
+      // 文档没开着：新开一个标签页，避免顶掉当前视图（面板本身占着焦点）
+      target = this.app.workspace.getLeaf("tab");
+      await target.openFile(file);
+    }
+    this.revealLeafCompat(target);
+    const view = target.view instanceof MarkdownView ? target.view : null;
+    if (!view) return;
+    const editor = view.editor;
+    const span = new AnchorLocator(editor.getValue()).locate(comment);
+    if (!span) {
+      new Notice(
+        "找不到这条批注对应的原文（正文改动较大）——可在批注面板点「重新绑定」"
+      );
+      return;
+    }
+    const from = editor.offsetToPos(span.from);
+    const to = editor.offsetToPos(span.to);
+    editor.setSelection(from, to);
+    editor.scrollIntoView({ from, to }, true);
+    editor.focus();
+    if (span.via !== "exact" && span.via !== "present") {
+      new Notice(LOCATE_VIA_LABELS[span.via]);
+    }
+  }
+
+  /** 侧栏面板：标记/取消标记已处理。 */
+  toggleCommentResolved(id: number): void {
+    const path = this.activeCommentDocPath();
+    if (!path) return;
+    void this.toggleCommentResolvedFor(path, id);
+  }
+
+  /** 源文档改名/移动时，把它的批注文件一起搬走（不覆盖新位置已存在的文件）。 */
+  private async migrateCommentSidecar(
+    oldPath: string,
+    newPath: string
+  ): Promise<void> {
+    try {
+      const oldSidecar = this.app.vault.getAbstractFileByPath(
+        sidecarPathFor(oldPath)
+      );
+      if (!(oldSidecar instanceof TFile)) return;
+      const newSidecarPath = sidecarPathFor(newPath);
+      if (this.app.vault.getAbstractFileByPath(newSidecarPath)) return;
+      await this.app.vault.rename(oldSidecar, newSidecarPath);
+      this.commentStore.invalidate(oldPath);
+      this.commentStore.invalidate(newPath);
+    } catch (error) {
+      console.error("写作工具箱：迁移批注文件失败", error);
+    }
+  }
+
+  /* ---------- 格式工具条 · 自检（排查气泡不出现） ---------- */
+
+  /**
+   * 「格式：自检」：一次性检查浮出工具条的各环节，把结果写到库里的报告文件，
+   * 气泡不出现时用它收集排查信息（报告看完可删）。
+   */
+  private async runFormatSelfCheck(): Promise<void> {
+    await this.writeDiagnosticReport(this.buildFormatSelfCheckText("手动命令"), true);
+  }
+
+  /** 组装自检报告文本（手动命令 / 启动快照 / 选中自动捕获共用） */
+  private buildFormatSelfCheckText(trigger: string): string {
+    const lines: string[] = [];
+    const push = (s: string) => lines.push(s);
+    push("# 写作工具箱 · 格式工具条自检报告");
+    push("");
+    try {
+      push(`- 代码版本标记：fmt-diag-2026-10-15-h（批注卡只留确认按钮）`);
+      push(`- 触发方式：${trigger}`);
+      push(`- 生成时间：${new Date().toLocaleString()}`);
+      push(`- 开关 formatToolbarEnabled：${String(this.settings.formatToolbarEnabled)}`);
+      push(`- 范围 formatToolbarScope：${String(this.settings.formatToolbarScope)}`);
+      push(`- obsidian.editorInfoField 运行时存在：${String(editorInfoField !== undefined)}`);
+
+      push("");
+      push("## 活动编辑器");
+      const mview = this.app.workspace.getActiveViewOfType(MarkdownView);
+      push(`- 活动 MarkdownView：${mview?.file?.path ?? "（无）"}`);
+      const cmFromEditor = ((mview?.editor as any)?.cm ?? undefined) as EditorView | undefined;
+      push(`- editor.cm 可用：${String(cmFromEditor !== undefined)}`);
+      const domEl = document.querySelector(".cm-editor");
+      const cmFromDom = domEl ? EditorView.findFromDOM(domEl as HTMLElement) : null;
+      push(`- 页面有 .cm-editor 元素：${String(domEl !== null)}；findFromDOM：${cmFromDom ? "可用" : "不可用"}`);
+      const ae = document.activeElement as HTMLElement | null;
+      const aeDesc = ae
+        ? `${ae.tagName.toLowerCase()}${typeof ae.className === "string" && ae.className ? ` class="${ae.className}"` : ""}`
+        : "（无）";
+      push(`- document.activeElement：${aeDesc}`);
+      const cm = cmFromEditor ?? cmFromDom ?? undefined;
+      if (cm) {
+        const st = cm.state;
+        const info = st.field(editorInfoField, false);
+        const path = info?.file?.path ?? null;
+        push(`- editorInfoField 字段值：${info ? "有" : "无（undefined）"}`);
+        push(`- 字段中的路径：${path ?? "（null）"}`);
+        try {
+          const chapters = this.chapterPaths();
+          push(`- 章节集合规模：${chapters.size}；当前文件在其中：${path ? String(chapters.has(path)) : "-"}`);
+        } catch (error) {
+          push(`- ‼️ chapterPaths() 抛异常：${String(error)}`);
+        }
+        try {
+          push(`- formatToolbarAllowed：${String(this.formatToolbarAllowed(path))}`);
+        } catch (error) {
+          push(`- ‼️ formatToolbarAllowed 抛异常：${String(error)}`);
+        }
+        const r = st.selection.main;
+        push(`- 选区：${st.selection.ranges.length} 段；主选区 ${r.from}–${r.to}（${r.to - r.from} 字符）`);
+        push(`- composing=${String(cm.composing)}；hasFocus=${String(cm.hasFocus)}`);
+        try {
+          const c = cm.coordsAtPos(r.head);
+          push(`- coordsAtPos(主选区头)：${c ? `OK（${Math.round(c.left)}, ${Math.round(c.top)}）` : "null"}`);
+        } catch (error) {
+          push(`- ‼️ coordsAtPos 抛异常：${String(error)}`);
+        }
+      }
+
+      push("");
+      push("## 气泡元素（document.body 下）");
+      const bubbles = document.querySelectorAll(".wt-format-bubble");
+      push(`- 数量：${bubbles.length}`);
+      for (let i = 0; i < Math.min(bubbles.length, 3); i++) {
+        const bubble = bubbles[i] as HTMLElement;
+        const cs = getComputedStyle(bubble);
+        const rect = bubble.getBoundingClientRect();
+        push(`- 气泡#${i + 1}：class="${bubble.className}"；inline left/top="${bubble.style.left || "-"} / ${bubble.style.top || "-"}"`);
+        push(`  计算样式：display=${cs.display}；visibility=${cs.visibility}；opacity=${cs.opacity}；position=${cs.position}；z-index=${cs.zIndex}`);
+        push(`  尺寸：offset=${bubble.offsetWidth}×${bubble.offsetHeight}；rect=(${Math.round(rect.left)}, ${Math.round(rect.top)}) ${Math.round(rect.width)}×${Math.round(rect.height)}`);
+      }
+
+      push("");
+      push("## 刷新统计（本次运行累计）");
+      push(`- 扩展注册次数（buildFormatToolbar 调用）：${formatToolbarDiag.extensionBuilds}`);
+      push(`- 工具条实例创建：${formatToolbarDiag.created} 个`);
+      push(`- 工具条 refresh 调用：${formatToolbarDiag.refreshes} 次；其中显示：${formatToolbarDiag.shown} 次`);
+      push(`- updateListener 探针：${formatToolbarDiag.listenerUpdates} 次更新（其中选区变化 ${formatToolbarDiag.listenerSelSet} 次）`);
+      push(`- 最近一次刷新结果：${formatToolbarDiag.lastReason}（路径：${formatToolbarDiag.lastPath ?? "-"}）`);
+      push(`- 隐藏原因统计：${JSON.stringify(formatToolbarDiag.hid)}`);
+      push(
+        `- 最近异常：${
+          formatToolbarDiag.lastError
+            ? formatToolbarDiag.lastError.split("\n").slice(0, 8).join(" ⏎ ")
+            : "无"
+        }`
+      );
+    } catch (error) {
+      push("");
+      push(`‼️ 自检过程中出现异常：${String((error as Error)?.stack ?? error)}`);
+    }
+    push("");
+    push("（本文件为排查用的诊断报告，看完可删。）");
+    return lines.join("\n");
+  }
+
+  /** 把诊断文本写进库里的报告文件；interactive=手动命令时给通知并复制剪贴板 */
+  private async writeDiagnosticReport(text: string, interactive: boolean): Promise<void> {
+    console.log(text);
+    const inbox = "0-收件箱";
+    const reportPath = this.app.vault.getAbstractFileByPath(inbox)
+      ? `${inbox}/写作工具箱-自检报告.md`
+      : "写作工具箱-自检报告.md";
+    try {
+      const existing = this.app.vault.getAbstractFileByPath(reportPath);
+      if (existing instanceof TFile) {
+        await this.app.vault.modify(existing, text);
+      } else {
+        await this.app.vault.create(reportPath, text);
+      }
+      if (interactive) {
+        new Notice(`格式工具条自检完成，报告已写入「${reportPath}」`, 8000);
+      }
+    } catch (error) {
+      console.error("写作工具箱：自检报告写入失败", error);
+      if (interactive) {
+        new Notice("自检完成，但报告写入失败（完整结果见开发者控制台）", 8000);
+      }
+    }
+    if (interactive) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // 剪贴板失败无妨，报告文件是主要途径
+      }
+    }
   }
 
   /**
@@ -1643,6 +2556,7 @@ export default class WritingToolkitPlugin extends Plugin {
     if (data) {
       if (data.lineHeight !== undefined || data.paragraphSpacing !== undefined) {
         this.settings = {
+          themeTone: DEFAULT_SETTINGS.themeTone,
           lineHeight: data.lineHeight ?? DEFAULT_SETTINGS.lineHeight,
           paragraphSpacing: data.paragraphSpacing ?? DEFAULT_SETTINGS.paragraphSpacing,
           letterPaperMode: data.letterPaperMode ?? DEFAULT_SETTINGS.letterPaperMode,
@@ -1672,6 +2586,11 @@ export default class WritingToolkitPlugin extends Plugin {
           statusBarOnlyImmersive: DEFAULT_SETTINGS.statusBarOnlyImmersive,
           mobileStatusBar: DEFAULT_SETTINGS.mobileStatusBar,
           draftKeywords: DEFAULT_SETTINGS.draftKeywords,
+          chapterExcludeNames: DEFAULT_SETTINGS.chapterExcludeNames,
+          formatToolbarEnabled: DEFAULT_SETTINGS.formatToolbarEnabled,
+          formatToolbarScope: DEFAULT_SETTINGS.formatToolbarScope,
+          commentsEnabled: DEFAULT_SETTINGS.commentsEnabled,
+          commentBubbleEverywhere: DEFAULT_SETTINGS.commentBubbleEverywhere,
           outlineStorageMode: DEFAULT_SETTINGS.outlineStorageMode,
           newProjectFolder: DEFAULT_SETTINGS.newProjectFolder,
           sharedLibraryFolder: DEFAULT_SETTINGS.sharedLibraryFolder,
@@ -1742,6 +2661,10 @@ export default class WritingToolkitPlugin extends Plugin {
       ...Object.keys(this.projectDurationHistory),
     ]);
     this.sanitizeBaselines();
+    this.lastDraftKeywords = this.settings.draftKeywords;
+    this.lastChapterExcludeNames = this.settings.chapterExcludeNames;
+    this.lastFormatToolbarSig = `${this.settings.formatToolbarEnabled}|${this.settings.formatToolbarScope}`;
+    this.lastCommentsEnabled = this.settings.commentsEnabled;
   }
 
   /**
@@ -1785,6 +2708,7 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   async saveSettings() {
+    void syncThemeSnippet(this.app, this.settings.themeTone);
     this.statusBar.setState({
       dailyTotal: this.dailyTotal,
       dailyGross: this.dailyGross,
@@ -1796,6 +2720,27 @@ export default class WritingToolkitPlugin extends Plugin {
     injectTypography(this.settings);
     // 正文关键词等设置可能变了：作品索引作废，下次判断重新扫描
     this.invalidateProjectIndex();
+    // 章节识别设置（关键词 / 排除名单）真的变了：作品列表立即跟上，不等下次文件事件
+    if (
+      this.lastDraftKeywords !== this.settings.draftKeywords ||
+      this.lastChapterExcludeNames !== this.settings.chapterExcludeNames
+    ) {
+      this.lastDraftKeywords = this.settings.draftKeywords;
+      this.lastChapterExcludeNames = this.settings.chapterExcludeNames;
+      this.refreshWorkbenches();
+      this.refreshHome();
+    }
+    // 编辑工具条开关/范围变了：重建编辑器扩展，已浮出的工具条立即退出
+    const formatSig = `${this.settings.formatToolbarEnabled}|${this.settings.formatToolbarScope}`;
+    if (this.lastFormatToolbarSig !== formatSig) {
+      this.lastFormatToolbarSig = formatSig;
+      this.app.workspace.updateOptions();
+    }
+    // 批注总开关变了：刷新已打开文档里的批注痕迹（标记 / 脚注序号）
+    if (this.lastCommentsEnabled !== this.settings.commentsEnabled) {
+      this.lastCommentsEnabled = this.settings.commentsEnabled;
+      this.refreshAllCommentDecors();
+    }
     await super.saveData({
       settings: this.settings,
       dailyHistory: this.dailyHistory,

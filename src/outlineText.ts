@@ -1,4 +1,5 @@
 import { App, DataAdapter, TFile } from "obsidian";
+import { isCommentSidecarName } from "./comments";
 
 /**
  * 章纲相关的纯文本与存储工具
@@ -12,6 +13,30 @@ export const OUTLINES_FOLDER = ".wt-outlines";
 
 /** 默认识别为正文章节的关键词 */
 export const DEFAULT_DRAFT_KEYWORDS = "正文草稿, 正文, 章节, 草稿, 卷, draft, chapter";
+
+/** 默认「不算章节」的辅助文件名：正文目录里的 Agent.md / README.md 等不会被当成章节 */
+export const DEFAULT_CHAPTER_EXCLUDE_NAMES = "Agent, AGENTS, CLAUDE, README";
+
+/**
+ * 文件名是否「不算章节」。
+ * 内置规则：批注伴随文件（xxx.批注.md）永远不算章节与正文；
+ * 其余按名单匹配——名单以逗号/空白分隔、忽略大小写；带不带 .md 后缀都认
+ * （Agent 与 Agent.md 等效），精确匹配文件名。
+ */
+export function isExcludedChapterName(
+  name: string,
+  namesStr: string | undefined
+): boolean {
+  if (isCommentSidecarName(name)) return true;
+  if (!namesStr) return false;
+  const base = name.replace(/\.md$/i, "").trim().toLowerCase();
+  if (!base) return false;
+  return namesStr
+    .split(/[,，\s]+/)
+    .map((n) => n.trim().replace(/\.md$/i, "").toLowerCase())
+    .filter(Boolean)
+    .some((n) => n === base);
+}
 
 /** 获取某个文档对应的独立伴生章纲文件路径 */
 export function getOutlinePath(filePath: string): string {
@@ -99,11 +124,12 @@ export async function migrateOutlineSidecar(
   }
 }
 
-/** 是否为章节草稿路径：排除系统目录，按配置关键词匹配。 */
+/** 是否为章节草稿路径：排除系统目录与辅助文件，按配置关键词匹配。 */
 export function isDraftPath(
   path: string,
   snapshotFolder = ".wt-snapshots",
-  keywordsStr = DEFAULT_DRAFT_KEYWORDS
+  keywordsStr = DEFAULT_DRAFT_KEYWORDS,
+  excludeNamesStr = DEFAULT_CHAPTER_EXCLUDE_NAMES
 ): boolean {
   if (!path || !path.endsWith(".md")) return false;
   // 排除系统目录及内部目录
@@ -113,6 +139,10 @@ export function isDraftPath(
       const f = ex.replace(/^\/+|\/+$/g, "");
       if (f && (path === f || path.startsWith(f + "/"))) return false;
     }
+  }
+  // 辅助文件（Agent.md 等）无论放在哪，都不算章节
+  if (isExcludedChapterName(path.split("/").pop() ?? "", excludeNamesStr)) {
+    return false;
   }
 
   const rawKeywords = (keywordsStr || "")

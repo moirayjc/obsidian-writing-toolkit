@@ -1,5 +1,6 @@
 import { Notice, Platform, TAbstractFile, TFile, TFolder, Vault } from "obsidian";
 import { getWordCount, WordCountMode } from "./wordcount";
+import { DEFAULT_CHAPTER_EXCLUDE_NAMES, isExcludedChapterName } from "./outlineText";
 
 // 插件在桌面端运行，Obsidian 会把 electron 注入到插件模块的 require 中。
 declare const require: (id: string) => any;
@@ -23,11 +24,21 @@ export const DEFAULT_SNAPSHOT_SETTINGS: SnapshotSettings = {
 };
 
 /**
- * 与每日字数统计一致：路径任意一层包含「正文草稿」即视为草稿文件。
+ * 与每日字数统计一致：路径任意一层包含「正文草稿」即视为草稿文件；
+ * 「不算章节」的辅助文件（Agent.md 等）除外。
  */
-export function isDraftPath(path: string): boolean {
+export function isDraftPath(
+  path: string,
+  excludeNamesStr: string | undefined = DEFAULT_CHAPTER_EXCLUDE_NAMES
+): boolean {
+  if (isExcludedChapterName(path.split("/").pop() ?? "", excludeNamesStr)) {
+    return false;
+  }
   return path.split("/").some((part) => part.includes("正文草稿"));
 }
+
+/** 快照管理器需要的设置：快照字段 + 章节排除名单（与 WritingToolkitSettings 结构兼容） */
+type SnapshotSettingsView = SnapshotSettings & { chapterExcludeNames?: string };
 
 export interface SnapshotEntry {
   /** 快照文件在库内的完整路径 */
@@ -53,7 +64,7 @@ export interface SnapshotEntry {
  */
 export class DraftSnapshotManager {
   private readonly vault: Vault;
-  private readonly getSettings: () => SnapshotSettings;
+  private readonly getSettings: () => SnapshotSettingsView;
   private readonly getActiveFilePath: () => string | null;
   private readonly getActiveText: () => string | null;
   private readonly onSaved?: () => void;
@@ -72,7 +83,7 @@ export class DraftSnapshotManager {
 
   constructor(
     vault: Vault,
-    getSettings: () => SnapshotSettings,
+    getSettings: () => SnapshotSettingsView,
     getActiveFilePath: () => string | null,
     getActiveText: () => string | null,
     onSaved?: () => void
@@ -328,7 +339,10 @@ export class DraftSnapshotManager {
     if (!settings.snapshotEnabled) return false;
     // 快照文件夹内的文件不再生成快照（镜像路径可能含「正文草稿」）
     if (this.isSnapshotPath(path)) return false;
-    return !settings.snapshotOnlyDrafts || isDraftPath(path);
+    return (
+      !settings.snapshotOnlyDrafts ||
+      isDraftPath(path, settings.chapterExcludeNames)
+    );
   }
 
   private isSnapshotPath(path: string): boolean {

@@ -1,6 +1,7 @@
 import { PluginSettingTab, Setting, App, Plugin } from "obsidian";
 import { WordCountMode } from "./wordcount";
 import { DEFAULT_SNAPSHOT_SETTINGS, SnapshotSettings } from "./snapshot";
+import { DEFAULT_CHAPTER_EXCLUDE_NAMES } from "./outlineText";
 
 interface DailyHistory {
   [date: string]: number;
@@ -8,7 +9,20 @@ interface DailyHistory {
 
 export type DailyDisplayMode = "words" | "duration";
 
+/** 配色主题：warm 暖纸（默认）/ cool 极简冷淡 / contrast 高对比度 */
+export type ThemeTone = "warm" | "cool" | "contrast";
+
+export const THEME_TONE_LABELS: Record<ThemeTone, string> = {
+  warm: "暖纸（默认）",
+  cool: "极简冷淡",
+  contrast: "高对比度",
+};
+
+/** 编辑工具条的生效范围：全库 / 全库排除正文 / 仅自己作品与共用资料库 */
+export type FormatToolbarScope = "all" | "all-except-chapters" | "library-only";
+
 export interface WritingToolkitSettings extends SnapshotSettings {
+  themeTone: ThemeTone;
   lineHeight: number;
   paragraphSpacing: number;
   letterPaperMode: boolean;
@@ -20,6 +34,14 @@ export interface WritingToolkitSettings extends SnapshotSettings {
   hemingwayMode: boolean;
   punctuationAssist: boolean;
   hardBreakOnEnter: boolean;
+  /** 选中文字时浮出的格式工具条（加粗/斜体/下划线/删除线/高亮/字色） */
+  formatToolbarEnabled: boolean;
+  /** 工具条的生效范围（正文默认排除） */
+  formatToolbarScope: FormatToolbarScope;
+  /** 批注功能总开关（选中文字加批注、侧栏批注面板） */
+  commentsEnabled: boolean;
+  /** 批注按钮不受工具条生效范围限制（全库文件都能批注） */
+  commentBubbleEverywhere: boolean;
   dailyGoal: number;
   dailyDisplayMode: DailyDisplayMode;
   wordCountMode: WordCountMode;
@@ -33,6 +55,8 @@ export interface WritingToolkitSettings extends SnapshotSettings {
   pomodoroLongBreakMinutes: number;
   pomodoroAutoSnapshot: boolean;
   draftKeywords: string;
+  /** 「不算章节」的辅助文件名（逗号分隔，如 Agent.md），不计入章节列表与字数统计 */
+  chapterExcludeNames: string;
   outlineStorageMode: "sidecar" | "frontmatter";
   /** 「新建作品」统一创建位置（仓库相对路径） */
   newProjectFolder: string;
@@ -42,6 +66,7 @@ export interface WritingToolkitSettings extends SnapshotSettings {
 
 export const DEFAULT_SETTINGS: WritingToolkitSettings = {
   ...DEFAULT_SNAPSHOT_SETTINGS,
+  themeTone: "warm",
   lineHeight: 1.8,
   paragraphSpacing: 0.5,
   letterPaperMode: true,
@@ -53,6 +78,10 @@ export const DEFAULT_SETTINGS: WritingToolkitSettings = {
   hemingwayMode: false,
   punctuationAssist: true,
   hardBreakOnEnter: true,
+  formatToolbarEnabled: true,
+  formatToolbarScope: "all-except-chapters",
+  commentsEnabled: true,
+  commentBubbleEverywhere: true,
   dailyGoal: 5000,
   dailyDisplayMode: "words",
   wordCountMode: "webnovel",
@@ -65,6 +94,7 @@ export const DEFAULT_SETTINGS: WritingToolkitSettings = {
   pomodoroLongBreakMinutes: 15,
   pomodoroAutoSnapshot: true,
   draftKeywords: "正文草稿, 正文, 章节, 草稿, 卷, draft, chapter",
+  chapterExcludeNames: DEFAULT_CHAPTER_EXCLUDE_NAMES,
   outlineStorageMode: "sidecar",
   newProjectFolder: "写作/新作品",
   sharedLibraryFolder: "写作/资料库",
@@ -102,6 +132,8 @@ export interface WritingToolkitPluginLike {
     repairProjectStatPaths: () => Promise<void>;
     updateStatusBarVisibility: () => void;
     refreshMobileStatusBar: () => void;
+    /** 批注总开关变化后，刷新已打开文档里的批注痕迹 */
+    refreshAllCommentDecors: () => void;
 }
 
 export class WritingToolkitSettingTab extends PluginSettingTab {
@@ -352,6 +384,69 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               );
           });
 
+          this.group("编辑工具条", section, (el) => {
+            new Setting(el)
+              .setName("选中浮出格式工具条")
+              .setDesc(
+                "在编辑器里选中文字时浮出小工具条：加粗、斜体、下划线、删除线、高亮、字色。再点一次同一格式即取消；命令面板里也有对应的「格式：…」命令"
+              )
+              .addToggle((toggle) =>
+                toggle
+                  .setValue(this.wt.settings.formatToolbarEnabled)
+                  .onChange(async (value) => {
+                    this.wt.settings.formatToolbarEnabled = value;
+                    await this.wt.saveSettings();
+                  })
+              );
+
+            new Setting(el)
+              .setName("工具条生效范围")
+              .setDesc(
+                "「正文」指作品正文草稿目录里的章节。字色、下划线是 HTML 写法：阅读视图正常显示，实时预览里可能看到原始标签；默认不在正文中浮出，设定、章纲、资料等不受影响，随时可调"
+              )
+              .addDropdown((dd) => {
+                dd.addOption("all", "全库所有文件");
+                dd.addOption("all-except-chapters", "全库，排除正文（默认）");
+                dd.addOption("library-only", "仅自己作品的文件与共用资料库");
+                dd.setValue(this.wt.settings.formatToolbarScope);
+                dd.onChange(async (val) => {
+                  this.wt.settings.formatToolbarScope = val as FormatToolbarScope;
+                  await this.wt.saveSettings();
+                });
+              });
+          });
+
+          this.group("批注", section, (el) => {
+            new Setting(el)
+              .setName("批注")
+              .setDesc(
+                "选中文字后可以加批注（气泡上的批注按钮，或右键「添加批注」）。批注存在同目录的「文档名.批注.md」文件里，正文一个字都不动；适合「Agent 写稿 → 你批注 → Agent 读批注文件改稿」的流程"
+              )
+              .addToggle((toggle) =>
+                toggle
+                  .setValue(this.wt.settings.commentsEnabled)
+                  .onChange(async (value) => {
+                    this.wt.settings.commentsEnabled = value;
+                    await this.wt.saveSettings();
+                  })
+              );
+
+            new Setting(el)
+              .setName("批注按钮全库可用")
+              .setDesc(
+                "批注按钮不受上面「工具条生效范围」限制：开启后正文里也能批注；关闭则和格式工具条的范围一致"
+              )
+              .addToggle((toggle) =>
+                toggle
+                  .setValue(this.wt.settings.commentBubbleEverywhere)
+                  .onChange(async (value) => {
+                    this.wt.settings.commentBubbleEverywhere = value;
+                    await this.wt.saveSettings();
+                  })
+              );
+
+          });
+
           // 沉浸与编辑辅助：收进一张卡
           const auxCard = this.card(section, "沉浸与辅助");
           new Setting(auxCard)
@@ -426,6 +521,20 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             );
 
           this.group("排版", section, (el) => {
+            new Setting(el)
+              .setName("配色主题")
+              .setDesc("暖纸保持原有的米色书房风格；极简冷淡为低饱和的冷灰与蓝灰；高对比度为白底黑字、边线分明")
+              .addDropdown((dd) => {
+                for (const [key, label] of Object.entries(THEME_TONE_LABELS)) {
+                  dd.addOption(key, label);
+                }
+                dd.setValue(this.wt.settings.themeTone);
+                dd.onChange(async (val) => {
+                  this.wt.settings.themeTone = val as ThemeTone;
+                  await this.wt.saveSettings();
+                });
+              });
+
             new Setting(el)
               .setName("行高")
               .setDesc("1.6 ~ 2.0 为中文舒适区间")
@@ -584,6 +693,19 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   .setValue(this.wt.settings.draftKeywords ?? "")
                   .onChange(async (val) => {
                     this.wt.settings.draftKeywords = val.trim();
+                    await this.wt.saveSettings();
+                  })
+              );
+
+            new Setting(el)
+              .setName("不算章节的文件名")
+              .setDesc("以逗号分隔。正文目录里的这些辅助文件（如 Agent.md）不会被当成章节，也不计入字数统计与章节列表；忽略大小写，.md 后缀可省略")
+              .addText((text) =>
+                text
+                  .setPlaceholder(DEFAULT_CHAPTER_EXCLUDE_NAMES)
+                  .setValue(this.wt.settings.chapterExcludeNames ?? "")
+                  .onChange(async (val) => {
+                    this.wt.settings.chapterExcludeNames = val.trim();
                     await this.wt.saveSettings();
                   })
               );

@@ -2,6 +2,7 @@ import { ItemView, Setting, WorkspaceLeaf, setIcon } from "obsidian";
 import { WordCountMode } from "./wordcount";
 import { SnapshotOperationPanel } from "./snapshotPanel";
 import { ChapterOutlinePanel } from "./chapterOutline";
+import { CommentPanelBody, CommentPanelModel } from "./commentView";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import { PomodoroWidget } from "./pomodoroWidget";
 
@@ -18,7 +19,14 @@ export class WritingToolkitSidebar extends ItemView {
   private pomodoroWidget: PomodoroWidget | null = null;
   private snapshotPanel: SnapshotOperationPanel | null = null;
   private chapterOutline: ChapterOutlinePanel | null = null;
+  private commentsPanel: CommentPanelBody | null = null;
+  /** 「批注」标签上的计数徽标 */
+  private commentsBadgeEl: HTMLSpanElement | null = null;
+  /** 徽标异步更新的代数（防止旧结果覆盖新结果） */
+  private badgeSeq = 0;
   private activeTabIndex = 0;
+  /** 「批注」分组在标签里的下标；点正文标记时用它切过去 */
+  private commentsTabIndex = -1;
   /** 标签页 / 面板引用：供命令直接切到指定分组 */
   private tabEls: HTMLElement[] = [];
   private panelEls: HTMLElement[] = [];
@@ -46,6 +54,10 @@ export class WritingToolkitSidebar extends ItemView {
 
   async onOpen(): Promise<void> {
     this.render();
+    // 活动文档切换时，批注标签的计数与列表跟着走
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => this.refreshComments())
+    );
   }
 
   async onClose(): Promise<void> {
@@ -55,6 +67,9 @@ export class WritingToolkitSidebar extends ItemView {
     this.snapshotPanel = null;
     this.chapterOutline?.destroy();
     this.chapterOutline = null;
+    this.commentsPanel?.destroy();
+    this.commentsPanel = null;
+    this.commentsBadgeEl = null;
     this.contentEl.empty();
     // 释放 combo 菜单：移除滚动/缩放监听与挂在 body 上的菜单 DOM
     for (const fn of this.comboCleanups) fn();
@@ -74,13 +89,30 @@ export class WritingToolkitSidebar extends ItemView {
     this.render();
   }
 
-  /** 命令入口：切到「章纲」标签并聚焦编辑框。 */
-  openChapterOutline(): void {
-    const index = this.sectionTitles.indexOf("章纲");
-    if (index >= 0 && this.tabEls.length === this.sectionTitles.length) {
-      this.activateTab(index, this.tabEls, this.panelEls);
+  /** 重建工具箱里的批注列表并更新标签计数（主插件在批注变化 / 切文档时调用）。 */
+  refreshComments(): void {
+    this.commentsPanel?.refresh();
+    void this.updateCommentsBadge();
+  }
+
+  /** 在「批注」标签上显示当前文档的批注总数（待处理为蓝、全部处理完为灰、无批注隐藏）。 */
+  private async updateCommentsBadge(): Promise<void> {
+    const badge = this.commentsBadgeEl;
+    if (!badge) return;
+    const seq = ++this.badgeSeq;
+    let model: CommentPanelModel;
+    try {
+      model = await this.plugin.getCommentPanelModel();
+    } catch {
+      return;
     }
-    this.chapterOutline?.focusEditor();
+    if (seq !== this.badgeSeq || badge !== this.commentsBadgeEl) return;
+    const total = model.items.length;
+    const pending = model.items.filter((item) => item.status === "pending")
+      .length;
+    badge.setText(total > 0 ? String(total) : "");
+    badge.toggleClass("is-empty", total === 0);
+    badge.toggleClass("is-done", total > 0 && pending === 0);
   }
 
   /** 根据番茄钟状态更新组件。 */
@@ -289,6 +321,8 @@ export class WritingToolkitSidebar extends ItemView {
     this.snapshotPanel = null;
     this.chapterOutline?.destroy();
     this.chapterOutline = null;
+    this.commentsPanel?.destroy();
+    this.commentsPanel = null;
     contentEl.addClass("wt-sidebar");
 
     // 品牌头：朱砂小印 + 宋体标题，与主页左侧导航列同一套语言
@@ -298,7 +332,12 @@ export class WritingToolkitSidebar extends ItemView {
 
     const tabs = contentEl.createDiv({ cls: "wt-settings-tabs" });
     const panels = contentEl.createDiv({ cls: "wt-settings-panels" });
-    const sections: Array<{ title: string; build: (el: HTMLElement) => void }> = [
+    const sections: Array<{
+      title: string;
+      build: (el: HTMLElement) => void;
+      /** 建完标签按钮后的装饰钩子（如「批注」标签上的计数徽标） */
+      onTabCreated?: (tab: HTMLElement) => void;
+    }> = [
       {
         title: "写作",
         build: (section) => {
@@ -438,6 +477,20 @@ export class WritingToolkitSidebar extends ItemView {
         },
       },
       {
+        title: "批注",
+        onTabCreated: (tab) => {
+          this.commentsBadgeEl = tab.createSpan({
+            cls: "wt-tab-badge is-empty",
+          });
+        },
+        build: (section) => {
+          const panelEl = section.createDiv({ cls: "wt-tb-comments" });
+          this.commentsPanel = new CommentPanelBody(panelEl, this.plugin);
+          this.commentsPanel.refresh();
+          void this.updateCommentsBadge();
+        },
+      },
+      {
         title: "快照",
         build: (section) => {
           const panelEl = section.createDiv({ cls: "wt-snapshot-panel" });
@@ -455,10 +508,12 @@ export class WritingToolkitSidebar extends ItemView {
     const panelEls: HTMLElement[] = [];
     this.sectionTitles = sections.map((section) => section.title);
     sections.forEach((section, index) => {
+      if (section.title === "批注") this.commentsTabIndex = index;
       const tab = tabs.createEl("button", { cls: "wt-settings-tab", text: section.title });
       tab.setAttr("type", "button");
       tab.addEventListener("click", () => this.activateTab(index, tabEls, panelEls));
       tabEls.push(tab);
+      section.onTabCreated?.(tab);
 
       const panel = panels.createDiv({ cls: "wt-settings-panel" });
       panelEls.push(panel);
@@ -467,6 +522,14 @@ export class WritingToolkitSidebar extends ItemView {
     this.tabEls = tabEls;
     this.panelEls = panelEls;
     this.activateTab(Math.min(this.activeTabIndex, sections.length - 1), tabEls, panelEls);
+  }
+
+  /** 切到「批注」标签并定位到某条批注的卡片（正文里点标记时调用）。 */
+  revealCommentCard(id: number): void {
+    if (this.commentsTabIndex >= 0 && this.tabEls.length) {
+      this.activateTab(this.commentsTabIndex, this.tabEls, this.panelEls);
+    }
+    void this.commentsPanel?.revealCard(id, this.contentEl);
   }
 
   private activateTab(index: number, tabs: HTMLElement[], panels: HTMLElement[]): void {

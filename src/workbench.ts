@@ -450,6 +450,7 @@ export class WritingToolkitWorkbench extends ItemView {
   private render(): void {
     this.projects = discoverProjects(this.app, {
       draftKeywords: this.plugin.settings.draftKeywords,
+      excludeNames: this.plugin.settings.chapterExcludeNames,
       extraExcluded: [this.plugin.settings.snapshotFolder],
     });
     this.project = this.pickProject();
@@ -812,6 +813,34 @@ export class WritingToolkitWorkbench extends ItemView {
       }
       e.stopPropagation();
     });
+
+    // 搜索框右侧：一键复制本章干净正文（批注标记在渲染层，不会跟着复制出去）
+    const copyBtn = wrap.createEl("button", {
+      cls: "wt-wb-search-copy",
+      attr: {
+        type: "button",
+        "aria-label": "一键复制本章正文",
+        title:
+          "一键复制本章正文（不含批注标记、批注文件内容；文档没开着也能复制）",
+      },
+    });
+    setIcon(copyBtn, "copy");
+    copyBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = this.currentPath ?? this.firstChapterPath();
+      if (!target) {
+        new Notice("先打开一章，或在这篇作品里建一章");
+        return;
+      }
+      void this.plugin.copyCleanChapter(target);
+    });
+    copyBtn.addEventListener("keydown", (e) => e.stopPropagation());
+  }
+
+  /** 当前作品的第一章（没打开任何文档时，复制按钮兜底用）。 */
+  private firstChapterPath(): string | null {
+    if (!this.project) return null;
+    return allChapters(this.project)[0]?.file?.path ?? null;
   }
 
   private matchesSearch(entry: ChapterEntry): boolean {

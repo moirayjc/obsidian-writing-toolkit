@@ -1,5 +1,9 @@
 import { App, TFile, TFolder } from "obsidian";
 import {
+  DEFAULT_CHAPTER_EXCLUDE_NAMES,
+  isExcludedChapterName,
+} from "./outlineText";
+import {
   compareChapters,
   compareVolumes,
   isChapterFileName,
@@ -67,6 +71,8 @@ export interface NovelProject {
 export interface ProjectScanOptions {
   /** 正文目录关键词（与章纲面板共用 settings.draftKeywords） */
   draftKeywords: string;
+  /** 「不算章节」的辅助文件名（与章纲面板共用 settings.chapterExcludeNames） */
+  excludeNames?: string;
   /** 额外排除的目录路径前缀（如自定义快照目录） */
   extraExcluded?: string[];
 }
@@ -103,7 +109,13 @@ function resolvePlacement(
 ): Placement | null {
   if (excluded(folder.path, options)) return null;
   const mdFiles = (folder.children as (TFile | TFolder)[]).filter(
-    (c): c is TFile => c instanceof TFile && c.extension === "md"
+    (c): c is TFile =>
+      c instanceof TFile &&
+      c.extension === "md" &&
+      !isExcludedChapterName(
+        c.basename,
+        options.excludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES
+      )
   );
 
   const volumeLike = looksLikeVolumeFolder(folder.name);

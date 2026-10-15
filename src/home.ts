@@ -392,6 +392,7 @@ export class WritingToolkitHome extends ItemView {
   private discover(): NovelProject[] {
     return discoverProjects(this.app, {
       draftKeywords: this.plugin.settings.draftKeywords,
+      excludeNames: this.plugin.settings.chapterExcludeNames,
       extraExcluded: [this.plugin.settings.snapshotFolder],
     });
   }
