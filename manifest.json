@@ -1,0 +1,9 @@
+{
+    "id": "writing-toolkit",
+    "name": "Writing Toolkit",
+    "version": "1.0.2",
+    "minAppVersion": "1.4.0",
+    "description": "Chinese web-novel writing toolkit: word counts, writing speed, daily goals, snapshots and chapter outlines.",
+    "author": "Maureen",
+    "isDesktopOnly": false
+}
