@@ -11,9 +11,12 @@ import {
 } from "obsidian";
 import { getWordCount } from "./wordcount";
 import {
+  describeRenumberPlan,
   looksLikeDraftFolder,
   looksLikeVolumeFolder,
   parseChapterName,
+  planBookRenumber,
+  planPathFor,
   renumberChapterName,
   volumeNumber,
 } from "./chapterOrder";
@@ -326,7 +329,9 @@ export class WritingToolkitWorkbench extends ItemView {
           (path) => file.path.startsWith(`${path}/`)
         );
         if (file instanceof TFile && !deletingWithVolume) {
-          this.queueChapterRenumber(file.path, file.basename);
+          // 只在删掉的是「有编号的章节」时才重排：否则删快照/资料/番外也会无谓地跑一遍
+          const n = parseChapterName(file.basename).number;
+          if (n !== null && n >= 1) this.queueChapterRenumber();
         }
       })
     );
@@ -374,6 +379,14 @@ export class WritingToolkitWorkbench extends ItemView {
       this.refreshTimer = 0;
     }
     this.render();
+  }
+
+  /**
+   * 手动触发「全书章节重编号」（命令面板 / 卷菜单入口）。
+   * 会先弹预览确认——这一步会改文件名，不该静默发生。
+   */
+  renumberBookNow(): void {
+    void this.applyBookRenumber(true);
   }
 
   /**
@@ -1185,6 +1198,13 @@ export class WritingToolkitWorkbench extends ItemView {
         for (const view of this.volumeViews) this.setVolumeCollapsed(view.path, true);
         this.afterCollapseChange();
       })
+    );
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("全书章节重编号…")
+        .setIcon("list-ordered")
+        .onClick(() => this.renumberBookNow())
     );
     menu.addSeparator();
     menu.addItem((item) =>
@@ -2102,8 +2122,21 @@ export class WritingToolkitWorkbench extends ItemView {
           ? `已插入第 ${number + 1} 章，后面 ${renamed} 章已顺延`
           : `已插入第 ${number + 1} 章`
       );
+      // 收尾：把全书编号过一遍。本卷之后的**其它卷**本来不在这段顺延的扫描范围内
+      // （比如从第1卷末插入、第2卷还有章节），只靠上面的顺延会漏掉它们。
+      // 编号本来就连续时这一步是空操作，不会白改文件。
+      void this.renumberBookQuietly();
     } catch {
       new Notice("插入章节失败");
+    }
+  }
+
+  /** 静默跑一次全书编号（不弹确认、不打扰；有改动才提示）。 */
+  private async renumberBookQuietly(): Promise<void> {
+    try {
+      await this.applyBookRenumber(false);
+    } catch (error) {
+      console.error("写作工具箱：章节重编号失败", error);
     }
   }
 
@@ -2311,93 +2344,91 @@ export class WritingToolkitWorkbench extends ItemView {
     return this.app.vault.getAbstractFileByPath(entry.file.path) === entry.file;
   }
 
-  private queueChapterRenumber(path: string, basename: string): void {
+  /**
+   * 按「全书阅读顺序」重新规划并执行章节编号。
+   *
+   * **这是章节编号的唯一实现**——删除后重排、插入后顺延、手动命令都调它，
+   * 免得三处各写一套、行为不一致（历史上删除与插入就是两套，导致插入的
+   * 顺延漏掉了「当前章之后」以外的章节）。
+   *
+   * @param interactive true 时先弹预览确认，改完给通知
+   * @returns 实际改名的章节数
+   */
+  private async applyBookRenumber(interactive: boolean): Promise<number> {
+    const project = this.project;
+    if (!project) return 0;
+
+    const live = allChapters(project).filter((c) => this.isLive(c));
+    // 传「库里全部路径」：规划函数要据此判断目标路径上是否站着**不参与编号**的文件
+    // （资料、番外、未命名稿…），否则会撞名覆盖。
+    const existingPaths = new Set(
+      this.app.vault.getAllLoadedFiles().map((f) => f.path)
+    );
+    const plan = planBookRenumber(live, existingPaths);
+    if (plan.renames === 0) {
+      if (interactive) {
+        new Notice(
+          plan.conflicts > 0
+            ? `编号已连续；有 ${plan.conflicts} 章的目标名被占用，已跳过`
+            : "全书章节编号已经连续，无需改动"
+        );
+      }
+      return 0;
+    }
+
+    if (interactive) {
+      const ok = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const done = (v: boolean) => {
+          if (!settled) {
+            settled = true;
+            resolve(v);
+          }
+        };
+        new ConfirmModal(
+          this.app,
+          "全书章节重编号",
+          `将按全书阅读顺序重新编号，共 ${plan.renames} 章需要改名` +
+            (plan.conflicts > 0 ? `（另有 ${plan.conflicts} 章目标名被占用，会跳过）` : "") +
+            `。章纲与批注伴随文件会跟着一起迁移，正文内容不受影响。\n\n` +
+            describeRenumberPlan(plan),
+          "开始重编号",
+          () => done(true),
+          true,
+          () => done(false)
+        ).open();
+      });
+      if (!ok) return 0;
+    }
+
+    let renamed = 0;
+    for (const item of plan.items) {
+      if (item.conflict) continue; // 计划里只有要改的条目；冲突项跳过，绝不覆盖
+      const file = this.app.vault.getAbstractFileByPath(item.path);
+      if (!(file instanceof TFile)) continue;
+      const targetPath = planPathFor(item.path, item.newName);
+      // 执行前再确认一次目标没被占（计划与执行之间用户可能动过文件）
+      if (this.app.vault.getAbstractFileByPath(targetPath)) continue;
+      try {
+        await this.app.fileManager.renameFile(file, targetPath);
+        renamed++;
+      } catch {
+        // 单章失败不中断其余：编号重排是幂等的，用户可以再跑一次
+      }
+    }
+
+    if (renamed > 0) new Notice(`已重新编号 ${renamed} 章`);
+    return renamed;
+  }
+
+  private queueChapterRenumber(): void {
     this.renumberChain = this.renumberChain
-      .then(() => this.renumberAfterDelete(path, basename))
+      .then(async () => {
+        await this.applyBookRenumber(false);
+      })
       .catch(() => {
         // 单次失败不影响后面的删除事件
       });
-  }
-
-  private async renumberAfterDelete(
-    deletedPath: string,
-    deletedBasename: string
-  ): Promise<void> {
-    const project = this.project;
-    if (!project) return;
-    const deletedNumber = parseChapterName(deletedBasename).number;
-    if (deletedNumber === null || deletedNumber <= 0) return;
-    const deletedFolder = deletedPath.slice(0, deletedPath.lastIndexOf("/"));
-    const volumeIndex = new Map(
-      project.volumes.map((v, i) => [v.path, i] as const)
-    );
-    let deletedVolume: number | undefined;
-    let bestLen = -1;
-    for (const [volPath, idx] of volumeIndex) {
-      if (deletedPath.startsWith(`${volPath}/`) && volPath.length > bestLen) {
-        bestLen = volPath.length;
-        deletedVolume = idx;
-      }
-    }
-    if (deletedVolume === undefined) return;
-    if (
-      deletedFolder !== project.root &&
-      !this.app.vault.getAbstractFileByPath(deletedFolder)
-    ) {
-      return;
-    }
-
-    const all = allChapters(project);
-    const live = all.filter((c) => this.isLive(c));
-    const liveNumber = (c: ChapterEntry): number | null =>
-      parseChapterName(c.file.basename).number;
-
-    let start = -1;
-    const snapshotIndex = all.findIndex((c) => c.file.path === deletedPath);
-    if (snapshotIndex >= 0) {
-      let before = 0;
-      for (let i = 0; i <= snapshotIndex; i++) {
-        if (this.isLive(all[i])) before++;
-      }
-      start = before;
-    } else {
-      start = live.findIndex((c) => {
-        const vi = volumeIndex.get(c.volumePath);
-        if (vi === undefined || vi < deletedVolume) return false;
-        if (vi > deletedVolume) return true;
-        const n = liveNumber(c);
-        return n !== null && n >= deletedNumber;
-      });
-      if (start < 0) start = live.length;
-    }
-
-    let expected = -1;
-    let renamed = 0;
-    for (let i = start; i < live.length; i++) {
-      const entry = live[i];
-      const n = liveNumber(entry);
-      if (n === null) break;
-      if (expected < 0) {
-        if (n !== deletedNumber && n !== deletedNumber + 1) break;
-        expected = n;
-      } else if (n !== expected) {
-        break;
-      }
-      const targetName = renumberChapterName(entry.file.basename, n - 1);
-      if (!targetName || targetName === entry.file.basename) break;
-      const targetPath = joinPath(entry.file.parent?.path ?? "", `${targetName}.md`);
-      if (this.app.vault.getAbstractFileByPath(targetPath)) break;
-      try {
-        await this.app.fileManager.renameFile(entry.file, targetPath);
-      } catch {
-        break;
-      }
-      renamed++;
-      expected++;
-    }
-    if (renamed > 0) {
-      new Notice(`已删除「${deletedBasename}」，后面 ${renamed} 章已重编号`);
-    }
   }
 
   // ---------- 章纲就地编辑 ----------

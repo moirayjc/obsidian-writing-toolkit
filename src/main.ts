@@ -510,6 +510,20 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     },
   });
 
+  // 章节编号：全书按阅读顺序重排成 1..N（跨卷）。删除/插入后会自动跑，
+  // 这条是手动入口——编号被外部工具改乱、或想主动整理时用。
+  this.addCommand({
+    id: "renumber-chapters",
+    name: "章节：全书重编号（按阅读顺序）",
+    checkCallback: (checking) => {
+      const leaf = this.app.workspace.getLeavesOfType(WRITING_TOOLKIT_WORKBENCH)[0];
+      const view = leaf?.view as WritingToolkitWorkbench | undefined;
+      const ok = typeof view?.renumberBookNow === "function";
+      if (!checking && ok) view!.renumberBookNow();
+      return ok;
+    },
+  });
+
   this.addRibbonIcon("pen-line", "打开工具箱", () => {
     void this.openSidebar();
   });

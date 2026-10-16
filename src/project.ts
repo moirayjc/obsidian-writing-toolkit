@@ -33,6 +33,11 @@ export interface ChapterEntry {
   title: string;
   /** 番外序号（番外一 → 1），仅用于排序 */
   tail: number | null;
+  /**
+   * frontmatter 里的 `sort_index`（没写就是 null）。
+   * 只影响排序，但**章节重编号必须跳过它**——作者显式定制的顺序会被重新编号打乱。
+   */
+  sortIndex: number | null;
   /** 所属卷目录路径 */
   volumePath: string;
 }
@@ -246,6 +251,7 @@ export function discoverProjects(
         number: item.number,
         title: item.title,
         tail: item.tail,
+        sortIndex: item.sortIndex,
         volumePath: placement.volumePath,
       });
       project.chapterCount++;

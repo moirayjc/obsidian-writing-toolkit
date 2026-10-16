@@ -21,6 +21,7 @@ CHECKS=(
   "check-onload.js:onload 体量守卫"
   "check-anchors.js:批注四层锚点定位"
   "check-formatwrap.js:格式包裹与还原"
+  "check-renumber.js:全书章节重编号"
 )
 
 failed=""

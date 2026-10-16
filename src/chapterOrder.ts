@@ -334,3 +334,149 @@ export function compareVolumes(
   if (na === null && nb !== null) return 1;
   return naturalCompare(a.name, b.name);
 }
+
+/* ---------- 全书章节重编号 ---------- */
+
+export interface RenumberPlanItem {
+  /** 章号 ≥1 的连续章节，按**全书阅读顺序**排列（跨卷） */
+  path: string;
+  basename: string;
+  from: number;
+  to: number;
+  newName: string;
+  /** 目标路径被占用且那个占用者不在本次计划内——执行时必须跳过，否则会覆盖别人的文件 */
+  conflict: boolean;
+}
+
+export interface RenumberPlan {
+  /** **只含真正要改名的条目**，按目标编号从大到小排列 */
+  items: RenumberPlanItem[];
+  /** 要改名的条数（= items 里非 conflict 的条数） */
+  renames: number;
+  conflicts: number;
+}
+
+/**
+ * 规划「全书章节重编号」：把**章号 ≥1** 的章节按阅读顺序重新编成 1..N 连续。
+ *
+ * 为什么需要它：原来的重编号（`workbench.ts` 的 `renumberAfterDelete`）从删除位置
+ * 往下连减，**遇到第一个编号间断就停**。所以只要编号不是连续的（比如第1卷有 1、3，
+ * 第2卷有 2、4），删掉一章后后面**一章都不会动**——实测「1、3、5 删第3章」结果
+ * 是「重编号 0 章，第5章纹丝不动」。
+ *
+ * 本函数按「全书写法」重新推导目标编号，因此天然处理间断。
+ * **编号本来就连续时返回的计划里全部 `unchanged`、`renames === 0`**，
+ * 所以不会去动一个本来就正确的库。
+ *
+ * 刻意不动的东西（都不参与编号）：
+ * - 序章 / 楔子 / 引子 / 番外 / 后记 / 尾声（`parseChapterName` 给出 number 为 0 或 null）
+ * - 认不出编号写法的文件名（`renumberChapterName` 返回 null）
+ * - 作者用 frontmatter `sort_index` 显式定制的顺序：那只影响**排序**，
+ *   重新编号会跟它对冲，所以这些章节整项跳过
+ *
+ * 返回的 `items` 顺序是**从大到小**（按目标编号倒序）：大批改名按这个顺序执行，
+ * 才能避免「目标名已被另一章占着」的撞名（从高位腾退，低位不会回头撞上）。
+ */
+/** 重编号只需要这几样，刻意不依赖 `ChapterEntry`（便于单测、也避免循环依赖）。 */
+export interface RenumberInput {
+  file: { path: string; basename: string };
+  number: number | null;
+  sortIndex: number | null;
+}
+
+/** 章节改名后的目标路径（与执行侧共用同一算法，避免两处各写一遍）。 */
+export function planPathFor(currentPath: string, newBasename: string): string {
+  const dir = currentPath.slice(0, currentPath.lastIndexOf("/"));
+  return dir ? `${dir}/${newBasename}.md` : `${newBasename}.md`;
+}
+
+export function planBookRenumber(
+  chapters: readonly RenumberInput[],
+  /**
+   * 库里**当前存在的全部文件路径**（含不参与编号的：资料、番外、未命名稿…）。
+   * 用来判断「目标路径上是否真的站着一个不参与编号的文件」。
+   * 不传则退化成「只检查参与编号的章节」，会漏掉与资料撞名的情况——
+   * 所以调用方**应该传**（`workbench` 传的是 `app.vault.getAllLoadedFiles()`）。
+   */
+  existingPaths?: ReadonlySet<string>
+): RenumberPlan {
+  const numbered = chapters.filter(
+    (c) => typeof c.number === "number" && c.number >= 1 && c.sortIndex === null
+  );
+  const owners = new Map<string, number>(); // 路径 → 参与编号的章节下标
+  numbered.forEach((c, i) => owners.set(c.file.path, i));
+
+  const items: RenumberPlanItem[] = [];
+  const targetTakenBy = new Map<string, number[]>(); // 目标路径 → 想要它的条目下标
+
+  numbered.forEach((c, i) => {
+    const target = i + 1;
+    const from = c.number as number;
+    const newName = renumberChapterName(c.file.basename, target) ?? c.file.basename;
+    // 「无需改动」要同时满足：编号已在正确位置 **且** 文件名与目标名一致。
+    // 只看编号会让「编号对、但写法不标准」的章节（例如第 2 位却叫「第3章」）被漏改，
+    // 表现就是重排后仍然不连续。
+    // 注意：`file.basename` 是**不含扩展名**的（码点实测），别拿 `${newName}.md` 去比
+    if (from === target && newName === c.file.basename) return;
+
+    const targetPath = planPathFor(c.file.path, newName);
+    // 冲突的判定：目标路径上**站着一个不参与编号的文件**才算冲突。
+    // - 站着另一个参与编号的章节 → 安全：它自己也要搬走（甚至可能正互补，见下）
+    // - 不参与编号（手写资料、被排除的文件）→ 真冲突，跳过，绝不覆盖别人的东西
+    //
+    // 注意**跨卷**也要正确：例如「第1卷/第3章 → 第1卷/第2章」而「第2卷/第2章 → 第2卷/第3章」，
+    // 两个目标路径看起来都被占着，但两章是互补挪位；按目标编号**从大到小**执行时，
+    // 高位章节先离开，低位章节再落进去，不会撞名。
+    // 目标被占用的两种情形，都要跳过（绝不覆盖别人的东西）：
+    // ① 站着另一个**参与编号**的章节 → 安全（它自己也要搬走）
+    // ② 站着**不参与编号**的文件（资料/番外/未命名稿）→ 冲突
+    const owner = owners.get(targetPath);
+    const occupiedByOutsider =
+      owner === undefined && (existingPaths ? existingPaths.has(targetPath) : false);
+    const conflict = targetPath !== c.file.path && occupiedByOutsider;
+
+    items.push({
+      path: c.file.path,
+      basename: c.file.basename,
+      from,
+      to: target,
+      newName,
+      conflict,
+    });
+    const list = targetTakenBy.get(targetPath);
+    if (list) list.push(items.length - 1);
+    else targetTakenBy.set(targetPath, [items.length - 1]);
+  });
+
+  // 多个章节想改成**同一个**目标名（章节编号重复）→ 只能有一个成功，其余全部标冲突。
+  // 不这么做的话，第二个改名会覆盖第一个，反而把用户的章节弄丢。
+  //
+  // ⚠️ 必须在**排序之前**标完：下面的 `items.sort()` 是原地排序，
+  // 排完再用下标去改就会标错条目（踩过这个坑，症状是「无辜的章节被标成冲突」）。
+  for (const [, idxs] of targetTakenBy) {
+    if (idxs.length > 1) for (const k of idxs) items[k].conflict = true;
+  }
+
+  // 从高位开始改，先腾出位置（改第 N 位为 N+1 时，N+1 位刚好已腾空）
+  const ordered = items.sort((a, b) => b.to - a.to);
+  return {
+    items: ordered,
+    renames: ordered.filter((it) => !it.conflict).length,
+    conflicts: ordered.filter((it) => it.conflict).length,
+  };
+}
+
+/** 计划的可读预览（确认弹窗 / 自检报告共用）。 */
+export function describeRenumberPlan(plan: RenumberPlan, maxLines = 12): string {
+  const lines: string[] = [];
+  const changed = plan.items;
+  if (changed.length === 0) {
+    return "全书章节编号已经是连续的，没有需要改动的地方。";
+  }
+  for (const it of changed.slice(0, maxLines)) {
+    const mark = it.conflict ? "  ⚠️ 目标已存在，将跳过" : "";
+    lines.push(`第 ${it.from} 章 → 第 ${it.to} 章：${it.basename} → ${it.newName}${mark}`);
+  }
+  if (changed.length > maxLines) lines.push(`…… 另外还有 ${changed.length - maxLines} 章`);
+  return lines.join("\n");
+}
