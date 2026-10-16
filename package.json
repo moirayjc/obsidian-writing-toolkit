@@ -7,12 +7,18 @@
     "build": "node esbuild.config.mjs production",
     "check": "./node_modules/.bin/tsc --noEmit",
     "verify": "bash tools/checks/run-all.sh",
+    "lint:review": "eslint src package.json",
     "release": "bash tools/release.sh"
   },
   "devDependencies": {
-    "builtin-modules": "^3.3.0",
     "esbuild": "^0.20.0",
-    "obsidian": "^1.4.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-obsidianmd": "0.4.2",
+    "obsidian": "^1.14.4",
     "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13"
   }
 }

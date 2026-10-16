@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
+import { builtinModules } from "node:module";
 
 const prod = process.argv[2] === "production";
 
@@ -21,7 +21,8 @@ const context = await esbuild.context({
     "@lezer/common",
     "@lezer/highlight",
     "@lezer/lr",
-    ...builtins,
+    // Node 内置模块整体标记为 external（社区审查要求：不再依赖 builtin-modules 包）
+    ...builtinModules,
   ],
   format: "cjs",
   target: "ES2020",

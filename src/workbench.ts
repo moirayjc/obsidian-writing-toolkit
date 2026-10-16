@@ -1051,20 +1051,12 @@ export class WritingToolkitWorkbench extends ItemView {
             ? "还没有章节"
             : "…"
         );
-        // 卷头悬停浮现一个轻量的「+」按钮，方便直接在本卷末尾新建章节
-        const addBtn = header.createEl("button", {
-          cls: "wt-wb-vol-add",
-          attr: {
-            type: "button",
-            "aria-label": "在本卷新建章节",
-            title: `在「${displayFolderName(volume.name)}」末尾新建一章`,
-          },
-        });
-        setIcon(addBtn, "plus");
-        addBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          void this.createChapterIn(volume.path);
-        });
+        // 卷头**不再**放「+」新建按钮（2026-10-16 去掉）：
+        // 章号是**全书连续**的，而「在指定卷里新建」会拿全书最大章号 +1 塞进那一卷，
+        // 于是第1卷会拿到「第3章」、而第2章在第2卷——顺序与编号立刻对不上
+        // （用户报的就是这个：第1卷有第1章、第2卷有第2章，往第1卷加却得到第3章）。
+        // 新建统一走顶部「+ 新章节」（落在最后一个**有章节的**卷），编号自然接在末尾。
+        // 需要往中间插章时用章节右键菜单的「在下方插入一章」，那条会顺延后面的编号。
 
         if (!filtering) {
           header.addEventListener("click", () => this.toggleVolume(volume.path));
@@ -1173,12 +1165,9 @@ export class WritingToolkitWorkbench extends ItemView {
 
   private showVolumeMenu(volume: VolumeEntry, pt: MenuPoint): void {
     const menu = new Menu();
-    menu.addItem((item) =>
-      item.setTitle("在本卷末尾新建一章").setIcon("file-plus").onClick(() => {
-        void this.createChapterIn(volume.path);
-      })
-    );
-    menu.addSeparator();
+    // 「在本卷末尾新建一章」已移除（2026-10-16）：它走的是 createChapterIn(兜底到活动卷)，
+    // 在非末卷上会生成一个**全书最大章号**的章节塞进这一卷，顺序与编号对不上。
+    // 新建统一用顶部「+ 新章节」；要在中间插章用章节行的「在下方插入一章」。
     menu.addItem((item) =>
       item.setTitle("只展开本卷").setIcon("fold-vertical").onClick(() => {
         for (const view of this.volumeViews) {
@@ -1963,6 +1952,17 @@ export class WritingToolkitWorkbench extends ItemView {
     await this.createChapterIn(this.pickTargetVolume(project));
   }
 
+  /**
+   * 「新章节」落进哪一卷：**最后一个卷**。
+   *
+   * 2026-10-16 简化为「末卷」：章号是**全书连续**的（`nextChapterNumber` 取全书最大 +1），
+   * 所以只有落在最后一卷，编号与阅读顺序才天然一致。
+   * 旧逻辑优先挑「最后一个非空卷之后的空编号卷」，于是出现
+   * 「第1卷拿到第3章、而第2章在第2卷」这种顺序与编号对不上的情况。
+   *
+   * 唯一例外：末尾的空**容器**目录（`正文草稿` 这类）不算数——
+   * 已经有显式分卷时，往那里塞章节等于丢出阅读顺序之外。
+   */
   private pickTargetVolume(project: NovelProject): string {
     const explicitCount = project.volumes.filter((v) =>
       looksLikeVolumeFolder(v.name)
@@ -1970,27 +1970,12 @@ export class WritingToolkitWorkbench extends ItemView {
     const volumes = project.volumes.filter(
       (v) => !this.isSpareContainer(v, explicitCount)
     );
-    const numbered = volumes.filter((v) => looksLikeVolumeFolder(v.name));
-
-    let lastNonEmpty = -1;
+    if (volumes.length === 0) return project.root;
+    // 倒数第一个「有章节的」卷；一个都没有时就用最后一卷
     for (let i = volumes.length - 1; i >= 0; i--) {
-      if (volumes[i].chapters.length > 0) {
-        lastNonEmpty = i;
-        break;
-      }
+      if (volumes[i].chapters.length > 0) return volumes[i].path;
     }
-    if (lastNonEmpty >= 0) {
-      for (let i = volumes.length - 1; i > lastNonEmpty; i--) {
-        if (looksLikeVolumeFolder(volumes[i].name)) return volumes[i].path;
-      }
-      return volumes[lastNonEmpty].path;
-    }
-
-    return (
-      numbered[numbered.length - 1]?.path ??
-      volumes[volumes.length - 1]?.path ??
-      project.root
-    );
+    return volumes[volumes.length - 1].path;
   }
 
   /** 「正文草稿」这类容器目录：已经有显式分卷时，空着的它不再单独成卷。 */

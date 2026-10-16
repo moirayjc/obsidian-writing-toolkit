@@ -49,14 +49,22 @@ const LEGACY_FLAT_FIELDS = [
 function buildRunner(defaults) {
   const mainSrc = fs.readFileSync(path.join(H.ROOT, "src/main.ts"), "utf8");
   const method = H.extractMethod(mainSrc, "private async loadPluginData()");
+  const stripped = method
+    .replace(/^\s*private async loadPluginData\(\)\s*\{/, "")
+    // `super.loadData()` 在独立函数里非法（esbuild 会报 Unexpected "super"），换成注入的桩。
+    // ⚠️ 别按「整行删除」来写：方法里还有一行 `const loaded = await super.loadData();`，
+    // 删了它就丢了加载结果。这里只替换调用本身。
+    .replace(/super\.loadData\(\)/g, "__loadData()")
+    .replace(/\}\s*$/, "");
+  if (stripped.includes("super.")) {
+    throw new Error(
+      "loadPluginData 里还有别的 super 调用，检查脚本的桩没覆盖到——先看看是什么再改这里"
+    );
+  }
   const bodyTs = [
     "export function runBody(self: any) {",
     "  const __body = async function (this: any) {",
-    "    const data: any = await __loadData();",
-    method
-      .replace(/^\s*private async loadPluginData\(\)\s*\{/, "")
-      .replace(/^\s*const data: any = await super\.loadData\(\);\s*$/m, "")
-      .replace(/\}\s*$/, ""),
+    stripped,
     "  };",
     "  return __body.call(self);",
     "}",

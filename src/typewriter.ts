@@ -1,4 +1,5 @@
 import { ViewPlugin, EditorView, Decoration } from "@codemirror/view";
+import type { DecorationSet, PluginValue, ViewUpdate } from "@codemirror/view";
 import { RangeSetBuilder, Transaction } from "@codemirror/state";
 
 const DEFAULT_TYPEWRITER_OFFSET = 0.4;
@@ -24,24 +25,24 @@ export function setParagraphHighlight(active: boolean): void {
 }
 
 function paragraphHighlightPlugin() {
-  return ViewPlugin.fromClass(class {
-    decorations;
+  return ViewPlugin.fromClass(class implements PluginValue {
+    decorations: DecorationSet;
 
     constructor(view: EditorView) {
       this.decorations = buildParagraphDecorations(view);
     }
 
-    update(update: any) {
+    update(update: ViewUpdate) {
       if (paragraphHighlightActive && (update.docChanged || update.selectionSet || update.viewportChanged)) {
         this.decorations = buildParagraphDecorations(update.view);
       } else if (!paragraphHighlightActive) {
         this.decorations = Decoration.none;
       }
     }
-  }, { decorations: (value: any) => value.decorations });
+  }, { decorations: (value) => value.decorations });
 }
 
-function buildParagraphDecorations(view: EditorView) {
+function buildParagraphDecorations(view: EditorView): DecorationSet {
   if (!paragraphHighlightActive) return Decoration.none;
   const builder = new RangeSetBuilder<Decoration>();
   const head = view.state.selection.main.head;
@@ -83,7 +84,7 @@ function isStandaloneMarkdownBlock(text: string): boolean {
 }
 
 function paddingPlugin() {
-  return ViewPlugin.fromClass(class {
+  return ViewPlugin.fromClass(class implements PluginValue {
     view: EditorView;
     paddingApplied = false;
     constructor(view: EditorView) { this.view = view; }
@@ -91,7 +92,7 @@ function paddingPlugin() {
       this.view.contentDOM.removeClass("wt-typewriter-pad");
       this.view.contentDOM.setCssProps({ "--wt-typewriter-pad-bottom": "" });
     }
-    update(update: any) {
+    update(update: ViewUpdate) {
       if (!typewriterActive) {
         if (this.paddingApplied) {
           this.view.contentDOM.removeClass("wt-typewriter-pad");
@@ -118,11 +119,11 @@ function paddingPlugin() {
 }
 
 function scrollPlugin() {
-  return ViewPlugin.fromClass(class {
+  return ViewPlugin.fromClass(class implements PluginValue {
     view: EditorView;
     busy: boolean;
     constructor(view: EditorView) { this.view = view; this.busy = false; }
-    update(update: any) {
+    update(update: ViewUpdate) {
       if (!typewriterActive || this.busy) return;
 
       const isEditing = update.transactions.some((tr: Transaction) => {

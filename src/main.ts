@@ -18,6 +18,8 @@ import {
 } from "./settings";
 import { applyCachedThemeTone, injectTypography, removeTypography } from "./typography";
 import { syncThemeSnippet } from "./themeSnippet";
+import { getElectron } from "./electron";
+import { getEditorView } from "./editorView";
 import {
   buildTypewriterExtensions,
   setTypewriterActive,
@@ -53,8 +55,6 @@ import { buildCommentExtensions, dispatchCommentRefresh } from "./commentDecor";
 import {
   buildCommentDiagReport,
   buildStatsDiagReport,
-  commentDecorDiag,
-  commentIoDiag,
   recordLocate,
   recordStatusRefresh,
   statsApplied,
@@ -107,9 +107,6 @@ import {
 import { MobileStatusBar } from "./mobileStatusBar";
 
 /** 「算不算正文」不再靠路径里的「正文草稿」字样，改用作品识别（见 isDailyCountFile）。 */
-
-/** 仅在 Electron 桌面端可用（用于「在系统文件管理器中显示」）。 */
-declare function require(name: string): any;
 
 /** 两次输入间隔超过该毫秒数即视为停止写作，间隔不计入时长。
  *  2026-08-13 由 120s 收紧为 30s：避免停顿（喝水/切走/思考）被全额算作写作时间。 */
@@ -489,7 +486,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     id: "comment-add",
     name: "批注：为选中文字添加批注",
     editorCallback: (editor) => {
-      const view = (editor as any).cm as EditorView | undefined;
+      const view = getEditorView(editor);
       if (view) this.addCommentForView(view);
     },
   });
@@ -519,7 +516,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
       const leaf = this.app.workspace.getLeavesOfType(WRITING_TOOLKIT_WORKBENCH)[0];
       const view = leaf?.view as WritingToolkitWorkbench | undefined;
       const ok = typeof view?.renumberBookNow === "function";
-      if (!checking && ok) view!.renumberBookNow();
+      if (!checking && ok) view.renumberBookNow();
       return ok;
     },
   });
@@ -548,7 +545,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
   this.registerEvent(
     this.app.workspace.on("editor-menu", (menu, editor) => {
       if (!this.settings.commentsEnabled) return;
-      const view = (editor as any).cm as EditorView | undefined;
+      const view = getEditorView(editor);
       if (!view) return;
       const path =
         view.state.field(editorInfoField, false)?.file?.path ?? null;
@@ -795,7 +792,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     this.app.workspace.iterateAllLeaves((leaf) => {
       const view = leaf.view;
       if (!(view instanceof MarkdownView)) return;
-      const cm = (view.editor as any).cm as EditorView | undefined;
+      const cm = getEditorView(view.editor);
       cm?.dispatch({ effects: setHemingway.of(on) });
     });
     this.app.workspace.updateOptions();
@@ -1058,7 +1055,11 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
 
   /** 直接打开本插件的设置页（设置窗口 → 左侧列表要滚到底才能点到，太绕）。 */
   private openSettings(): void {
-    const setting = (this.app as any).setting;
+    const setting = (
+      this.app as unknown as {
+        setting?: { open(): void; openTabById(id: string): void };
+      }
+    ).setting;
     if (!setting) return;
     setting.open();
     setting.openTabById(this.manifest.id);
@@ -1269,7 +1270,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
         return;
       }
       const full = adapter.getFullPath(path);
-      const { shell } = require("electron");
+      const { shell } = getElectron();
       shell.showItemInFolder(full);
     } catch {
       new Notice("无法在系统文件管理器中显示");
@@ -1631,7 +1632,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
 
   /** 格式命令入口：作用于当前编辑器的主选区（范围设置与浮出工具条一致）。 */
   private applyFormatToEditor(editor: Editor, kind: FormatKind): void {
-    const view = (editor as any).cm as EditorView | undefined;
+    const view = getEditorView(editor);
     if (!view) return;
     const path = view.state.field(editorInfoField, false)?.file?.path ?? null;
     if (!this.formatToolbarAllowed(path)) {
@@ -1672,9 +1673,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view as MarkdownView;
       if (view.file?.path !== docPath) continue;
-      dispatchCommentRefresh(
-        ((view.editor as any)?.cm ?? undefined) as EditorView | undefined
-      );
+      dispatchCommentRefresh(getEditorView(view.editor));
     }
     this.refreshCommentViews();
   }
@@ -1700,9 +1699,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
   refreshAllCommentDecors(): void {
     for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view as MarkdownView;
-      dispatchCommentRefresh(
-        ((view.editor as any)?.cm ?? undefined) as EditorView | undefined
-      );
+      dispatchCommentRefresh(getEditorView(view.editor));
     }
   }
 
@@ -1867,12 +1864,9 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
 
   /** 顶部提示 + 「撤销」按钮（批注删除用）。 */
   private showUndoNotice(text: string, onUndo: () => void): void {
-    const fragment = document.createDocumentFragment();
-    const label = document.createElement("span");
-    label.textContent = text;
-    const undoBtn = document.createElement("button");
-    undoBtn.className = "wt-notice-undo";
-    undoBtn.textContent = "撤销";
+    const fragment = createFragment();
+    const label = createSpan({ text });
+    const undoBtn = createEl("button", { cls: "wt-notice-undo", text: "撤销" });
     fragment.append(label, undoBtn);
     const notice = new Notice(fragment, 6000);
     undoBtn.addEventListener("click", () => {
@@ -1882,7 +1876,11 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
   }
 
   /** 清除指定文档里所有已处理的批注（先确认；Agent 的回复会一起清掉）。 */
-  async clearResolvedComments(docPath?: string): Promise<void> {
+  clearResolvedComments(docPath?: string): void {
+    void this.runClearResolvedComments(docPath);
+  }
+
+  private async runClearResolvedComments(docPath?: string): Promise<void> {
     // 面板会传它正在展示的文档；命令面板入口不传，回退到活动文档
     const path = docPath || this.activeCommentDocPath();
     if (!path) {
@@ -1935,9 +1933,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     );
     if (!comment) return;
     const view = this.markdownViewForPath(path) ?? this.currentMarkdownView();
-    const cm = ((view?.editor as any)?.cm ?? undefined) as
-      | EditorView
-      | undefined;
+    const cm = getEditorView(view?.editor);
     const sel = cm?.state.selection.main ?? null;
     const picked =
       cm && sel && !sel.empty
@@ -2258,7 +2254,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
       push("## 活动编辑器");
       const mview = this.app.workspace.getActiveViewOfType(MarkdownView);
       push(`- 活动 MarkdownView：${mview?.file?.path ?? "（无）"}`);
-      const cmFromEditor = ((mview?.editor as any)?.cm ?? undefined) as EditorView | undefined;
+      const cmFromEditor = getEditorView(mview?.editor);
       push(`- editor.cm 可用：${String(cmFromEditor !== undefined)}`);
       const domEl = document.querySelector(".cm-editor");
       const cmFromDom = domEl ? EditorView.findFromDOM(domEl as HTMLElement) : null;
@@ -2343,7 +2339,6 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     interactive: boolean,
     kind = "格式工具条"
   ): Promise<void> {
-    console.log(text);
     // 文件名要文件系统安全：不能用 formatTimestamp（含空格与冒号）
     const d = new Date();
     const p2 = (n: number) => String(n).padStart(2, "0");
@@ -2754,32 +2749,39 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
   }
 
   private async loadPluginData() {
-    const data: any = await super.loadData();
+    const loaded: unknown = await super.loadData();
+    /** 只认对象；其余（null/字符串等）一律当作没有数据（与旧版 if (data) 等价）。 */
+    const asRecord = <T extends object>(value: unknown): T | null =>
+      value && typeof value === "object" ? (value as T) : null;
+    /** 与 `value ?? fallback` 等价的最小型读取器。 */
+    const pick = <T>(value: unknown, fallback: T): T =>
+      value === undefined || value === null ? fallback : (value as T);
+    const data = asRecord<Record<string, unknown>>(loaded);
     if (data) {
       if (data.lineHeight !== undefined || data.paragraphSpacing !== undefined) {
         this.settings = {
           themeTone: DEFAULT_SETTINGS.themeTone,
-          lineHeight: data.lineHeight ?? DEFAULT_SETTINGS.lineHeight,
-          paragraphSpacing: data.paragraphSpacing ?? DEFAULT_SETTINGS.paragraphSpacing,
-          letterPaperMode: data.letterPaperMode ?? DEFAULT_SETTINGS.letterPaperMode,
-          paragraphIndent: data.paragraphIndent ?? DEFAULT_SETTINGS.paragraphIndent,
-          snapshotEnabled: data.snapshotEnabled ?? DEFAULT_SETTINGS.snapshotEnabled,
-          snapshotFolder: data.snapshotFolder ?? DEFAULT_SETTINGS.snapshotFolder,
-          snapshotIntervalMinutes: data.snapshotIntervalMinutes ?? DEFAULT_SETTINGS.snapshotIntervalMinutes,
-          snapshotIdleMinutes: data.snapshotIdleMinutes ?? DEFAULT_SETTINGS.snapshotIdleMinutes,
-          snapshotMaxPerFile: data.snapshotMaxPerFile ?? DEFAULT_SETTINGS.snapshotMaxPerFile,
-          snapshotOnlyDrafts: data.snapshotOnlyDrafts ?? DEFAULT_SETTINGS.snapshotOnlyDrafts,
-          immersiveMode: data.immersiveMode ?? DEFAULT_SETTINGS.immersiveMode,
-          immersiveParagraphHighlight: data.immersiveParagraphHighlight ?? DEFAULT_SETTINGS.immersiveParagraphHighlight,
-          hemingwayMode: data.hemingwayMode ?? DEFAULT_SETTINGS.hemingwayMode,
-          dailyDisplayMode: data.dailyDisplayMode ?? DEFAULT_SETTINGS.dailyDisplayMode,
-          typewriterMode: data.typewriterMode ?? DEFAULT_SETTINGS.typewriterMode,
-          typewriterOffset: data.typewriterOffset ?? DEFAULT_SETTINGS.typewriterOffset,
-          punctuationAssist: data.punctuationAssist ?? DEFAULT_SETTINGS.punctuationAssist,
-          hardBreakOnEnter: data.hardBreakOnEnter ?? DEFAULT_SETTINGS.hardBreakOnEnter,
-          dailyGoal: data.dailyGoal ?? DEFAULT_SETTINGS.dailyGoal,
-          wordCountMode: data.wordCountMode ?? DEFAULT_SETTINGS.wordCountMode,
-          showSpeed: data.showSpeed ?? DEFAULT_SETTINGS.showSpeed,
+          lineHeight: pick(data.lineHeight, DEFAULT_SETTINGS.lineHeight),
+          paragraphSpacing: pick(data.paragraphSpacing, DEFAULT_SETTINGS.paragraphSpacing),
+          letterPaperMode: pick(data.letterPaperMode, DEFAULT_SETTINGS.letterPaperMode),
+          paragraphIndent: pick(data.paragraphIndent, DEFAULT_SETTINGS.paragraphIndent),
+          snapshotEnabled: pick(data.snapshotEnabled, DEFAULT_SETTINGS.snapshotEnabled),
+          snapshotFolder: pick(data.snapshotFolder, DEFAULT_SETTINGS.snapshotFolder),
+          snapshotIntervalMinutes: pick(data.snapshotIntervalMinutes, DEFAULT_SETTINGS.snapshotIntervalMinutes),
+          snapshotIdleMinutes: pick(data.snapshotIdleMinutes, DEFAULT_SETTINGS.snapshotIdleMinutes),
+          snapshotMaxPerFile: pick(data.snapshotMaxPerFile, DEFAULT_SETTINGS.snapshotMaxPerFile),
+          snapshotOnlyDrafts: pick(data.snapshotOnlyDrafts, DEFAULT_SETTINGS.snapshotOnlyDrafts),
+          immersiveMode: pick(data.immersiveMode, DEFAULT_SETTINGS.immersiveMode),
+          immersiveParagraphHighlight: pick(data.immersiveParagraphHighlight, DEFAULT_SETTINGS.immersiveParagraphHighlight),
+          hemingwayMode: pick(data.hemingwayMode, DEFAULT_SETTINGS.hemingwayMode),
+          dailyDisplayMode: pick(data.dailyDisplayMode, DEFAULT_SETTINGS.dailyDisplayMode),
+          typewriterMode: pick(data.typewriterMode, DEFAULT_SETTINGS.typewriterMode),
+          typewriterOffset: pick(data.typewriterOffset, DEFAULT_SETTINGS.typewriterOffset),
+          punctuationAssist: pick(data.punctuationAssist, DEFAULT_SETTINGS.punctuationAssist),
+          hardBreakOnEnter: pick(data.hardBreakOnEnter, DEFAULT_SETTINGS.hardBreakOnEnter),
+          dailyGoal: pick(data.dailyGoal, DEFAULT_SETTINGS.dailyGoal),
+          wordCountMode: pick(data.wordCountMode, DEFAULT_SETTINGS.wordCountMode),
+          showSpeed: pick(data.showSpeed, DEFAULT_SETTINGS.showSpeed),
           pomodoroFocusMinutes: DEFAULT_SETTINGS.pomodoroFocusMinutes,
           pomodoroBreakMinutes: DEFAULT_SETTINGS.pomodoroBreakMinutes,
           pomodoroLongBreakEvery: DEFAULT_SETTINGS.pomodoroLongBreakEvery,
@@ -2801,14 +2803,14 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
         // settings）。它们以前被硬写成 DEFAULT_SETTINGS，于是用户改过的值在加载时
         // 被默认值顶掉，再由 savePluginData 整文件覆盖写回 data.json —— 一次不可逆
         // 的配置丢失。这里补读一次：扁平键优先，其次读已经收进 settings 的那份。
-        const legacyFlat: Record<string, any> = {
-          ...((data.settings as any) || {}),
+        const legacyFlat: Record<string, unknown> = {
+          ...(asRecord<Record<string, unknown>>(data.settings) ?? {}),
           ...data,
         };
         const restoreFromLegacy = <K extends keyof WritingToolkitSettings>(
           key: K
         ): WritingToolkitSettings[K] =>
-          legacyFlat[key] ?? DEFAULT_SETTINGS[key];
+          pick(legacyFlat[key], DEFAULT_SETTINGS[key]);
         this.settings = {
           ...this.settings,
           themeTone: restoreFromLegacy("themeTone"),
@@ -2830,48 +2832,48 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
           sharedLibraryFolder: restoreFromLegacy("sharedLibraryFolder"),
         };
         // 老格式如有历史数据则保留，不主动清空
-        this.dailyHistory = data.dailyHistory || {};
-        this.dailyGrossHistory = data.dailyGrossHistory || {};
-        this.dailyDurationHistory = data.dailyDurationHistory || {};
-        this.projectHistory = data.projectHistory || {};
-        this.projectGrossHistory = data.projectGrossHistory || {};
-        this.projectDurationHistory = data.projectDurationHistory || {};
-        this.dailyFileDeltas = data.dailyFileDeltas || {};
-        this.dailyPomodoroHistory = data.dailyPomodoroHistory || {};
-        this.workbenchProject = data.workbenchProject ?? null;
+        this.dailyHistory = asRecord<DailyHistory>(data.dailyHistory) ?? {};
+        this.dailyGrossHistory = asRecord<DailyHistory>(data.dailyGrossHistory) ?? {};
+        this.dailyDurationHistory = asRecord<DailyHistory>(data.dailyDurationHistory) ?? {};
+        this.projectHistory = asRecord<Record<string, DailyHistory>>(data.projectHistory) ?? {};
+        this.projectGrossHistory = asRecord<Record<string, DailyHistory>>(data.projectGrossHistory) ?? {};
+        this.projectDurationHistory = asRecord<Record<string, DailyHistory>>(data.projectDurationHistory) ?? {};
+        this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
+        this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
+        this.workbenchProject = (data.workbenchProject as string | null | undefined) ?? null;
         this.workbenchMode = data.workbenchMode === "resources" ? "resources" : "chapters";
-        this.workbenchStatus = data.workbenchStatus ?? {};
-        this.hiddenProjects = data.hiddenProjects ?? {};
+        this.workbenchStatus = asRecord<Record<string, WorkbenchStatus>>(data.workbenchStatus) ?? {};
+        this.hiddenProjects = asRecord<Record<string, true>>(data.hiddenProjects) ?? {};
         this.homePage = normalizeHomePage(data.homePage);
-        this.projectCovers = data.projectCovers ?? {};
+        this.projectCovers = asRecord<Record<string, string>>(data.projectCovers) ?? {};
         this.libraryView = data.libraryView === "list" ? "list" : "grid";
-        this.fileBaselines = data.fileBaselines ?? {};
-        this.baselinesAt = data.baselinesAt ?? 0;
+        this.fileBaselines = asRecord<Record<string, number>>(data.fileBaselines) ?? {};
+        this.baselinesAt = pick(data.baselinesAt, 0);
       } else {
         // 白名单合并：只取 DEFAULT_SETTINGS 里存在的键，顺带清理已废弃字段（fontSize 等）
-        const loaded: any = data.settings || {};
-        const merged: any = { ...DEFAULT_SETTINGS };
+        const loadedSettings = asRecord<Record<string, unknown>>(data.settings) ?? {};
+        const merged = { ...DEFAULT_SETTINGS } as Record<string, unknown>;
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
-          if (loaded[key] !== undefined) merged[key] = loaded[key];
+          if (loadedSettings[key] !== undefined) merged[key] = loadedSettings[key];
         }
-        this.settings = merged;
-        this.dailyHistory = data.dailyHistory || {};
-        this.dailyGrossHistory = data.dailyGrossHistory || {};
-        this.dailyDurationHistory = data.dailyDurationHistory || {};
-        this.projectHistory = data.projectHistory || {};
-        this.projectGrossHistory = data.projectGrossHistory || {};
-        this.projectDurationHistory = data.projectDurationHistory || {};
-        this.dailyFileDeltas = data.dailyFileDeltas || {};
-        this.dailyPomodoroHistory = data.dailyPomodoroHistory || {};
-        this.workbenchProject = data.workbenchProject ?? null;
+        this.settings = merged as unknown as WritingToolkitSettings;
+        this.dailyHistory = asRecord<DailyHistory>(data.dailyHistory) ?? {};
+        this.dailyGrossHistory = asRecord<DailyHistory>(data.dailyGrossHistory) ?? {};
+        this.dailyDurationHistory = asRecord<DailyHistory>(data.dailyDurationHistory) ?? {};
+        this.projectHistory = asRecord<Record<string, DailyHistory>>(data.projectHistory) ?? {};
+        this.projectGrossHistory = asRecord<Record<string, DailyHistory>>(data.projectGrossHistory) ?? {};
+        this.projectDurationHistory = asRecord<Record<string, DailyHistory>>(data.projectDurationHistory) ?? {};
+        this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
+        this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
+        this.workbenchProject = (data.workbenchProject as string | null | undefined) ?? null;
         this.workbenchMode = data.workbenchMode === "resources" ? "resources" : "chapters";
-        this.workbenchStatus = data.workbenchStatus ?? {};
-        this.hiddenProjects = data.hiddenProjects ?? {};
+        this.workbenchStatus = asRecord<Record<string, WorkbenchStatus>>(data.workbenchStatus) ?? {};
+        this.hiddenProjects = asRecord<Record<string, true>>(data.hiddenProjects) ?? {};
         this.homePage = normalizeHomePage(data.homePage);
-        this.projectCovers = data.projectCovers ?? {};
+        this.projectCovers = asRecord<Record<string, string>>(data.projectCovers) ?? {};
         this.libraryView = data.libraryView === "list" ? "list" : "grid";
-        this.fileBaselines = data.fileBaselines ?? {};
-        this.baselinesAt = data.baselinesAt ?? 0;
+        this.fileBaselines = asRecord<Record<string, number>>(data.fileBaselines) ?? {};
+        this.baselinesAt = pick(data.baselinesAt, 0);
       }
     } else {
       this.settings = { ...DEFAULT_SETTINGS };
