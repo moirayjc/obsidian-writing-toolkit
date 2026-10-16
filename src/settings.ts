@@ -349,36 +349,14 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
       {
         title: "写作",
         build: (section) => {
-          this.group("打字机", section, (el) => {
-            new Setting(el)
-              .setName("打字机模式")
-              .setDesc("光标保持在上半屏，命令面板或快捷键切换")
-              .addToggle((toggle) =>
-                toggle
-                  .setValue(this.wt.settings.typewriterMode)
-                  .onChange(async (value) => {
-                    this.wt.settings.typewriterMode = value;
-                    this.wt.setTypewriterMode(value);
-                    await this.wt.saveSettings();
-                  })
-              );
-
-            new Setting(el)
-              .setName("光标稳定位置")
-              .setDesc("光标在编辑区中的垂直位置；40% 为默认上半屏位置")
-              .addSlider((slider) =>
-                slider
-                  .setLimits(20, 70, 5)
-                  .setValue(this.wt.settings.typewriterOffset * 100)
-                  .onChange(async (value) => {
-                    const offset = value / 100;
-                    this.wt.settings.typewriterOffset = offset;
-                    this.wt.setTypewriterOffset(offset);
-                    await this.wt.saveSettings();
-                  })
-              );
-          });
-
+          // 「打字机模式 / 光标位置 / 行高 / 段间距 / 段首缩进」以及「沉浸模式 /
+          // 高亮当前段落 / 中文标点辅助 / 海明威模式 / 信纸横线」都已经能从
+          // **工具箱侧栏**的「写作」标签直接调；设置页不再重复放一份，
+          // 免得同一个开关出现在两处、改完不知道哪个生效。
+          // 放侧栏也更顺手：开关后当场能看出效果（沉浸、段落高亮都有常驻预览）。
+          //
+          // 仍留在本页的是侧栏没有的：编辑工具条与范围、批注开关、回车即新段落、
+          // 配色主题、快照、章节识别、作品位置。
           this.group("编辑工具条", section, (el) => {
             new Setting(el)
               .setName("选中浮出格式工具条")
@@ -442,79 +420,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
           });
 
-          // 沉浸与编辑辅助：收进一张卡
-          const auxCard = this.card(section, "沉浸与辅助");
-          new Setting(auxCard)
-            .setName("沉浸模式")
-            .setDesc("隐藏外围界面，按 esc 退出")
-            .addToggle((toggle) =>
-              toggle.setValue(this.wt.settings.immersiveMode).onChange(async (value) => {
-                this.wt.settings.immersiveMode = value;
-                this.wt.setImmersiveMode(value);
-                await this.wt.saveSettings();
-              })
-            );
-
-          new Setting(auxCard)
-            .setName("高亮当前段落")
-            .setDesc("突出显示当前编辑段落")
-            .addToggle((toggle) =>
-              toggle.setValue(this.wt.settings.immersiveParagraphHighlight).onChange(async (value) => {
-                this.wt.settings.immersiveParagraphHighlight = value;
-                this.wt.setParagraphHighlight(value);
-                await this.wt.saveSettings();
-              })
-            );
-
-          new Setting(auxCard)
-            .setName("中文标点辅助")
-            .setDesc("输入中文左引号、括号和书名号时自动补全；英文标点不受影响")
-            .addToggle((toggle) =>
-              toggle
-                .setValue(this.wt.settings.punctuationAssist)
-                .onChange(async (value) => {
-                  this.wt.settings.punctuationAssist = value;
-                  this.wt.setPunctuationAssist(value);
-                  await this.wt.saveSettings();
-                })
-            );
-
-          new Setting(auxCard)
-            .setName("回车即新段落")
-            .setDesc("按一次回车直接插入段落分隔（空行），等同常规 Markdown 编辑器（如 Typora）的一次回车；Shift+Enter 仍为软换行，列表/标题/引用/代码块内保持 Obsidian 默认行为")
-            .addToggle((toggle) =>
-              toggle
-                .setValue(this.wt.settings.hardBreakOnEnter)
-                .onChange(async (value) => {
-                  this.wt.settings.hardBreakOnEnter = value;
-                  this.wt.setHardBreakOnEnter(value);
-                  await this.wt.saveSettings();
-                })
-            );
-
-          new Setting(auxCard)
-            .setName("信纸横线")
-            .setDesc("编辑区按行显示虚线标线（像信纸），随行高对齐；空行即段落分隔处自动断开，内容显示不受影响")
-            .addToggle((toggle) =>
-              toggle
-                .setValue(this.wt.settings.letterPaperMode)
-                .onChange(async (value) => {
-                  this.wt.settings.letterPaperMode = value;
-                  await this.wt.saveSettings();
-                })
-            );
-
-          new Setting(auxCard)
-            .setName("海明威模式")
-            .setDesc("锁定已有内容，只能向后追加写作，防回改；关闭后恢复自由编辑")
-            .addToggle((toggle) =>
-              toggle.setValue(this.wt.settings.hemingwayMode).onChange(async (value) => {
-                this.wt.settings.hemingwayMode = value;
-                this.wt.setHemingwayMode(value);
-                await this.wt.saveSettings();
-              })
-            );
-
           this.group("排版", section, (el) => {
             new Setting(el)
               .setName("配色主题")
@@ -530,43 +435,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 });
               });
 
-            new Setting(el)
-              .setName("行高")
-              .setDesc("1.6 ~ 2.0 为中文舒适区间")
-              .addSlider((slider) =>
-                slider
-                  .setLimits(1.2, 2.5, 0.1)
-                  .setValue(this.wt.settings.lineHeight)
-                  .onChange(async (value) => {
-                    this.wt.settings.lineHeight = value;
-                    await this.wt.saveSettings();
-                  })
-              );
-
-            new Setting(el)
-              .setName("段间距")
-              .setDesc("段落之间的额外间距，0.5em 较为适中")
-              .addSlider((slider) =>
-                slider
-                  .setLimits(0, 1.5, 0.1)
-                  .setValue(this.wt.settings.paragraphSpacing)
-                  .onChange(async (value) => {
-                    this.wt.settings.paragraphSpacing = value;
-                    await this.wt.saveSettings();
-                  })
-              );
-
-            new Setting(el)
-              .setName("段首缩进")
-              .setDesc("正文段首缩进两字符（符合中文习惯）；纯视觉缩进，不向文档写入空格，不会被误删；标题/列表/引用/代码块不缩进")
-              .addToggle((toggle) =>
-                toggle
-                  .setValue(this.wt.settings.paragraphIndent)
-                  .onChange(async (value) => {
-                    this.wt.settings.paragraphIndent = value;
-                    await this.wt.saveSettings();
-                  })
-              );
           });
         },
       },
