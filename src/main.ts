@@ -356,203 +356,15 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
       this.setTypewriterMode(true);
     }
 
-    this.addCommand({
-      id: "open-sidebar",
-      name: "打开工具箱",
-      callback: () => void this.openSidebar(),
-    });
 
-    this.addCommand({
-      id: "open-writing-workbench",
-      name: "打开编辑台",
-      callback: () => void this.openWorkbench(),
-    });
-
-    this.addCommand({
-      id: "open-workbench-home",
-      name: "打开主页",
-      callback: () => void this.openHome(),
-    });
-
-    this.addCommand({
-      id: "open-settings",
-      name: "打开设置",
-      callback: () => this.openSettings(),
-    });
-
-    this.addCommand({
-      id: "toggle-mobile-preview",
-      name: "切换手机版布局预览（桌面调试）",
-      checkCallback: (checking) => {
-        if (isPhoneDevice()) return false;
-        if (!checking) {
-          const on = toggleMobilePreview();
-          new Notice(
-            on
-              ? "已开启手机版布局预览，随时再执行本命令关闭"
-              : "已关闭手机版布局预览"
-          );
-        }
-        return true;
-      },
-    });
-
-    // 格式命令：与浮出工具条同一套逻辑，选中文字后从命令面板 / 快捷键调用
-    const formatCommands: { id: string; name: string; kind: FormatKind }[] = [
-      { id: "format-bold", name: "格式：加粗", kind: "bold" },
-      { id: "format-italic", name: "格式：斜体", kind: "italic" },
-      { id: "format-underline", name: "格式：下划线", kind: "underline" },
-      { id: "format-strike", name: "格式：删除线", kind: "strike" },
-      { id: "format-highlight", name: "格式：高亮", kind: "highlight" },
-      { id: "format-color", name: "格式：字色（上次使用的颜色）", kind: "color" },
-    ];
-    for (const cmd of formatCommands) {
-      this.addCommand({
-        id: cmd.id,
-        name: cmd.name,
-        editorCallback: (editor) => this.applyFormatToEditor(editor, cmd.kind),
-      });
-    }
-
-    // 诊断命令：气泡不出现时用它一键收集各环节状态（报告写到库里的文件）
-    this.addCommand({
-      id: "format-selfcheck",
-      name: "格式：自检（排查工具条不出现）",
-      callback: () => {
-        void this.runFormatSelfCheck();
-      },
-    });
-
-    // 诊断命令：批注标记没出现 / 跳转不对时用
-    this.addCommand({
-      id: "comment-selfcheck",
-      name: "批注：自检（排查标记不出现、跳转不对）",
-      callback: () => {
-        void this.runDiagnostic("批注");
-      },
-    });
-
-    // 诊断命令：字数不动 / 数字对不上时用
-    this.addCommand({
-      id: "stats-selfcheck",
-      name: "统计：自检（排查字数不动、数字对不上）",
-      callback: () => {
-        void this.runDiagnostic("字数统计");
-      },
-    });
-
-    // 一条命令拿到全部现场（格式 + 批注 + 统计），适合「说不清哪里不对」时
-    this.addCommand({
-      id: "full-selfcheck",
-      name: "自检：全部（格式 + 批注 + 统计）",
-      callback: () => {
-        void this.runDiagnostic("全部");
-      },
-    });
-
-    // 批注：与 Agent 协作的核心工作流（你批注 → Agent 读批注文件改稿）
-    this.addCommand({
-      id: "comment-add",
-      name: "批注：为选中文字添加批注",
-      editorCallback: (editor) => {
-        const view = (editor as any).cm as EditorView | undefined;
-        if (view) this.addCommentForView(view);
-      },
-    });
-
-    this.addCommand({
-      id: "comment-copy-agent-prompt",
-      name: "批注：复制给 Agent 的处理指令",
-      callback: () => this.copyAgentPrompt(),
-    });
-
-    this.addCommand({
-      id: "comment-clear-resolved",
-      name: "批注：清除已处理的批注",
-      checkCallback: (checking) => {
-        if (!this.activeCommentDocPath()) return false;
-        if (!checking) void this.clearResolvedComments();
-        return true;
-      },
-    });
-
-    this.addRibbonIcon("pen-line", "打开工具箱", () => {
-      void this.openSidebar();
-    });
-
-    this.addRibbonIcon("library-big", "打开编辑台", () => {
-      void this.openWorkbench();
-    });
-
-    this.addRibbonIcon("layout-dashboard", "打开主页", () => {
-      void this.openHome();
-    });
+    this.registerCommands();
 
 
-    // 右键菜单：选中文字后可直接添加批注（批注文件自身、未选中文字时不出现）
-    this.registerEvent(
-      this.app.workspace.on("editor-menu", (menu, editor) => {
-        if (!this.settings.commentsEnabled) return;
-        const view = (editor as any).cm as EditorView | undefined;
-        if (!view) return;
-        const path =
-          view.state.field(editorInfoField, false)?.file?.path ?? null;
-        if (!path || isSidecarPath(path)) return;
-        if (
-          !this.settings.commentBubbleEverywhere &&
-          !this.formatToolbarAllowed(path)
-        ) {
-          return;
-        }
-        if (editor.getSelection().trim() === "") return;
-        menu.addItem((item) =>
-          item
-            .setTitle("添加批注")
-            .setIcon("message-square")
-            .onClick(() => this.addCommentForView(view))
-        );
-      })
-    );
 
-    // 长按出菜单后吞掉紧随其后的 click；经 registerDomEvent 注册，卸载时自动移除
-    this.registerDomEvent(document, "click", handleSuppressedClick, true);
-    this.registerDomEvent(document, "keydown", (event: KeyboardEvent) => {
-      if (event.key === "Escape" && this.settings.immersiveMode) {
-        this.settings.immersiveMode = false;
-        this.setImmersiveMode(false);
-        this.refreshImmersiveControls();
-        void this.saveSettings();
-      }
-    });
+    this.registerCommentInteractions();
 
-    this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => {
-        this.ensureCurrentDay();
-        this.lastWritingActivityAt = 0;
-        this.snapshotManager.onFileSwitch();
-        this.refreshSnapshotPanel();
-        const file = this.app.workspace.getActiveFile();
-        const text = this.getActiveEditorText();
-        if (file && text !== null) {
-          // 先用旧文件内容结算本番茄增量，再切换 getCount() 所依赖的最近文本。
-          this.pomodoro?.rebaseBaseCount(true);
-          this.lastKnownPath = file.path;
-          this.lastKnownText = text;
-          this.lastEditor = this.getActiveEditor();
-          // 再以新文件字数设基线，避免把两份文档的总字数相减。
-          this.pomodoro?.rebaseBaseCount();
-          this.statusBar.onFileChange(file.path, text);
-          this.statusBar.setSelectionText(this.getActiveEditorSelection());
-          this.statusBar.setState({
-            dailyTotal: this.dailyTotal,
-            dailyGross: this.dailyGross,
-            dailyGoal: this.settings.dailyGoal,
-            wordCountMode: this.settings.wordCountMode,
-            showSpeed: this.settings.showSpeed,
-          });
-        }
-      })
-    );
+
+    this.registerWorkspaceEvents();
 
     this.registerDomEvent(document, "selectionchange", () => {
       this.statusBar.setSelectionText(this.getActiveEditorSelection());
@@ -564,114 +376,221 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
       })
     );
 
-    this.registerEvent(
-      this.app.vault.on("modify", (file) => {
-        if (!(file instanceof TFile)) return;
-        // 批注文件被外部（Agent / 手动编辑）改写：缓存失效并刷新标记与面板
-        const commentDoc = this.commentStore.handleModified(file.path);
-        if (commentDoc) this.onCommentsChanged(commentDoc);
-        this.handleVaultModify(file);
-      })
-    );
 
-    // 打开文件时预加载它的批注（批注文件则预加载对应源文档的）
-    this.registerEvent(
-      this.app.workspace.on("file-open", (file) => {
-        if (file instanceof TFile && file.extension === "md") {
-          this.primeComments(
-            isSidecarPath(file.path)
-              ? docPathForSidecar(file.path)
-              : file.path
-          );
-        }
-        this.refreshCommentViews();
-      })
-    );
+    this.registerVaultEvents();
 
-    // 外部工具新建的章节文件：Obsidian 有时只发 create 不发 modify
-    this.registerEvent(
-      this.app.vault.on("create", (file) => {
-        this.invalidateProjectIndex();
-        if (file instanceof TFile) {
-          // 外部（Agent）新写的批注文件：同样让缓存失效并刷新
-          const commentDoc = this.commentStore.handleModified(file.path);
-          if (commentDoc) this.onCommentsChanged(commentDoc);
-          this.handleVaultModify(file);
-        }
-      })
-    );
 
-    // 源文件/文件夹重命名或移动时，同步迁移所有按路径记录的状态：
-    // 快照镜像、项目统计 key、活动文件引用、字数基线
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => {
-        this.invalidateProjectIndex();
-        if (file instanceof TFile) {
-          if (this.lastKnownPath === oldPath) this.lastKnownPath = file.path;
-          this.statusBar.onFileRename(oldPath, file.path);
-          this.migrateBaselineKey(oldPath, file.path);
-          this.migrateCoverPaths(oldPath, file.path);
-          // 批注：侧车本身改名 → 缓存失效；源文档改名 → 把批注文件一起搬走
-          for (const docPath of this.commentStore.handleRenamed(
-            oldPath,
-            file.path
-          )) {
-            this.onCommentsChanged(docPath);
-          }
-          if (
-            file.extension === "md" &&
-            !isSidecarPath(oldPath) &&
-            !isSidecarPath(file.path) &&
-            !isInternalPath(oldPath) &&
-            !isInternalPath(file.path)
-          ) {
-            void this.migrateCommentSidecar(oldPath, file.path);
-          }
-        } else if (file instanceof TFolder) {
-          this.migrateProjectKeysOnRename(file.path, oldPath);
-          this.migrateCoverPaths(oldPath, file.path);
-          this.migrateBaselinePrefix(oldPath, file.path);
-        }
-        this.snapshotManager.onRename(file, oldPath);
-      })
-    );
+    this.restoreInitialDocument();
+  }
 
-    // 正文改名/移动（不论从哪触发）后，把 .wt-outlines 下的章纲一起搬走，
-    // 否则章纲会按新路径找不到，表现为「脱钩」。
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => {
-        if (!oldPath || isInternalPath(oldPath) || isInternalPath(file.path)) return;
-        const isMarkdown = file instanceof TFile && file.extension === "md";
-        const isFolder = file instanceof TFolder;
-        if (!isMarkdown && !isFolder) return;
-        void migrateOutlineSidecar(this.app, oldPath, file.path);
-      })
-    );
+  /**
+   * 命令与功能区图标（命令面板的全部入口）。
+   *
+   * 2026-10-16 从 onload 里**原样搬出来**的：onload 原来 478 行、什么都干，
+   * 拆开后每个注册面各归一处；调用位置与顺序保持不变，初始化时序不受影响。
+   */
+  private registerCommands(): void {
+  this.addCommand({
+    id: "open-sidebar",
+    name: "打开工具箱",
+    callback: () => void this.openSidebar(),
+  });
 
-    // 文件删掉后旧基线一起清掉，避免同路径重建时拿旧数字做差
-    this.registerEvent(
-      this.app.vault.on("delete", (file) => {
-        this.invalidateProjectIndex();
-        if (file instanceof TFile) {
-          this.statusBar.dropBaseline(file.path);
-          // 批注文件被删：对应文档的批注视为清空
-          const commentDoc = this.commentStore.handleDeleted(file.path);
-          if (commentDoc) this.onCommentsChanged(commentDoc);
-        } else if (file instanceof TFolder) {
-          this.migrateBaselinePrefix(file.path, null);
-          this.dropProjectKeys(file.path);
-        }
-      })
-    );
+  this.addCommand({
+    id: "open-writing-workbench",
+    name: "打开编辑台",
+    callback: () => void this.openWorkbench(),
+  });
 
-    const initialFile = this.app.workspace.getActiveFile();
-    if (initialFile) {
+  this.addCommand({
+    id: "open-workbench-home",
+    name: "打开主页",
+    callback: () => void this.openHome(),
+  });
+
+  this.addCommand({
+    id: "open-settings",
+    name: "打开设置",
+    callback: () => this.openSettings(),
+  });
+
+  this.addCommand({
+    id: "toggle-mobile-preview",
+    name: "切换手机版布局预览（桌面调试）",
+    checkCallback: (checking) => {
+      if (isPhoneDevice()) return false;
+      if (!checking) {
+        const on = toggleMobilePreview();
+        new Notice(
+          on
+            ? "已开启手机版布局预览，随时再执行本命令关闭"
+            : "已关闭手机版布局预览"
+        );
+      }
+      return true;
+    },
+  });
+
+  // 格式命令：与浮出工具条同一套逻辑，选中文字后从命令面板 / 快捷键调用
+  const formatCommands: { id: string; name: string; kind: FormatKind }[] = [
+    { id: "format-bold", name: "格式：加粗", kind: "bold" },
+    { id: "format-italic", name: "格式：斜体", kind: "italic" },
+    { id: "format-underline", name: "格式：下划线", kind: "underline" },
+    { id: "format-strike", name: "格式：删除线", kind: "strike" },
+    { id: "format-highlight", name: "格式：高亮", kind: "highlight" },
+    { id: "format-color", name: "格式：字色（上次使用的颜色）", kind: "color" },
+  ];
+  for (const cmd of formatCommands) {
+    this.addCommand({
+      id: cmd.id,
+      name: cmd.name,
+      editorCallback: (editor) => this.applyFormatToEditor(editor, cmd.kind),
+    });
+  }
+
+  // 诊断命令：气泡不出现时用它一键收集各环节状态（报告写到库里的文件）
+  this.addCommand({
+    id: "format-selfcheck",
+    name: "格式：自检（排查工具条不出现）",
+    callback: () => {
+      void this.runFormatSelfCheck();
+    },
+  });
+
+  // 诊断命令：批注标记没出现 / 跳转不对时用
+  this.addCommand({
+    id: "comment-selfcheck",
+    name: "批注：自检（排查标记不出现、跳转不对）",
+    callback: () => {
+      void this.runDiagnostic("批注");
+    },
+  });
+
+  // 诊断命令：字数不动 / 数字对不上时用
+  this.addCommand({
+    id: "stats-selfcheck",
+    name: "统计：自检（排查字数不动、数字对不上）",
+    callback: () => {
+      void this.runDiagnostic("字数统计");
+    },
+  });
+
+  // 一条命令拿到全部现场（格式 + 批注 + 统计），适合「说不清哪里不对」时
+  this.addCommand({
+    id: "full-selfcheck",
+    name: "自检：全部（格式 + 批注 + 统计）",
+    callback: () => {
+      void this.runDiagnostic("全部");
+    },
+  });
+
+  // 批注：与 Agent 协作的核心工作流（你批注 → Agent 读批注文件改稿）
+  this.addCommand({
+    id: "comment-add",
+    name: "批注：为选中文字添加批注",
+    editorCallback: (editor) => {
+      const view = (editor as any).cm as EditorView | undefined;
+      if (view) this.addCommentForView(view);
+    },
+  });
+
+  this.addCommand({
+    id: "comment-copy-agent-prompt",
+    name: "批注：复制给 Agent 的处理指令",
+    callback: () => this.copyAgentPrompt(),
+  });
+
+  this.addCommand({
+    id: "comment-clear-resolved",
+    name: "批注：清除已处理的批注",
+    checkCallback: (checking) => {
+      if (!this.activeCommentDocPath()) return false;
+      if (!checking) void this.clearResolvedComments();
+      return true;
+    },
+  });
+
+  this.addRibbonIcon("pen-line", "打开工具箱", () => {
+    void this.openSidebar();
+  });
+
+  this.addRibbonIcon("library-big", "打开编辑台", () => {
+    void this.openWorkbench();
+  });
+
+  this.addRibbonIcon("layout-dashboard", "打开主页", () => {
+    void this.openHome();
+  });
+  }
+
+  /**
+   * 右键菜单加批注、长按吞掉 click、Esc 退出沉浸。
+   *
+   * 2026-10-16 从 onload 里**原样搬出来**的：onload 原来 478 行、什么都干，
+   * 拆开后每个注册面各归一处；调用位置与顺序保持不变，初始化时序不受影响。
+   */
+  private registerCommentInteractions(): void {
+  // 右键菜单：选中文字后可直接添加批注（批注文件自身、未选中文字时不出现）
+  this.registerEvent(
+    this.app.workspace.on("editor-menu", (menu, editor) => {
+      if (!this.settings.commentsEnabled) return;
+      const view = (editor as any).cm as EditorView | undefined;
+      if (!view) return;
+      const path =
+        view.state.field(editorInfoField, false)?.file?.path ?? null;
+      if (!path || isSidecarPath(path)) return;
+      if (
+        !this.settings.commentBubbleEverywhere &&
+        !this.formatToolbarAllowed(path)
+      ) {
+        return;
+      }
+      if (editor.getSelection().trim() === "") return;
+      menu.addItem((item) =>
+        item
+          .setTitle("添加批注")
+          .setIcon("message-square")
+          .onClick(() => this.addCommentForView(view))
+      );
+    })
+  );
+
+  // 长按出菜单后吞掉紧随其后的 click；经 registerDomEvent 注册，卸载时自动移除
+  this.registerDomEvent(document, "click", handleSuppressedClick, true);
+  this.registerDomEvent(document, "keydown", (event: KeyboardEvent) => {
+    if (event.key === "Escape" && this.settings.immersiveMode) {
+      this.settings.immersiveMode = false;
+      this.setImmersiveMode(false);
+      this.refreshImmersiveControls();
+      void this.saveSettings();
+    }
+  });
+  }
+
+  /**
+   * 文件切换 / 选中变化 / 编辑输入。
+   *
+   * 2026-10-16 从 onload 里**原样搬出来**的：onload 原来 478 行、什么都干，
+   * 拆开后每个注册面各归一处；调用位置与顺序保持不变，初始化时序不受影响。
+   */
+  private registerWorkspaceEvents(): void {
+  this.registerEvent(
+    this.app.workspace.on("active-leaf-change", () => {
+      this.ensureCurrentDay();
+      this.lastWritingActivityAt = 0;
+      this.snapshotManager.onFileSwitch();
+      this.refreshSnapshotPanel();
+      const file = this.app.workspace.getActiveFile();
       const text = this.getActiveEditorText();
-      if (text !== null) {
-        this.lastKnownPath = initialFile.path;
+      if (file && text !== null) {
+        // 先用旧文件内容结算本番茄增量，再切换 getCount() 所依赖的最近文本。
+        this.pomodoro?.rebaseBaseCount(true);
+        this.lastKnownPath = file.path;
         this.lastKnownText = text;
         this.lastEditor = this.getActiveEditor();
-        this.statusBar.onFileChange(initialFile.path, text);
+        // 再以新文件字数设基线，避免把两份文档的总字数相减。
+        this.pomodoro?.rebaseBaseCount();
+        this.statusBar.onFileChange(file.path, text);
         this.statusBar.setSelectionText(this.getActiveEditorSelection());
         this.statusBar.setState({
           dailyTotal: this.dailyTotal,
@@ -681,7 +600,143 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
           showSpeed: this.settings.showSpeed,
         });
       }
+    })
+  );
+  }
+
+  /**
+   * 库文件增删改：批注缓存、基线、作品索引、章纲。
+   *
+   * 2026-10-16 从 onload 里**原样搬出来**的：onload 原来 478 行、什么都干，
+   * 拆开后每个注册面各归一处；调用位置与顺序保持不变，初始化时序不受影响。
+   */
+  private registerVaultEvents(): void {
+  this.registerEvent(
+    this.app.vault.on("modify", (file) => {
+      if (!(file instanceof TFile)) return;
+      // 批注文件被外部（Agent / 手动编辑）改写：缓存失效并刷新标记与面板
+      const commentDoc = this.commentStore.handleModified(file.path);
+      if (commentDoc) this.onCommentsChanged(commentDoc);
+      this.handleVaultModify(file);
+    })
+  );
+
+  // 打开文件时预加载它的批注（批注文件则预加载对应源文档的）
+  this.registerEvent(
+    this.app.workspace.on("file-open", (file) => {
+      if (file instanceof TFile && file.extension === "md") {
+        this.primeComments(
+          isSidecarPath(file.path)
+            ? docPathForSidecar(file.path)
+            : file.path
+        );
+      }
+      this.refreshCommentViews();
+    })
+  );
+
+  // 外部工具新建的章节文件：Obsidian 有时只发 create 不发 modify
+  this.registerEvent(
+    this.app.vault.on("create", (file) => {
+      this.invalidateProjectIndex();
+      if (file instanceof TFile) {
+        // 外部（Agent）新写的批注文件：同样让缓存失效并刷新
+        const commentDoc = this.commentStore.handleModified(file.path);
+        if (commentDoc) this.onCommentsChanged(commentDoc);
+        this.handleVaultModify(file);
+      }
+    })
+  );
+
+  // 源文件/文件夹重命名或移动时，同步迁移所有按路径记录的状态：
+  // 快照镜像、项目统计 key、活动文件引用、字数基线
+  this.registerEvent(
+    this.app.vault.on("rename", (file, oldPath) => {
+      this.invalidateProjectIndex();
+      if (file instanceof TFile) {
+        if (this.lastKnownPath === oldPath) this.lastKnownPath = file.path;
+        this.statusBar.onFileRename(oldPath, file.path);
+        this.migrateBaselineKey(oldPath, file.path);
+        this.migrateCoverPaths(oldPath, file.path);
+        // 批注：侧车本身改名 → 缓存失效；源文档改名 → 把批注文件一起搬走
+        for (const docPath of this.commentStore.handleRenamed(
+          oldPath,
+          file.path
+        )) {
+          this.onCommentsChanged(docPath);
+        }
+        if (
+          file.extension === "md" &&
+          !isSidecarPath(oldPath) &&
+          !isSidecarPath(file.path) &&
+          !isInternalPath(oldPath) &&
+          !isInternalPath(file.path)
+        ) {
+          void this.migrateCommentSidecar(oldPath, file.path);
+        }
+      } else if (file instanceof TFolder) {
+        this.migrateProjectKeysOnRename(file.path, oldPath);
+        this.migrateCoverPaths(oldPath, file.path);
+        this.migrateBaselinePrefix(oldPath, file.path);
+      }
+      this.snapshotManager.onRename(file, oldPath);
+    })
+  );
+
+  // 正文改名/移动（不论从哪触发）后，把 .wt-outlines 下的章纲一起搬走，
+  // 否则章纲会按新路径找不到，表现为「脱钩」。
+  this.registerEvent(
+    this.app.vault.on("rename", (file, oldPath) => {
+      if (!oldPath || isInternalPath(oldPath) || isInternalPath(file.path)) return;
+      const isMarkdown = file instanceof TFile && file.extension === "md";
+      const isFolder = file instanceof TFolder;
+      if (!isMarkdown && !isFolder) return;
+      void migrateOutlineSidecar(this.app, oldPath, file.path);
+    })
+  );
+
+  // 文件删掉后旧基线一起清掉，避免同路径重建时拿旧数字做差
+  this.registerEvent(
+    this.app.vault.on("delete", (file) => {
+      this.invalidateProjectIndex();
+      if (file instanceof TFile) {
+        this.statusBar.dropBaseline(file.path);
+        // 批注文件被删：对应文档的批注视为清空
+        const commentDoc = this.commentStore.handleDeleted(file.path);
+        if (commentDoc) this.onCommentsChanged(commentDoc);
+      } else if (file instanceof TFolder) {
+        this.migrateBaselinePrefix(file.path, null);
+        this.dropProjectKeys(file.path);
+      }
+    })
+  );
+  }
+
+  /**
+   * 把最先打开的文件记成当前文档，状态栏立刻有数。
+   *
+   * 2026-10-16 从 onload 里**原样搬出来**的：onload 原来 478 行、什么都干，
+   * 拆开后每个注册面各归一处；调用位置与顺序保持不变，初始化时序不受影响。
+   */
+  private restoreInitialDocument(): void {
+  const initialFile = this.app.workspace.getActiveFile();
+  if (initialFile) {
+    const text = this.getActiveEditorText();
+    if (text !== null) {
+      this.lastKnownPath = initialFile.path;
+      this.lastKnownText = text;
+      this.lastEditor = this.getActiveEditor();
+      this.statusBar.onFileChange(initialFile.path, text);
+      this.statusBar.setSelectionText(this.getActiveEditorSelection());
+      this.statusBar.setState({
+        dailyTotal: this.dailyTotal,
+        dailyGross: this.dailyGross,
+        dailyGoal: this.settings.dailyGoal,
+        wordCountMode: this.settings.wordCountMode,
+        showSpeed: this.settings.showSpeed,
+      });
     }
+  }
   }
 
   onunload() {
