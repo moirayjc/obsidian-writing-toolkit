@@ -10,6 +10,12 @@
 # 词表（真实作品名等）放在 .git/wt-blocklist.txt —— 刻意不进版本库，
 # 否则这个词表本身就成了泄露源。文件不存在时只做通用检查。
 #
+# 首次设置词表（每行一个词，# 开头为注释）：
+#   printf '%s\n' '作品名一' '角色名一' > .git/wt-blocklist.txt
+# 安装 pre-commit 钩子（提交前自动跑本例的 --staged 模式）：
+#   printf '#!/usr/bin/env bash\nroot="$(git rev-parse --show-toplevel)" || exit 0\n[ -x "$root/tools/release-check.sh" ] || exit 0\nexec "$root/tools/release-check.sh" --staged\n' > .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
 # 退出码：0 干净 / 1 发现疑似泄露
 
 set -uo pipefail
@@ -93,11 +99,4 @@ if [ "$hits" -gt 0 ]; then
   exit 1
 fi
 printf '\033[32m体检通过：未发现真实作品名、私密路径或不该提交的文件。\033[0m\n'
-
-cat <<'TIP'
-
-提示：真实作品名清单放在 .git/wt-blocklist.txt（每行一个，不进版本库）。
-      首次使用可这样建立：
-        printf '%s\n' '作品名一' '作品名二' '角色名一' > .git/wt-blocklist.txt
-      并确保 .gitignore 里有 .wt-blocklist.txt（备份用）。
-TIP
+exit 0
