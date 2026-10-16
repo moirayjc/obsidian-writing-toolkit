@@ -16,6 +16,8 @@ CHECKS=(
   "check-commentstore.js:批注存储 CommentStore"
   "check-loaddata.js:设置加载 loadPluginData"
   "check-vault.js:作品识别 project"
+  "check-diagnostics.js:诊断计数与自检报告"
+  "check-hooks.js:诊断埋点守卫"
 )
 
 failed=""

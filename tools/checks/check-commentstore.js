@@ -42,37 +42,17 @@ const DOC = "正文/第1章.md";
 const SIDECAR = "正文/第1章.批注.md";
 
 async function main() {
-  const Module = require("module");
-  // 先装桩：编译产物在 --external:obsidian 下会 require("obsidian")，必须在加载前就位
-  const restore = H.stubObsidian({ TFile });
-  let comments, storeSrc;
+  // 直接编译模块（esbuild 会把 comments/diagnostics 一并打进来），只桩掉 obsidian。
+  // 早先的写法是从 main.js 切段落，但 commentStore 一旦新增内部依赖就会缺模块——
+  // 编译整个模块更健壮，代价是验的是源码而非产物（两者由 npm run build 保证一致）。
+  const restore = H.stubObsidian({ TFile, TFolder: class {} });
+  let comments, CommentStore;
   try {
     comments = H.compile("src/comments.ts", "comments");
-    storeSrc = H.sliceBundleModule("commentStore.ts")
-      // 段落自带 require("obsidian")，上面已注入同名变量，去掉以免重复声明
-      .replace(/^var import_obsidian6 = require\("obsidian"\);\n/m, "");
+    ({ CommentStore } = H.compile("src/commentStore.ts", "commentStore"));
   } finally {
     restore();
   }
-
-  const restore2 = H.stubObsidian({ TFile });
-  const mod = new Module("commentstore-under-test");
-  mod._compile(
-    `
-    const import_obsidian6 = require("obsidian");
-    const __c = require(${JSON.stringify(path.join(H.TMP, "comments.js"))});
-    const isSidecarPath = __c.isSidecarPath;
-    const sidecarPathFor = __c.sidecarPathFor;
-    const docPathForSidecar = __c.docPathForSidecar;
-    const parseCommentFile = __c.parseCommentFile;
-    const serializeCommentFile = __c.serializeCommentFile;
-    ${storeSrc}
-    module.exports = { CommentStore };
-    `,
-    path.join(H.TMP, "commentstore-under-test.js")
-  );
-  const { CommentStore } = mod.exports;
-  restore2();
 
   const r = H.createReporter("CommentStore 缓存语义（src/commentStore.ts 真实实现）");
 

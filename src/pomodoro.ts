@@ -45,6 +45,11 @@ export class PomodoroTimer {
     private readonly events: PomodoroEvents
   ) {}
 
+  /** 自检用：番茄基准字数（未运行时为 null）。 */
+  getBaseCount(): number | null {
+    return this.baseCount;
+  }
+
   getState(): PomodoroState {
     const cfg = this.config();
     if (this.phase === "idle") {

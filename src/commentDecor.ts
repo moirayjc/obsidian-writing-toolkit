@@ -34,6 +34,13 @@ import {
   isSidecarPath,
   locateAll,
 } from "./comments";
+import {
+  commentBuilt,
+  commentDecorDiag,
+  commentError,
+  commentRefreshDispatched,
+  commentSkip,
+} from "./diagnostics";
 
 export interface CommentDecorConfig {
   /** 批注功能总开关（关闭时正文里不显示任何批注痕迹）。 */
@@ -53,13 +60,17 @@ export function dispatchCommentRefresh(view: EditorView | undefined): void {
   if (!view) return;
   if (view.composing) {
     // 输入法拼字期间 dispatch 会打断输入，稍后重试
+    commentDecorDiag.composingDeferred++;
     window.setTimeout(() => dispatchCommentRefresh(view), 400);
     return;
   }
+  const t0 = performance.now();
   try {
     view.dispatch({ effects: commentRefreshEffect.of(null) });
-  } catch {
-    // 视图已销毁等情况：忽略
+    commentRefreshDispatched(performance.now() - t0);
+  } catch (error) {
+    // 视图已销毁等情况：忽略，但要留痕（自检报告里能看到）
+    commentError("dispatchCommentRefresh", error);
   }
 }
 
@@ -136,22 +147,43 @@ function buildDecorations(
   state: EditorState,
   config: CommentDecorConfig
 ): DecorationSet {
-  if (!config.enabled()) return Decoration.none;
+  // 诊断：每条「为什么没走到构建」的判据都记一笔，供「批注：自检」报告使用
+  const startedAt = performance.now();
+  const finish = (reason: string | null, set: DecorationSet, extra?: {
+    located: number; via: Record<string, number>; marks: number; chips: number;
+  }): DecorationSet => {
+    const path = readDocPath(state);
+    if (reason) commentSkip(reason, path);
+    else if (extra) {
+      commentBuilt({ path: path ?? "（未知）", ms: performance.now() - startedAt, ...extra });
+    }
+    return set;
+  };
+
+  if (!config.enabled()) return finish("批注总开关关闭", Decoration.none);
   const path = readDocPath(state);
-  if (!path || isSidecarPath(path)) return Decoration.none;
+  if (!path) return finish("拿不到文档路径（editorInfoField 未就绪）", Decoration.none);
+  if (isSidecarPath(path)) return finish("当前文件是批注文件本身", Decoration.none);
   const comments = config.getComments(path);
-  if (!comments || comments.length === 0) return Decoration.none;
+  if (!comments) return finish("缓存未加载（还没预加载过这篇的批注）", Decoration.none);
+  if (comments.length === 0) return finish("这篇文档没有批注", Decoration.none);
 
   const docText = state.doc.toString();
   const located = locateAll(docText, comments);
-  if (located.length === 0) return Decoration.none;
+  if (located.length === 0) {
+    return finish(`定位失败：${comments.length} 条批注都没找到锚点`, Decoration.none);
+  }
 
   const ranges: Range<Decoration>[] = [];
+  const viaCount: Record<string, number> = {};
+  let marks = 0;
+  let chips = 0;
 
   // 正文里只有这两样痕迹：原文底色标记 + 行尾脚注序号；卡片都在工具箱面板。
   for (const item of located) {
     const c = item.comment;
     const migrated = isMigrated(item.via);
+    viaCount[item.via] = (viaCount[item.via] ?? 0) + 1;
     if (item.to > item.from && item.via !== "paragraph") {
       const classes = ["wt-comment-mark"];
       if (c.status === "resolved") classes.push("is-resolved");
@@ -165,6 +197,7 @@ function buildDecorations(
           },
         }).range(item.from, item.to)
       );
+      marks++;
     }
     const chipPos = item.to > item.from ? item.to : item.from;
     ranges.push(
@@ -173,9 +206,15 @@ function buildDecorations(
         side: 1,
       }).range(chipPos)
     );
+    chips++;
   }
 
-  return Decoration.set(ranges, true);
+  return finish(null, Decoration.set(ranges, true), {
+    located: located.length,
+    via: viaCount,
+    marks,
+    chips,
+  });
 }
 
 /* ---------- 扩展入口 ---------- */
@@ -183,7 +222,10 @@ function buildDecorations(
 export function buildCommentExtensions(config: CommentDecorConfig): Extension {
   // 标记 + 脚注号都由状态字段提供，数据变化时由 dispatchCommentRefresh 重建。
   const decorField = StateField.define<DecorationSet>({
-    create: (state) => buildDecorations(state, config),
+    create: (state) => {
+      commentDecorDiag.createCalls++;
+      return buildDecorations(state, config);
+    },
     update(value, tr) {
       const refresh = tr.effects.some((e) => e.is(commentRefreshEffect));
       if (
@@ -191,6 +233,7 @@ export function buildCommentExtensions(config: CommentDecorConfig): Extension {
         refresh ||
         readDocPath(tr.startState) !== readDocPath(tr.state)
       ) {
+        commentDecorDiag.eligible++;
         return buildDecorations(tr.state, config);
       }
       return value;

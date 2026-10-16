@@ -51,6 +51,16 @@ import {
 import { CommentStore } from "./commentStore";
 import { buildCommentExtensions, dispatchCommentRefresh } from "./commentDecor";
 import {
+  buildCommentDiagReport,
+  buildStatsDiagReport,
+  commentDecorDiag,
+  commentIoDiag,
+  recordLocate,
+  recordStatusRefresh,
+  statsApplied,
+  statsDiag,
+} from "./diagnostics";
+import {
   type CommentPanelHost,
   type CommentPanelItem,
   type CommentPanelModel,
@@ -410,6 +420,33 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
       name: "格式：自检（排查工具条不出现）",
       callback: () => {
         void this.runFormatSelfCheck();
+      },
+    });
+
+    // 诊断命令：批注标记没出现 / 跳转不对时用
+    this.addCommand({
+      id: "comment-selfcheck",
+      name: "批注：自检（排查标记不出现、跳转不对）",
+      callback: () => {
+        void this.runDiagnostic("批注");
+      },
+    });
+
+    // 诊断命令：字数不动 / 数字对不上时用
+    this.addCommand({
+      id: "stats-selfcheck",
+      name: "统计：自检（排查字数不动、数字对不上）",
+      callback: () => {
+        void this.runDiagnostic("字数统计");
+      },
+    });
+
+    // 一条命令拿到全部现场（格式 + 批注 + 统计），适合「说不清哪里不对」时
+    this.addCommand({
+      id: "full-selfcheck",
+      name: "自检：全部（格式 + 批注 + 统计）",
+      callback: () => {
+        void this.runDiagnostic("全部");
       },
     });
 
@@ -1254,6 +1291,11 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     const isExternalSync = this.lastExternalSyncText === text;
     if (isExternalSync) this.lastExternalSyncText = null;
 
+    // 诊断计数（「统计：自检」报告用）
+    statsDiag.editorChanges++;
+    if (isProgrammatic) statsDiag.programmaticIgnored++;
+    if (isExternalSync) statsDiag.externalSyncIgnored++;
+
     this.lastKnownPath = file.path;
     this.lastKnownText = text;
     this.lastEditor = editor;
@@ -1282,9 +1324,11 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
         this.applyDailyStats(file, delta, !isExternalSync);
       }
     } else {
+      statsDiag.skippedNotChapter++;
       this.lastWritingActivityAt = 0;
     }
 
+    const tStatus = performance.now();
     this.statusBar.setState({
       dailyTotal: this.dailyTotal,
       dailyGross: this.dailyGross,
@@ -1292,6 +1336,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
       wordCountMode: this.settings.wordCountMode,
       showSpeed: this.settings.showSpeed,
     });
+    recordStatusRefresh(performance.now() - tStatus);
     this.refreshSidebar(text);
   }
 
@@ -1302,7 +1347,11 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
    */
   private handleVaultModify(file: TFile): void {
     if (!file.extension || file.extension.toLowerCase() !== "md") return;
-    if (!this.isDailyCountFile(file.path)) return;
+    if (!this.isDailyCountFile(file.path)) {
+      statsDiag.skippedNotChapter++;
+      return;
+    }
+    statsDiag.vaultModifies++;
     // 串行处理：AI 连续多次写入时，避免多个异步读盘交错导致漏计或基线倒退
     this.externalModifyQueue = this.externalModifyQueue
       .then(() => this.processVaultModify(file))
@@ -1373,6 +1422,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
    * countDuration=false 用于外部/AI 修改：只统计字数，不虚增用户写作时长。
    */
   private applyDailyStats(file: TFile, delta: number, countDuration = true): void {
+    statsApplied(file.path, delta, countDuration);
     this.ensureCurrentDay();
     if (countDuration) this.recordWritingActivity();
     const project = this.getProjectForPath(file.path) ?? "未分组";
@@ -1984,8 +2034,10 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     }
     const comments = this.commentStore.getCached(docPath) ?? [];
     const docText = await this.readDocTextForLocate(docPath);
+    const tLocate = performance.now();
     const located =
       docText === null ? [] : locateAll(docText, comments);
+    recordLocate(performance.now() - tLocate);
     const byId = new Map(located.map((l) => [l.comment.id, l]));
     const items: CommentPanelItem[] = comments.map((c) => {
       const hit = byId.get(c.id);
@@ -2211,13 +2263,27 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     return lines.join("\n");
   }
 
-  /** 把诊断文本写进库里的报告文件；interactive=手动命令时给通知并复制剪贴板 */
-  private async writeDiagnosticReport(text: string, interactive: boolean): Promise<void> {
+  /**
+   * 把诊断文本写进库里的报告文件；interactive=手动命令时给通知并复制剪贴板。
+   * 文件名带时间戳，所以每次自检都留一份、不会覆盖上一次（排查问题时常要看前后对比）。
+   */
+  private async writeDiagnosticReport(
+    text: string,
+    interactive: boolean,
+    kind = "格式工具条"
+  ): Promise<void> {
     console.log(text);
+    // 文件名要文件系统安全：不能用 formatTimestamp（含空格与冒号）
+    const d = new Date();
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    const stamp =
+      `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}` +
+      `-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+    const name = `写作工具箱-${kind}自检报告-${stamp}.md`;
     const inbox = "0-收件箱";
     const reportPath = this.app.vault.getAbstractFileByPath(inbox)
-      ? `${inbox}/写作工具箱-自检报告.md`
-      : "写作工具箱-自检报告.md";
+      ? `${inbox}/${name}`
+      : name;
     try {
       const existing = this.app.vault.getAbstractFileByPath(reportPath);
       if (existing instanceof TFile) {
@@ -2226,7 +2292,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
         await this.app.vault.create(reportPath, text);
       }
       if (interactive) {
-        new Notice(`格式工具条自检完成，报告已写入「${reportPath}」`, 8000);
+        new Notice(`${kind}自检完成，报告已写入「${reportPath}」`, 8000);
       }
     } catch (error) {
       console.error("写作工具箱：自检报告写入失败", error);
@@ -2241,6 +2307,71 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
         // 剪贴板失败无妨，报告文件是主要途径
       }
     }
+  }
+
+  /* ---------- 自检：批注 / 字数统计 ---------- */
+
+  /** 采集批注相关的现场状态，组装报告文本。 */
+  private buildCommentDiagText(): string {
+    const docPath = this.activeCommentDocPath();
+    const sidecarPath = docPath ? sidecarPathFor(docPath) : "（无）";
+    const sidecarFile = docPath
+      ? this.app.vault.getAbstractFileByPath(sidecarPathFor(docPath))
+      : null;
+    return buildCommentDiagReport({
+      commentsEnabled: this.settings.commentsEnabled,
+      bubbleEverywhere: this.settings.commentBubbleEverywhere,
+      docPath,
+      cached: docPath ? this.commentStore.getCached(docPath) : undefined,
+      sidecarExists: sidecarFile instanceof TFile,
+      sidecarPath,
+      sidecarSize: sidecarFile instanceof TFile ? sidecarFile.stat.size : null,
+    });
+  }
+
+  /** 采集字数统计相关的现场状态，组装报告文本。 */
+  private buildStatsDiagText(): string {
+    const cur = this.statusBar.getCurrentDoc();
+    const path = cur.path || this.lastKnownPath;
+    return buildStatsDiagReport({
+      wordCountMode: this.settings.wordCountMode,
+      dailyGoal: this.settings.dailyGoal,
+      todayStr: this.todayStr,
+      dailyTotal: this.dailyTotal,
+      dailyGross: this.dailyGross,
+      dailyDurationSeconds: this.dailyDurationSeconds,
+      fileBaselineCount: Object.keys(this.fileBaselines).length,
+      baselinesAt: this.baselinesAt,
+      isCountedFile: path ? this.isDailyCountFile(path) : false,
+      currentPath: path,
+      currentWords: cur.words,
+      pomodoroBaseCount: this.pomodoro?.getBaseCount() ?? null,
+      pendingExternal: 0,
+    });
+  }
+
+  /** 生成单份报告并落盘（命令入口用）。 */
+  private async runDiagnostic(kind: "批注" | "字数统计" | "全部"): Promise<void> {
+    if (kind === "全部") {
+      const text = [
+        this.buildFormatSelfCheckText("「全部自检」命令"),
+        "",
+        "---",
+        "",
+        this.buildCommentDiagText(),
+        "",
+        "---",
+        "",
+        this.buildStatsDiagText(),
+      ].join("\n");
+      await this.writeDiagnosticReport(text, true, "全部");
+      return;
+    }
+    if (kind === "批注") {
+      await this.writeDiagnosticReport(this.buildCommentDiagText(), true, "批注");
+      return;
+    }
+    await this.writeDiagnosticReport(this.buildStatsDiagText(), true, "字数统计");
   }
 
   /**

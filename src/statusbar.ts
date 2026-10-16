@@ -103,6 +103,15 @@ export class WritingStatusBar {
     return this.speedEma;
   }
 
+  /** 自检用：当前文档路径与字数（还没建立时 path 为空）。 */
+  getCurrentDoc(): { path: string; words: number | null } {
+    if (!this.currentFilePath) return { path: "", words: null };
+    return {
+      path: this.currentFilePath,
+      words: this.lastDocCount >= 0 ? this.lastDocCount : null,
+    };
+  }
+
   onFileChange(path: string, text: string): void {
     this.currentFilePath = path;
     const docCount = getWordCount(text, this.state.wordCountMode);

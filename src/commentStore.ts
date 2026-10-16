@@ -13,6 +13,13 @@ import {
   serializeCommentFile,
   sidecarPathFor,
 } from "./comments";
+import {
+  commentError,
+  commentIoDiag,
+  commentLoaded,
+  commentSidecarDeleted,
+  commentWrote,
+} from "./diagnostics";
 
 export class CommentStore {
   private cache = new Map<string, WtComment[]>();
@@ -52,6 +59,7 @@ export class CommentStore {
     docPath: string,
     gen: number
   ): Promise<WtComment[]> {
+    const t0 = performance.now();
     const file = this.app.vault.getAbstractFileByPath(sidecarPathFor(docPath));
     let comments: WtComment[] = [];
     if (file instanceof TFile) {
@@ -62,6 +70,7 @@ export class CommentStore {
     if ((this.generation.get(docPath) ?? 0) === gen) {
       this.cache.set(docPath, comments);
     }
+    commentLoaded(docPath, comments.length, performance.now() - t0, file instanceof TFile);
     return comments;
   }
 
@@ -81,22 +90,31 @@ export class CommentStore {
   /** 把批注列表写回批注文件；列表为空时删除批注文件。 */
   async save(docPath: string, comments: readonly WtComment[]): Promise<void> {
     const sidecar = sidecarPathFor(docPath);
+    const t0 = performance.now();
     this.generation.set(docPath, (this.generation.get(docPath) ?? 0) + 1);
     const file = this.app.vault.getAbstractFileByPath(sidecar);
     if (comments.length === 0) {
       this.cache.set(docPath, []);
       if (file instanceof TFile) {
         await this.app.vault.delete(file);
+        commentSidecarDeleted(docPath);
       }
       return;
     }
     const text = serializeCommentFile(docPath, comments);
     this.cache.set(docPath, [...comments]);
-    if (file instanceof TFile) {
-      await this.app.vault.modify(file, text);
-    } else {
-      await this.app.vault.create(sidecar, text);
+    try {
+      if (file instanceof TFile) {
+        await this.app.vault.modify(file, text);
+      } else {
+        await this.app.vault.create(sidecar, text);
+      }
+    } catch (error) {
+      commentIoDiag.lastWriteError = `${docPath} → ${String(error)}`;
+      commentError("CommentStore.save", error);
+      throw error;
     }
+    commentWrote(docPath, performance.now() - t0);
   }
 
   /** vault "modify"：批注文件被外部（Agent / 编辑）改写 → 缓存失效。 */
