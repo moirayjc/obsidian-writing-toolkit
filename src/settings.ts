@@ -288,7 +288,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(5, 120, 5)
                   .setValue(this.wt.settings.pomodoroFocusMinutes)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.pomodoroFocusMinutes = value;
                     await this.wt.saveSettings();
@@ -302,7 +301,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(0, 30, 1)
                   .setValue(this.wt.settings.pomodoroBreakMinutes)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.pomodoroBreakMinutes = value;
                     await this.wt.saveSettings();
@@ -316,7 +314,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(2, 8, 1)
                   .setValue(this.wt.settings.pomodoroLongBreakEvery)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.pomodoroLongBreakEvery = value;
                     await this.wt.saveSettings();
@@ -329,7 +326,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(5, 60, 5)
                   .setValue(this.wt.settings.pomodoroLongBreakMinutes)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.pomodoroLongBreakMinutes = value;
                     await this.wt.saveSettings();
@@ -374,7 +370,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(20, 70, 5)
                   .setValue(this.wt.settings.typewriterOffset * 100)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     const offset = value / 100;
                     this.wt.settings.typewriterOffset = offset;
@@ -451,7 +446,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           const auxCard = this.card(section, "沉浸与辅助");
           new Setting(auxCard)
             .setName("沉浸模式")
-            .setDesc("隐藏外围界面，按 Esc 退出")
+            .setDesc("隐藏外围界面，按 esc 退出")
             .addToggle((toggle) =>
               toggle.setValue(this.wt.settings.immersiveMode).onChange(async (value) => {
                 this.wt.settings.immersiveMode = value;
@@ -542,7 +537,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(1.2, 2.5, 0.1)
                   .setValue(this.wt.settings.lineHeight)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.lineHeight = value;
                     await this.wt.saveSettings();
@@ -556,7 +550,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(0, 1.5, 0.1)
                   .setValue(this.wt.settings.paragraphSpacing)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.paragraphSpacing = value;
                     await this.wt.saveSettings();
@@ -612,7 +605,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(1, 60, 1)
                   .setValue(this.wt.settings.snapshotIntervalMinutes)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.snapshotIntervalMinutes = value;
                     await this.wt.saveSettings();
@@ -626,7 +618,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(1, 15, 1)
                   .setValue(this.wt.settings.snapshotIdleMinutes)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.snapshotIdleMinutes = value;
                     await this.wt.saveSettings();
@@ -640,7 +631,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 slider
                   .setLimits(0, 100, 5)
                   .setValue(this.wt.settings.snapshotMaxPerFile)
-                  .setDynamicTooltip()
                   .onChange(async (value) => {
                     this.wt.settings.snapshotMaxPerFile = value;
                     await this.wt.saveSettings();
@@ -714,11 +704,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           this.group("存储方式", section, (el) => {
             new Setting(el)
               .setName("章纲数据存放机制")
-              .setDesc("推荐使用「独立伴生文件（Sidecar）」，将章纲安全隔离存放在 .wt-outlines 目录，不修改任何正文 YAML，保护正文纯净")
+              .setDesc("推荐使用「独立伴生文件（sidecar）」，将章纲安全隔离存放在 .wt-outlines 目录，不修改任何正文 YAML，保护正文纯净")
               .addDropdown((dd) =>
                 dd
                   .addOption("sidecar", "独立伴生文件（.wt-outlines，推荐）")
-                  .addOption("frontmatter", "文档头部 Frontmatter（传统方式）")
+                  .addOption("frontmatter", "文档头部 frontmatter（传统方式）")
                   .setValue(this.wt.settings.outlineStorageMode ?? "sidecar")
                   .onChange(async (val) => {
                     this.wt.settings.outlineStorageMode = val as any;

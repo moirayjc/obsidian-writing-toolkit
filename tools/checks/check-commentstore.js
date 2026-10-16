@@ -16,7 +16,7 @@ class TFile {
 
 function makeVault() {
   const files = new Map();
-  return {
+  const vault = {
     files,
     getAbstractFileByPath(p) {
       return files.has(p) ? new TFile(p) : null;
@@ -24,8 +24,18 @@ function makeVault() {
     async read(file) { return files.get(file.path); },
     async create(p, text) { files.set(p, text); },
     async modify(file, text) { files.set(file.path, text); },
-    async delete(file) { files.delete(file.path); },
   };
+  /**
+   * CommentStore 读的是 `app.fileManager.trashFile`（删批注走它，
+   * 以尊重用户「删除到回收站」的设置）——所以桩必须在 app 层，不在 vault 层。
+   */
+  const app = {
+    vault,
+    fileManager: {
+      async trashFile(file) { files.delete(file.path); },
+    },
+  };
+  return { vault, app };
 }
 
 const SAMPLE = [
@@ -58,9 +68,9 @@ async function main() {
 
   // 1) 删除后失效；外部重建后能恢复
   {
-    const vault = makeVault();
+    const { vault, app } = makeVault();
     vault.files.set(SIDECAR, SAMPLE);
-    const store = new CommentStore({ vault });
+    const store = new CommentStore(app);
     r.check("首次读到 1 条批注", (await store.load(DOC)).length === 1);
 
     vault.files.delete(SIDECAR);
@@ -77,9 +87,9 @@ async function main() {
 
   // 2) modify 刷新缓存
   {
-    const vault = makeVault();
+    const { vault, app } = makeVault();
     vault.files.set(SIDECAR, SAMPLE);
-    const store = new CommentStore({ vault });
+    const store = new CommentStore(app);
     await store.load(DOC);
     vault.files.set(SIDECAR, SAMPLE + "\n### 批注 2\n- 状态：待处理\n- 原文：x\n- 内容：y\n");
     store.handleModified(SIDECAR);
@@ -88,9 +98,9 @@ async function main() {
 
   // 3) save 空列表 → 删文件
   {
-    const vault = makeVault();
+    const { vault, app } = makeVault();
     vault.files.set(SIDECAR, SAMPLE);
-    const store = new CommentStore({ vault });
+    const store = new CommentStore(app);
     await store.load(DOC);
     await store.save(DOC, []);
     r.check("空列表写入后删除批注文件", !vault.files.has(SIDECAR));
@@ -99,8 +109,8 @@ async function main() {
 
   // 4) save 非空 → 落盘可读回
   {
-    const vault = makeVault();
-    const store = new CommentStore({ vault });
+    const { vault, app } = makeVault();
+    const store = new CommentStore(app);
     await store.save(DOC, [{
       id: 1, status: "pending", quote: "原文", paragraph: "", paragraphHint: 0,
       lineHint: 1, createdAt: "2026-10-16 10:00", content: "内容", reply: "", current: "",
@@ -111,21 +121,21 @@ async function main() {
 
   // 5) 并发 load 复用同一请求
   {
-    const vault = makeVault();
+    const { vault, app } = makeVault();
     vault.files.set(SIDECAR, SAMPLE);
     let reads = 0;
     const origRead = vault.read.bind(vault);
     vault.read = async (f) => { reads++; return origRead(f); };
-    const store = new CommentStore({ vault });
+    const store = new CommentStore(app);
     await Promise.all([store.load(DOC), store.load(DOC), store.load(DOC)]);
     r.check("并发读盘只发生 1 次", reads === 1, "实际 " + reads);
   }
 
   // 6) 改名：侧车与源文档都要失效
   {
-    const vault = makeVault();
+    const { vault, app } = makeVault();
     vault.files.set(SIDECAR, SAMPLE);
-    const store = new CommentStore({ vault });
+    const store = new CommentStore(app);
     await store.load(DOC);
     const affected = store.handleRenamed(SIDECAR, "正文/第2章.批注.md");
     r.check("handleRenamed 返回受影响的文档路径", affected.length >= 1, JSON.stringify(affected));

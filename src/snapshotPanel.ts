@@ -71,7 +71,7 @@ export class SnapshotOperationPanel {
     this.currentFilePath = path;
 
     const toolbar = el.createDiv({ cls: "wt-snap-toolbar" });
-    toolbar.createEl("span", {
+    toolbar.createSpan({
       cls: "wt-snap-file",
       text: path ? pathBasename(path) : "无活动文件",
     });
@@ -151,7 +151,7 @@ export class SnapshotOperationPanel {
 
     const footer = el.createDiv({ cls: "wt-snap-footer" });
     const max = this.plugin.settings.snapshotMaxPerFile;
-    footer.createEl("span", {
+    footer.createSpan({
       cls: "wt-snap-meta",
       text: `共 ${entries.length} 份${max > 0 ? ` / 上限 ${max}` : ""}`,
     });

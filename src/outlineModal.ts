@@ -57,11 +57,15 @@ export class OutlineEditorModal extends Modal {
     await this.renderFile(this.file, true);
   }
 
-  async onClose(): Promise<void> {
+  // 基类签名是 onClose(): void，不能声明成 async（no-misused-promises）；
+  // 保存是异步的，用 void 明确表示「不等它」，再走收尾
+  onClose(): void {
     if (this.autoSaveTimer) window.clearTimeout(this.autoSaveTimer);
     this.autoSaveTimer = 0;
-    await this.saveIfDirty();
-    this.onDone(this.file);
+    void (async () => {
+      await this.saveIfDirty();
+      this.onDone(this.file);
+    })();
     this.contentEl.empty();
     this.textarea = null;
   }
@@ -170,14 +174,14 @@ export class OutlineEditorModal extends Modal {
     this.prevBtn = iconButton(head, "chevron-left", "上一章（⌘/Ctrl+↑）", () =>
       void this.switchBy(-1)
     );
-    head.createEl("span", {
+    head.createSpan({
       cls: "wt-outline-modal-name",
       text: file.basename,
       attr: { title: file.path },
     });
-    this.posEl = head.createEl("span", { cls: "wt-outline-modal-pos" });
+    this.posEl = head.createSpan({ cls: "wt-outline-modal-pos" });
     head.createDiv({ cls: "wt-outline-modal-spacer" });
-    head.createEl("span", {
+    head.createSpan({
       cls: "wt-outline-modal-hint",
       text: "⌘/Ctrl + ↵ 保存并关闭",
     });
@@ -193,8 +197,8 @@ export class OutlineEditorModal extends Modal {
     this.loadedText = value;
 
     const foot = this.contentEl.createDiv({ cls: "wt-outline-foot" });
-    this.statsEl = foot.createEl("span", { cls: "wt-outline-stats" });
-    this.stateEl = foot.createEl("span", { cls: "wt-outline-state" });
+    this.statsEl = foot.createSpan({ cls: "wt-outline-stats" });
+    this.stateEl = foot.createSpan({ cls: "wt-outline-state" });
 
     ta.addEventListener("input", () => this.onChange());
     attachOutlineEditing(ta, () => this.onChange());

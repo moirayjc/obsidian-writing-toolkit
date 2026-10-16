@@ -128,7 +128,9 @@ class CommentChipWidget extends WidgetType {
   }
 
   toDOM(): HTMLElement {
-    const span = document.createElement("span");
+    // 用 Obsidian 的全局 createSpan()（它**不**自动 append，只建元素）——
+    // 官方审查规则 prefer-create-el 要求别用 document.createElement
+    const span = createSpan();
     const classes = ["wt-cnote"];
     if (this.comment.status === "resolved") classes.push("is-resolved");
     else classes.push("is-pending");

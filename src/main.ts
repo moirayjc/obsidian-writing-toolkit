@@ -493,7 +493,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
 
   this.addCommand({
     id: "comment-copy-agent-prompt",
-    name: "批注：复制给 Agent 的处理指令",
+    name: "批注：复制给 agent 的处理指令",
     callback: () => this.copyAgentPrompt(),
   });
 

@@ -664,15 +664,18 @@ export class WritingToolkitHome extends ItemView {
 
   /** 从电脑挑图片，复制成作品目录下的「封面.xxx」再设为封面 */
   private importCover(project: NovelProject): void {
-    const input = document.createElement("input");
+    // 全局 createEl()（不自动 append；这个 input 本来就不挂进文档）
+    const input = createEl("input");
     input.type = "file";
     input.accept = "image/*";
-    input.addEventListener("change", async () => {
-      const picked = input.files?.[0];
+    // 事件回调返回 Promise 会被 no-misused-promises 判为问题；显式包一层 void
+    input.addEventListener("change", () => {
+      void (async () => {
+        const picked = input.files?.[0];
       if (!picked) return;
       const ext = (picked.name.split(".").pop() || "png").toLowerCase();
       if (!IMAGE_EXT.has(ext)) {
-        new Notice("只支持 png / jpg / webp / gif 等图片格式");
+        new Notice("只支持 PNG / JPG / webp / GIF 等图片格式");
         return;
       }
       try {
@@ -692,6 +695,7 @@ export class WritingToolkitHome extends ItemView {
         console.error(err);
         new Notice("封面导入失败");
       }
+      })();
     });
     input.click();
   }

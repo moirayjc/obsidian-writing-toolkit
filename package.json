@@ -1,6 +1,6 @@
 {
   "name": "obsidian-writing-toolkit",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "写作工具箱：网文字数统计 / 码字时速 / 每日目标",
   "scripts": {
     "dev": "node esbuild.config.mjs",
@@ -8,7 +8,8 @@
     "check": "./node_modules/.bin/tsc --noEmit",
     "verify": "bash tools/checks/run-all.sh",
     "lint:review": "eslint src package.json",
-    "release": "bash tools/release.sh"
+    "release": "bash tools/release.sh",
+    "lint:gate": "bash tools/lint-gate.sh"
   },
   "devDependencies": {
     "esbuild": "^0.20.0",

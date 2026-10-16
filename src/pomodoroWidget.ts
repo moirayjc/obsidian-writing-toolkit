@@ -52,12 +52,13 @@ export class PomodoroWidget {
     const ringWrap = this.cardEl.createDiv({ cls: "wt-pomo-ring-wrap" });
 
     // 原生 SVG 环
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    // 用 Obsidian 的全局 createSvg()（不自动 append，只建元素）；官方审查 prefer-create-el 要求
+    const svg = createSvg("svg");
     svg.setAttribute("class", "wt-pomo-ring-svg");
     svg.setAttribute("viewBox", "0 0 130 130");
 
     // 背景底环
-    const bgCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    const bgCircle = createSvg("circle");
     bgCircle.setAttribute("class", "wt-pomo-ring-bg");
     bgCircle.setAttribute("cx", "65");
     bgCircle.setAttribute("cy", "65");
@@ -65,7 +66,7 @@ export class PomodoroWidget {
     svg.appendChild(bgCircle);
 
     // 进度环
-    this.progressCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    this.progressCircle = createSvg("circle");
     this.progressCircle.setAttribute("class", "wt-pomo-ring-progress");
     this.progressCircle.setAttribute("cx", "65");
     this.progressCircle.setAttribute("cy", "65");

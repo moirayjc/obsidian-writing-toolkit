@@ -84,7 +84,8 @@ export class ConfirmModal extends Modal {
     new Setting(contentEl)
       .addButton((btn) => {
         btn.setButtonText(this.confirmText);
-        if (this.danger) btn.setWarning();
+        // setWarning 自 1.13.0 起弃用；官方指引用 setDestructive（危险按钮）
+      if (this.danger) btn.setDestructive();
         btn.onClick(() => {
           this.close();
           this.onConfirm();

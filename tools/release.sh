@@ -4,8 +4,8 @@
 #   ./tools/release.sh            # 自检 + 构建 + 打包到 release/
 #   ./tools/release.sh --skip-verify   # 跳过检查（不推荐）
 #
-# 它做：① tsc --noEmit ② npm run verify ③ 版本三处一致 ④ 隐私体检
-#       ⑤ 生产构建 ⑥ 把三个产物打进 release/ 并打印后续步骤
+# 它做：① tsc --noEmit ② 官方审查规则闸门 ③ npm run verify ④ 版本三处一致
+#       ⑤ 隐私体检 ⑥ 生产构建 ⑦ 把三个产物打进 release/ 并打印后续步骤
 #
 # 它**不做**远程操作：不 push、不打 tag、不建 Release——那些留给你确认后手动执行。
 # 详见 docs/插件设计文档.md §6.1。
@@ -24,16 +24,21 @@ step "① 类型检查 (tsc --noEmit)"
 ./node_modules/.bin/tsc --noEmit || fail "类型检查未通过"
 ok "类型检查干净"
 
-# ── ② 逻辑检查 ──────────────────────────────────────────────
+# ── ② 官方审查规则（社区插件后台那套）──────────────────────
+step "② 官方审查规则闸门 (tools/lint-gate.sh)"
+bash tools/lint-gate.sh || fail "官方审查规则有 error（见上方明细）"
+ok "官方审查规则 0 error"
+
+# ── ③ 逻辑检查 ──────────────────────────────────────────────
 if [ "$SKIP_VERIFY" -eq 0 ]; then
-  step "② 逻辑检查 (npm run verify)"
+  step "③ 逻辑检查 (npm run verify)"
   bash tools/checks/run-all.sh || fail "检查未通过（可加 --skip-verify 跳过，但不推荐）"
 else
-  step "② 逻辑检查 —— 已跳过"
+  step "③ 逻辑检查 —— 已跳过"
 fi
 
-# ── ③ 版本三处一致 ──────────────────────────────────────────
-step "③ 版本号三处一致"
+# ── ④ 版本三处一致 ──────────────────────────────────────────
+step "④ 版本号三处一致"
 V_MANIFEST=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")
 V_PKG=$(python3 -c "import json;print(json.load(open('package.json'))['version'])")
 V_KEY=$(python3 -c "import json;print(list(json.load(open('versions.json')))[-1])")
@@ -45,19 +50,19 @@ echo "   manifest.json = $V_MANIFEST | package.json = $V_PKG | versions.json 末
 [ "$V_IN_VERSIONS" = "yes" ] || fail "versions.json 里没有 $V_MANIFEST 这个键（新版本必须补）"
 ok "版本一致：$V_MANIFEST"
 
-# ── ④ 隐私体检 ──────────────────────────────────────────────
-step "④ 隐私体检 (tools/release-check.sh)"
+# ── ⑤ 隐私体检 ──────────────────────────────────────────────
+step "⑤ 隐私体检 (tools/release-check.sh)"
 bash tools/release-check.sh --tree || fail "隐私体检未通过"
 ok "体检通过"
 
-# ── ⑤ 构建 ──────────────────────────────────────────────────
-step "⑤ 生产构建"
+# ── ⑥ 构建 ──────────────────────────────────────────────────
+step "⑥ 生产构建"
 npm run build >/dev/null 2>&1 || fail "构建失败"
 [ -f main.js ] || fail "构建后没有 main.js"
 ok "main.js $(wc -c < main.js | tr -d ' ') 字节"
 
-# ── ⑥ 打包 ──────────────────────────────────────────────────
-step "⑥ 打包"
+# ── ⑦ 打包 ──────────────────────────────────────────────────
+step "⑦ 打包"
 OUT="release/$V_MANIFEST"
 rm -rf "$OUT"
 mkdir -p "$OUT"

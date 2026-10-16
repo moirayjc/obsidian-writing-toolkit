@@ -96,7 +96,8 @@ export class CommentStore {
     if (comments.length === 0) {
       this.cache.set(docPath, []);
       if (file instanceof TFile) {
-        await this.app.vault.delete(file);
+        // 用 FileManager.trashFile 而不是 Vault.delete：前者尊重用户「删除到回收站」的设置
+        await this.app.fileManager.trashFile(file);
         commentSidecarDeleted(docPath);
       }
       return;

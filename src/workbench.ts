@@ -871,14 +871,14 @@ export class WritingToolkitWorkbench extends ItemView {
       cls: "wt-wb-search",
       type: "search",
       placeholder: this.mode === "chapters" ? "搜索章节标题 / 章号" : "搜索资料",
-      attr: { title: "↑↓ 选择结果，回车打开，Esc 清空" },
+      attr: { title: "↑↓ 选择结果，回车打开，esc 清空" },
     });
     this.searchInputEl = input;
     input.value = this.searchQuery;
 
     const clearBtn = wrap.createEl("button", {
       cls: `wt-wb-search-clear${this.searchQuery ? "" : " is-hidden"}`,
-      attr: { type: "button", "aria-label": "清空搜索", title: "清空搜索 (Esc)" },
+      attr: { type: "button", "aria-label": "清空搜索", title: "清空搜索 (esc)" },
     });
     setIcon(clearBtn, "x");
     this.searchClearBtn = clearBtn;
@@ -1233,8 +1233,8 @@ export class WritingToolkitWorkbench extends ItemView {
     new ConfirmModal(
       this.app,
       "删除卷",
-      `确定将「${name}」及其中所有文件和子目录移到系统废纸篓吗？\n本卷包含 ${volume.chapters.length} 章。`,
-      "移到废纸篓",
+      `确定删除「${name}」及其中的所有文件和子目录吗？\n本卷包含 ${volume.chapters.length} 章。\n（按你 Obsidian 的「删除文件」设置进系统废纸篓或库内 .trash，可恢复）`,
+      "删除",
       () => void this.trashVolume(volume),
       true
     ).open();
@@ -1252,8 +1252,8 @@ export class WritingToolkitWorkbench extends ItemView {
     }
     this.deletingVolumePaths.add(folder.path);
     try {
-      await this.app.vault.trash(folder, true);
-      new Notice(`已将「${displayFolderName(volume.name)}」移到系统废纸篓`);
+      await this.app.fileManager.trashFile(folder);
+      new Notice(`已删除「${displayFolderName(volume.name)}」（按你的删除设置进废纸篓）`);
     } catch {
       new Notice("删除卷失败");
     } finally {
@@ -1915,8 +1915,8 @@ export class WritingToolkitWorkbench extends ItemView {
     );
     menu.addSeparator();
     menu.addItem((item) =>
-      item.setTitle("删除（移到废纸篓）").onClick(() => {
-        void this.app.vault.trash(file, true).catch(() => {
+      item.setTitle("删除").onClick(() => {
+        void this.app.fileManager.trashFile(file).catch(() => {
           new Notice("删除失败");
         });
       })
@@ -2028,7 +2028,7 @@ export class WritingToolkitWorkbench extends ItemView {
     if (!project) return;
     const number = entry.number;
     if (number === null || number < 1) {
-      new Notice("这一章没有章号，先改成「第N章」再插入");
+      new Notice("这一章没有章号，先改成「第n章」再插入");
       return;
     }
 
@@ -2451,7 +2451,7 @@ export class WritingToolkitWorkbench extends ItemView {
     const closeBtn = footRight.createEl("button", {
       cls: "wt-wb-outline-close",
       text: "收起",
-      attr: { type: "button", title: "保存并收起 (Esc)" },
+      attr: { type: "button", title: "保存并收起 (esc)" },
     });
 
     closeBtn.addEventListener("click", (e) => {

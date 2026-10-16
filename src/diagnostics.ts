@@ -11,12 +11,7 @@
  * 本模块只做记录与成文，不依赖 Obsidian 运行时状态；需要读库/读缓存的
  * 部分由 main.ts 传进来（见 `buildCommentDiagReport` 的 ctx 参数）。
  */
-import {
-  LocateVia,
-  WtComment,
-  isSidecarPath,
-  sidecarPathFor,
-} from "./comments";
+import { WtComment, isSidecarPath } from "./comments";
 
 /* ---------- 批注痕迹 ---------- */
 

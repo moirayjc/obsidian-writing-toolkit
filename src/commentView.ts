@@ -6,7 +6,7 @@
  *
  * 与 main 之间通过 CommentPanelHost 接口对接（避免循环 import）。
  */
-import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
+import { setIcon } from "obsidian";
 import {
   COMMENT_STATUS_LABELS,
   CommentStatus,
@@ -144,9 +144,7 @@ export class CommentPanelBody {
     }
     if (needsRender) await this.renderAsync();
 
-    const card = this.root.querySelector(
-      `[data-wt-cid="${id}"]`
-    ) as HTMLElement | null;
+    const card = this.root.querySelector<HTMLElement>(`[data-wt-cid="${id}"]`);
     if (!card) return;
     card.scrollIntoView({ block: "nearest" });
     void scroller?.scrollHeight;

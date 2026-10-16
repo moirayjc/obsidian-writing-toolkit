@@ -129,11 +129,18 @@ export function isDraftPath(
   path: string,
   snapshotFolder = ".wt-snapshots",
   keywordsStr = DEFAULT_DRAFT_KEYWORDS,
-  excludeNamesStr = DEFAULT_CHAPTER_EXCLUDE_NAMES
+  excludeNamesStr = DEFAULT_CHAPTER_EXCLUDE_NAMES,
+  /**
+   * 库的配置目录（**由调用方传 `app.vault.configDir`**）。
+   * 刻意**必填且无默认值**：写死配置目录名会被官方审查
+   * （hardcoded-config-path）判为问题——用户可以改成别的名字。
+   * 库内回收站 `.trash` 也在这个目录里，所以一并覆盖了。
+   */
+  configDir: string
 ): boolean {
   if (!path || !path.endsWith(".md")) return false;
   // 排除系统目录及内部目录
-  const excluded = [snapshotFolder, OUTLINES_FOLDER, ".wt-snapshots", ".wt-outlines", ".obsidian", ".trash"];
+  const excluded = [snapshotFolder, OUTLINES_FOLDER, ".wt-snapshots", ".wt-outlines", configDir];
   for (const ex of excluded) {
     if (ex) {
       const f = ex.replace(/^\/+|\/+$/g, "");
@@ -399,13 +406,16 @@ export function setOutlineKey(content: string, value: string): string {
 /** frontmatter 里的章纲值可能是字符串，也可能是 YAML 列表；统一成纯文本。 */
 export function outlineToText(raw: unknown): string {
   if (typeof raw === "string") return raw;
+  if (typeof raw === "number" || typeof raw === "boolean") return String(raw);
   if (Array.isArray(raw)) {
     return raw
       .map((v) => (v === null || v === undefined ? "" : String(v)))
       .join("\n");
   }
-  if (raw === null || raw === undefined) return "";
-  return String(raw);
+  // null / undefined / 对象（YAML 映射）都当作没有章纲。
+  // 刻意不对 unknown 直接 String()——那会把对象变成 "[object Object]"
+  // （官方审查规则 no-base-to-string 会报，也不符合预期）。
+  return "";
 }
 
 /** 章纲要点数：忽略空行。 */
@@ -489,20 +499,40 @@ export function bulletPrefixRange(
 }
 
 /**
- * 往 textarea 插入文本：优先走原生命令，保住撤销栈；
- * 返回是否用了原生命令（原生插入会派发 input 事件，调用方无需再通知）。
+ * 章纲编辑器的轻量撤销栈。
+ *
+ * 为什么需要它：程序化改 `textarea.value` 不会进浏览器的撤销栈，用户按 Ctrl+Z 撤不掉。
+ * 以前靠 `document.execCommand("insertText")` 借用原生撤销栈，但该 API 已废弃
+ * （官方审查的 `@typescript-eslint/no-deprecated` 会报，且规则禁止用 eslint-disable
+ * 绕过）。所以这里自己记快照：**只覆盖本插件自动插入的那几步**（回车续列表、
+ * Tab 缩进、Shift+Tab 反缩进），用户自己打的字仍由浏览器原生撤销栈管。
+ */
+const undoStacks = new WeakMap<HTMLTextAreaElement, string[]>();
+const MAX_UNDO = 100;
+
+function pushUndo(ta: HTMLTextAreaElement): void {
+  const stack = undoStacks.get(ta) ?? [];
+  stack.push(ta.value);
+  if (stack.length > MAX_UNDO) stack.shift();
+  undoStacks.set(ta, stack);
+}
+
+function popUndo(ta: HTMLTextAreaElement): string | null {
+  const stack = undoStacks.get(ta);
+  if (!stack || stack.length === 0) return null;
+  return stack.pop() ?? null;
+}
+
+/**
+ * 往 textarea 插入文本（先记撤销快照）。
+ * 返回 true 表示调用方**无需**再通知 onChange——本实现一定会改值并派发 input，
+ * 所以恒返回 false，保留返回值只为兼容调用方写法。
  */
 export function insertTextPreservingUndo(
   ta: HTMLTextAreaElement,
   text: string
 ): boolean {
-  let ok = false;
-  try {
-    ok = document.execCommand("insertText", false, text);
-  } catch {
-    ok = false;
-  }
-  if (ok) return true;
+  pushUndo(ta);
   const start = ta.selectionStart;
   const end = ta.selectionEnd;
   ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
@@ -536,6 +566,19 @@ export function attachOutlineEditing(
   ta.addEventListener("keydown", (e) => {
     if (e.isComposing) return;
     const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+
+    // Ctrl/Cmd+Z：撤掉本插件自动插入的那几步（见 undoStacks 的说明）。
+    // 栈空时放行，交给浏览器原生的撤销栈处理用户自己打的字。
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+      const prev = popUndo(ta);
+      if (prev === null) return;
+      e.preventDefault();
+      ta.value = prev;
+      const caret = prev.length;
+      ta.setSelectionRange(caret, caret);
+      onChange();
+      return;
+    }
 
     if (e.key === "Enter" && plain && !e.shiftKey) {
       const act = bulletContinuation(ta.value, ta.selectionStart, ta.selectionEnd);

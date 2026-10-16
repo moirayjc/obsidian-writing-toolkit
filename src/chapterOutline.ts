@@ -130,7 +130,15 @@ export class ChapterOutlinePanel {
     const keywords = this.plugin.settings?.draftKeywords ?? DEFAULT_DRAFT_KEYWORDS;
     const excludeNames =
       this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
-    if (!isDraftPath(active.path, snapshotFolder, keywords, excludeNames)) {
+    if (
+            !isDraftPath(
+              active.path,
+              snapshotFolder,
+              keywords,
+              excludeNames,
+              this.plugin.app.vault.configDir
+            )
+          ) {
       // 打开非章节文件（设定集、大纲、人物卡等），保留当前章纲，绝对不清空！
       return;
     }
@@ -208,7 +216,13 @@ export class ChapterOutlinePanel {
       this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
     if (
       active instanceof TFile &&
-      isDraftPath(active.path, snapshotFolder, keywords, excludeNames)
+      isDraftPath(
+        active.path,
+        snapshotFolder,
+        keywords,
+        excludeNames,
+        app.vault.configDir
+      )
     ) {
       return active;
     }
@@ -226,7 +240,13 @@ export class ChapterOutlinePanel {
       (c: unknown): c is TFile =>
         c instanceof TFile &&
         c.extension === "md" &&
-        isDraftPath(c.path, snapshotFolder, keywords, excludeNames)
+        isDraftPath(
+          c.path,
+          snapshotFolder,
+          keywords,
+          excludeNames,
+          this.plugin.app.vault.configDir
+        )
     );
     out.sort((a, b) => naturalCompare(a.basename, b.basename));
     return out.length > 0 ? out : [file];
@@ -439,7 +459,7 @@ export class ChapterOutlinePanel {
     const paragraphs = this.rawText.split("\n").filter((l) => l.trim().length > 0).length;
     statsEl.setText(paragraphs === 0 ? "未填写" : `${paragraphs} 段 · ${chars} 字`);
 
-    this.stateEl = foot.createEl("span", {
+    this.stateEl = foot.createSpan({
       cls: "wt-outline-state",
       text: this.rawText.trim() ? "已保存" : "未填写",
     });

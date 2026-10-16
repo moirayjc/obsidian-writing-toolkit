@@ -389,7 +389,7 @@ class SnapshotDiffModal extends Modal {
     // 弹窗尺寸由 styles.css 的 .wt-diff-modal 控制
 
     const header = contentEl.createDiv({ cls: "wt-diff-header" });
-    header.createEl("div", { cls: "wt-diff-title", text: `对比 · ${this.snapshotName}` });
+    header.createDiv({ cls: "wt-diff-title", text: `对比 · ${this.snapshotName}` });
 
     const actions = contentEl.createDiv({ cls: "wt-diff-actions" });
     actions.appendChild(
@@ -413,7 +413,7 @@ class SnapshotDiffModal extends Modal {
 
     this.metaEl = contentEl.createDiv({ cls: "wt-diff-meta" });
 
-    contentEl.createEl("div", {
+    contentEl.createDiv({
       cls: "wt-diff-hint",
       text: "右侧可直接编辑：改完点「重新对比」更新差异，最后点「应用到文档」写回文件（写回前自动保存当前版本为快照，Ctrl+Z 可撤销）；「恢复」则直接把文档替换为快照内容。",
     });
@@ -539,7 +539,8 @@ class SnapshotDiffModal extends Modal {
   }
 
   private actionButton(text: string, onClick: () => void): HTMLButtonElement {
-    const btn = document.createElement("button");
+    // 全局 createEl()（不自动 append；调用方负责挂载）
+    const btn = createEl("button");
     btn.addClass("wt-snap-btn");
     btn.setText(text);
     btn.addEventListener("click", onClick);
