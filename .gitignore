@@ -6,3 +6,6 @@ _backup/
 # 构建产物：发布时作为 Release 附件上传
 main.js
 *.map
+
+# 隐私词表（本地用，见 tools/release-check.sh）
+wt-blocklist.txt
