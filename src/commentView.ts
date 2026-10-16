@@ -36,18 +36,28 @@ export interface CommentPanelModel {
   items: CommentPanelItem[];
 }
 
+/**
+ * 批注面板与宿主的接口。
+ *
+ * ⚠️ **所有操作都必须带上文档路径**（`docPath`），不要依赖「当前活动文档」。
+ * 历史上这里只传 `id`，宿主便各自去问 `activeCommentDocPath()`——一旦焦点不在
+ * 正文上（侧栏、工具箱、别的标签页），那个函数可能返回**另一篇文档**，
+ * 于是「删除」会删到别的文档的批注。路径由面板在 `getCommentPanelModel()`
+ * 时拿到并存下来，操作时原样传回，天然与列表内容一致。
+ */
 export interface CommentPanelHost {
   /** 读当前活动文档的批注（异步，含定位信息）。 */
   getCommentPanelModel(): Promise<CommentPanelModel>;
-  jumpToComment(id: number): void;
-  toggleCommentResolved(id: number): void;
+  jumpToComment(docPath: string, id: number): void;
+  toggleCommentResolved(docPath: string, id: number): void;
   /** 编辑某条批注（屏幕居中的输入框）。 */
-  editComment(id: number): void;
+  editComment(docPath: string, id: number): void;
   /** 删除某条批注（删掉后可在提示里撤销）。 */
-  deleteComment(id: number): void;
+  deleteComment(docPath: string, id: number): void;
   /** 锚点失效的批注：进入「重新绑定」流程（在正文里选中新位置）。 */
-  rebindComment(id: number): void;
-  clearResolvedComments(): void;
+  rebindComment(docPath: string, id: number): void;
+  /** 清除已处理批注；docPath 省略时作用于当前活动文档（命令面板入口用）。 */
+  clearResolvedComments(docPath?: string): void;
 }
 
 function truncate(text: string, max: number): string {
@@ -83,6 +93,12 @@ export class CommentPanelBody {
   private pendingOnly = false;
   /** 「已处理」分组是否折叠：默认折叠，把已处理项沉到底部 */
   private resolvedCollapsed = true;
+  /**
+   * 最近一次渲染对应的文档路径。
+   * 面板上的所有操作都带这个路径回传给宿主，**不依赖「当前活动文档」**——
+   * 否则焦点一飘走（侧栏、别的标签页）就可能操作到另一篇文档的批注。
+   */
+  private docPath: string | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -92,6 +108,23 @@ export class CommentPanelBody {
   /** 重建面板内容（活动文件、批注数据变化时调用）。 */
   refresh(): void {
     void this.renderAsync();
+  }
+
+  /** 当前面板对应的文档路径（供宿主判断操作对象）。 */
+  getDocPath(): string | null {
+    return this.docPath;
+  }
+
+  /**
+   * 渲染期取文档路径：卡片只会在有文档时才会被画出来（没文档时走空状态），
+   * 所以这里必然是字符串。写成断言型取值器，是为了让每个回调都显式带上路径，
+   * 而不是各自去猜「当前活动文档」。
+   */
+  private requireDocPath(): string {
+    if (!this.docPath) {
+      throw new Error("批注面板：没有文档路径却要操作批注（不应发生）");
+    }
+    return this.docPath;
   }
 
   /**
@@ -166,6 +199,9 @@ export class CommentPanelBody {
     }
     if (seq !== this.renderSeq) return;
     const root = this.root;
+    // 先记住本次渲染对应的文档：即使下面因签名相同而跳过重绘，
+    // 后续操作的 docPath 也必须是新的（签名里含 docPath，换文档不会命中同一签名）。
+    this.docPath = model.docPath;
     const sig = this.modelSignature(model);
     if (sig === this.lastSig && root.children.length > 0) return;
     this.lastSig = sig;
@@ -244,7 +280,8 @@ export class CommentPanelBody {
       const foot = root.createDiv({ cls: "wt-comments-footer" });
       const clearBtn = foot.createEl("button", { text: "清除已处理" });
       clearBtn.addEventListener("click", () =>
-        this.host.clearResolvedComments()
+        // 传面板自己的文档路径：不能让它去猜「当前活动文档」（可能已经飘到别处）
+        this.host.clearResolvedComments(model.docPath ?? undefined)
       );
     }
     this.restoreScroll(scroller, keepTop);
@@ -309,7 +346,7 @@ export class CommentPanelBody {
       },
     });
     // 整卡可点：引用、内容……任意位置都跳到正文对应位置
-    card.addEventListener("click", () => this.host.jumpToComment(item.id));
+    card.addEventListener("click", () => this.host.jumpToComment(this.requireDocPath(), item.id));
     const head = card.createDiv({ cls: "wt-comment-card-head" });
     head.createSpan({
       cls: resolved ? "wt-comment-chip is-resolved" : "wt-comment-chip",
@@ -347,13 +384,13 @@ export class CommentPanelBody {
     toggleBtn.addEventListener("click", (ev) => {
       // 吃掉冒泡，免得连带触发整卡的「跳转」
       ev.stopPropagation();
-      this.host.toggleCommentResolved(item.id);
+      this.host.toggleCommentResolved(this.requireDocPath(), item.id);
     });
 
     const editBtn = row.createEl("button", { text: "编辑" });
     editBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      this.host.editComment(item.id);
+      this.host.editComment(this.requireDocPath(), item.id);
     });
 
     const deleteBtn = row.createEl("button", {
@@ -383,7 +420,7 @@ export class CommentPanelBody {
       confirming = false;
       deleteBtn.setText("删除");
       deleteBtn.removeClass("is-confirming");
-      this.host.deleteComment(item.id);
+      this.host.deleteComment(this.requireDocPath(), item.id);
     });
 
     if (item.locatedLine === null) {
@@ -394,7 +431,7 @@ export class CommentPanelBody {
       });
       rebindBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        this.host.rebindComment(item.id);
+        this.host.rebindComment(this.requireDocPath(), item.id);
       });
     }
   }

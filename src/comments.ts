@@ -355,27 +355,37 @@ export class AnchorLocator {
     if (head.length < 4 && tail.length < 4) return null;
 
     const docText = this.compactDoc.text;
-    const headHits = head.length >= 4 ? findAll(docText, head, 120) : [0];
+
+    /**
+     * head 不可用（原文就贴着段首）时**直接放弃残余层**，交给段落层。
+     *
+     * 为什么不用 hint 兜底：hint 来自行号提示，可能已经不准；而 head 缺失时
+     * 没有任何东西能验证它。赌对了只多一点点精度，赌错了就是「从某个错误位置
+     * 一直画到 tail」——曾经这里用 `[0]` 兜底，结果 `start = 0`，一篇长稿
+     * 会被从**文档开头**整段涂上底色（实测 21 字文档得 0..209，一个批注盖住整篇）。
+     *
+     * 段落层是安全的替代：它能定位到整段，而 `commentDecor` 对 `paragraph`
+     * 不画底色（只出行尾脚注号），所以最坏情况是「少了底色」，不会「涂错一大片」。
+     */
+    if (head.length < 4) return null;
+
+    const headHits = findAll(docText, head, 120);
+    if (headHits.length === 0) return null;
+
     let best: { from: number; to: number; distance: number } | null = null;
     for (const hit of headHits) {
-      const start = head.length >= 4 ? hit + head.length : hit;
-      if (tail.length >= 4) {
-        const at = docText.indexOf(tail, start);
-        if (at === -1 || at - start > 600) continue;
-        const candidate = {
-          from: start,
-          to: at,
-          distance: Math.abs(start - hintCompact),
-        };
-        if (!best || candidate.distance < best.distance) best = candidate;
-      } else {
-        const candidate = {
-          from: start,
-          to: start,
-          distance: Math.abs(start - hintCompact),
-        };
-        if (!best || candidate.distance < best.distance) best = candidate;
-      }
+      const start = hit + head.length;
+      const candidate =
+        tail.length >= 4
+          ? (() => {
+              const at = docText.indexOf(tail, start);
+              if (at === -1 || at - start > 600) return null;
+              return { from: start, to: at, distance: Math.abs(start - hintCompact) };
+            })()
+          : // 只有头部活着：产生零宽锚点（正文里只有脚注号、没有底色）
+            { from: start, to: start, distance: Math.abs(start - hintCompact) };
+      if (!candidate) continue;
+      if (!best || candidate.distance < best.distance) best = candidate;
     }
     if (!best) return null;
     const range = this.docRange(best.from, best.to);

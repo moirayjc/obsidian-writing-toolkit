@@ -1812,9 +1812,10 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     });
   }
 
-  /** 清除当前文档里所有已处理的批注（先确认；Agent 的回复会一起清掉）。 */
-  async clearResolvedComments(): Promise<void> {
-    const path = this.activeCommentDocPath();
+  /** 清除指定文档里所有已处理的批注（先确认；Agent 的回复会一起清掉）。 */
+  async clearResolvedComments(docPath?: string): Promise<void> {
+    // 面板会传它正在展示的文档；命令面板入口不传，回退到活动文档
+    const path = docPath || this.activeCommentDocPath();
     if (!path) {
       new Notice("先打开一篇文档");
       return;
@@ -1836,35 +1837,35 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
   }
 
   /** 面板卡片：编辑某条批注（居中输入框；原文定位失败的批注也能编辑）。 */
-  editComment(id: number): void {
-    const docPath = this.activeCommentDocPath();
-    if (!docPath) return;
-    const comment = (this.commentStore.getCached(docPath) ?? []).find(
+  editComment(docPath: string | null, id: number): void {
+    const path = docPath || this.activeCommentDocPath();
+    if (!path) return;
+    const comment = (this.commentStore.getCached(path) ?? []).find(
       (c) => c.id === id
     );
     if (!comment) return;
-    this.openCommentEditor(docPath, comment);
+    this.openCommentEditor(path, comment);
   }
 
   /** 面板卡片：删除某条批注。 */
-  deleteComment(id: number): void {
-    const docPath = this.activeCommentDocPath();
-    if (!docPath) return;
-    void this.deleteCommentById(docPath, id);
+  deleteComment(docPath: string | null, id: number): void {
+    const path = docPath || this.activeCommentDocPath();
+    if (!path) return;
+    void this.deleteCommentById(path, id);
   }
 
   /**
    * 锚点失效的批注：把正文里当前选中的文字重新绑给它。
    * 没有选区时先提示选中（选区在编辑器里会保留，用户选完再点一次即可）。
    */
-  rebindComment(id: number): void {
-    const docPath = this.activeCommentDocPath();
-    if (!docPath) return;
-    const comment = (this.commentStore.getCached(docPath) ?? []).find(
+  rebindComment(docPath: string | null, id: number): void {
+    const path = docPath || this.activeCommentDocPath();
+    if (!path) return;
+    const comment = (this.commentStore.getCached(path) ?? []).find(
       (c) => c.id === id
     );
     if (!comment) return;
-    const view = this.markdownViewForPath(docPath) ?? this.currentMarkdownView();
+    const view = this.markdownViewForPath(path) ?? this.currentMarkdownView();
     const cm = ((view?.editor as any)?.cm ?? undefined) as
       | EditorView
       | undefined;
@@ -1880,7 +1881,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
     }
     const paragraph = paragraphAt(cm.state.doc.toString(), sel.from);
     const lineHint = cm.state.doc.lineAt(sel.from).number;
-    void this.mutateComments(docPath, (list) =>
+    void this.mutateComments(path, (list) =>
       list.map((c) =>
         c.id === id
           ? {
@@ -2076,14 +2077,15 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
   }
 
   /** 侧栏面板：跳到某条批注对应的原文位置。 */
-  jumpToComment(id: number): void {
-    const docPath = this.activeCommentDocPath();
-    if (!docPath) return;
-    const comment = (this.commentStore.getCached(docPath) ?? []).find(
+  jumpToComment(docPath: string | null, id: number): void {
+    // 面板传进来的路径是权威的；为空时（命令 / 其它入口）才回退到活动文档
+    const path = docPath || this.activeCommentDocPath();
+    if (!path) return;
+    const comment = (this.commentStore.getCached(path) ?? []).find(
       (c) => c.id === id
     );
     if (!comment) return;
-    const file = this.app.vault.getAbstractFileByPath(docPath);
+    const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return;
     void this.revealCommentInDoc(file, comment);
   }
@@ -2133,8 +2135,8 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
   }
 
   /** 侧栏面板：标记/取消标记已处理。 */
-  toggleCommentResolved(id: number): void {
-    const path = this.activeCommentDocPath();
+  toggleCommentResolved(docPath: string | null, id: number): void {
+    const path = docPath || this.activeCommentDocPath();
     if (!path) return;
     void this.toggleCommentResolvedFor(path, id);
   }
