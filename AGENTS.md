@@ -25,13 +25,19 @@
 ## 常规动作
 
 ```bash
-./node_modules/.bin/tsc --noEmit    # 类型检查（必须干净，strict: true）
-npm run build                       # 生产构建 → 原地覆盖本目录的 main.js
-npm run dev                         # 监听构建（常驻进程，用完记得关）
+npm run check     # 类型检查 tsc --noEmit（必须干净，strict: true）
+npm run build     # 生产构建 → 原地覆盖本目录的 main.js
+npm run verify    # 逻辑检查（跑的是构建产物，所以要先 build）
+npm run release   # 发布：自检 + 构建 + 打包到 release/（见设计文档 §6.1）
+npm run dev       # 监听构建（常驻进程，用完记得关）
 ```
 
-**项目没有测试框架、没有 eslint**，所以验证只能靠：类型检查 + 构建 + 进 Obsidian 实际点一遍。
-纯逻辑/存储层可以按设计文档 §4.9 的办法用 Node 直接跑真实实现（不必启动 Obsidian）。
+**项目没有测试框架、没有 eslint**，但已固化 3 项逻辑检查（`tools/checks/`，覆盖批注缓存、
+设置加载、作品识别），用 Node 直接跑**真实实现**，不必启动 Obsidian——办法见设计文档 §4.9。
+
+**加新检查时顺手做一次反向验证**：把修复改回坏的样子，确认检查会报警。否则你不知道它是不是永远绿。
+
+渲染、布局、主题、输入法、移动端**验证不了**，只能进 Obsidian 手点。
 
 ## 改代码前请确认
 

@@ -9,3 +9,6 @@ main.js
 
 # 隐私词表（本地用，见 tools/release-check.sh）
 wt-blocklist.txt
+
+# 发布打包产物
+release/

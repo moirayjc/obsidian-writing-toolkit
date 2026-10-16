@@ -4,7 +4,10 @@
   "description": "写作工具箱：网文字数统计 / 码字时速 / 每日目标",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "node esbuild.config.mjs production"
+    "build": "node esbuild.config.mjs production",
+    "check": "./node_modules/.bin/tsc --noEmit",
+    "verify": "bash tools/checks/run-all.sh",
+    "release": "bash tools/release.sh"
   },
   "devDependencies": {
     "builtin-modules": "^3.3.0",
