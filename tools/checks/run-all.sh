@@ -23,6 +23,7 @@ CHECKS=(
   "check-formatwrap.js:格式包裹与还原"
   "check-renumber.js:全书章节重编号"
   "check-headingstyle.js:标题样式开关"
+  "check-settingcontrols.js:设置页控件增强"
 )
 
 failed=""

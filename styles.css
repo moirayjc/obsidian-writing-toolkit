@@ -4577,8 +4577,59 @@ body.wt-heading-style .markdown-rendered p {
 
 /* Obsidian 1.14 起，设置页的下拉是 <button class="combobox-button">（不再走原生
    <select>，也未必带 .dropdown 类）；三个都写上，别只挑一种。 */
+/* 下拉的「可展开」指示：原生 <select> 与 .dropdown 都没有箭头，看不出能点开
+   （用户反馈的第二点）。
+
+   三种形态要分开处理，因为**实测**行为不同：
+   - `.dropdown` / `.combobox-button` 是普通元素 → `::after` 画箭头，正常。
+   - 原生 `<select>` → `::after` **完全不渲染**（Chrome 对 select 上的伪元素不生成，
+     放开 overflow 也没用）；给它自己加 mask 也会把控件本身弄坏。
+     所以由 src/settingControls.ts 用一个 `<span class="wt-select-wrap">` 包一层，
+     箭头画在 wrapper 上。
+
+   箭头用 CSS mask 从内联 SVG 取形，颜色取 --wt-ink-3 → 深色主题自动变亮。
+   居中用 margin-top 而**不用 transform**：伪元素上的 transform 会被 Obsidian
+   自己的样式干扰（实测解析成 none），图标会掉到框外。 */
+.wt-settings-page .setting-item-control select {
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.wt-settings-page .setting-item-control .wt-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+.wt-settings-page .setting-item-control .wt-select-wrap select {
+  width: 100%;
+  padding-right: 30px;
+}
+.wt-settings-page .setting-item-control .dropdown,
+.wt-settings-page .setting-item-control .combobox-button {
+  position: relative;
+  padding-right: 30px;
+  cursor: pointer;
+}
+.wt-settings-page .setting-item-control .wt-select-wrap::after,
+.wt-settings-page .setting-item-control .dropdown::after,
+.wt-settings-page .setting-item-control .combobox-button::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  margin-top: -5px;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  background-color: var(--wt-ink-3);
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>') center / contain no-repeat;
+  mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>') center / contain no-repeat;
+}
+
 .wt-settings-page .setting-item-control input[type="text"],
 .wt-settings-page .setting-item-control select,
+.wt-settings-page .setting-item-control .wt-select-wrap select,
 .wt-settings-page .setting-item-control .dropdown,
 .wt-settings-page .setting-item-control .combobox-button {
   height: 32px;
@@ -4612,6 +4663,7 @@ body.wt-heading-style .markdown-rendered p {
 }
 
 .wt-settings-page .setting-item-control select,
+.wt-settings-page .setting-item-control .wt-select-wrap,
 .wt-settings-page .setting-item-control .dropdown,
 .wt-settings-page .setting-item-control .combobox-button {
   width: 260px;
@@ -4620,6 +4672,7 @@ body.wt-heading-style .markdown-rendered p {
 
 .wt-settings-page .setting-item-control input[type="text"]:hover,
 .wt-settings-page .setting-item-control select:hover,
+.wt-settings-page .setting-item-control .wt-select-wrap select:hover,
 .wt-settings-page .setting-item-control .dropdown:hover,
 .wt-settings-page .setting-item-control .combobox-button:hover {
   border-color: var(--wt-rule-strong);
@@ -4628,38 +4681,71 @@ body.wt-heading-style .markdown-rendered p {
 
 .wt-settings-page .setting-item-control input[type="text"]:focus,
 .wt-settings-page .setting-item-control select:focus,
+.wt-settings-page .setting-item-control .wt-select-wrap select:focus,
 .wt-settings-page .setting-item-control .dropdown:focus,
 .wt-settings-page .setting-item-control .combobox-button:focus {
   border-color: var(--wt-accent);
   outline: none;
   box-shadow: 0 0 0 2px var(--wt-accent-soft);
 }
+/* 滑块：做成「胶囊轨道 + 已选值填充 + 浮钮」。
+   原来只有 6px 轨道配 14px 无阴影的球（box-shadow: none、无内衬边），
+   看起来就是一个球浮在杆子上——用户反馈的就是这个。
+
+   几何对齐要点（实测过）：range 的 content-box 在控件**顶部**，
+   所以 8px 的轨道落在 y=0..8；滑块高 18px 时 `margin-top: -5px` 正好把它
+   摆在 0..18，与轨道垂直居中。三个值（content 高 18 / track 8 / margin -5）
+   是联动的，只改其中一个就会错位。
+
+   `--wt-fill` 由 src/sliderFill.ts 计算写入（CSS 取不到 range 的当前值）。
+   两道渐变叠起来画：先铺满，再用从透明到轨道色的渐变 + hard-stop 盖出填充段，
+   这样不需要 background-size 技巧，也不会盖住边框。 */
+.wt-settings-page .setting-item-control {
+  position: relative;
+}
 .wt-settings-page .setting-item-control input[type="range"] {
+  position: relative;
   width: 220px;
   -webkit-appearance: none;
   appearance: none;
-  height: 6px;
+  height: 18px;
   padding: 0;
-  background: transparent;
+  background-image: none;
+  cursor: pointer;
 }
 .wt-settings-page .setting-item-control input[type="range"]::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: var(--wt-radius-3px);
-  background: color-mix(in srgb, var(--wt-ink-3) 30%, transparent);
+  height: 8px;
+  border-radius: var(--wt-radius-pill);
+  background-image:
+    linear-gradient(to right, transparent calc(var(--wt-fill, 0%) - 1px),
+      color-mix(in srgb, var(--wt-ink-3) 26%, transparent) var(--wt-fill, 0%)),
+    linear-gradient(to right,
+      var(--wt-accent) 0 var(--wt-fill, 0%),
+      color-mix(in srgb, var(--wt-ink-3) 26%, transparent) var(--wt-fill, 0%) 100%);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--wt-ink) 12%, transparent);
 }
 .wt-settings-page .setting-item-control input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -4px;
-  border: 0.5px solid var(--wt-rule-strong);
+  width: 18px;
+  height: 18px;
+  margin-top: -5px;
+  border: 0;
   border-radius: var(--wt-radius-circle);
   background: var(--wt-card-bg);
-  box-shadow: none;
-  cursor: pointer;
+  /* 内衬 0.5px 发丝边 + 双层投影：与分段控件的滑块同一套做法，
+     让滑块看起来「有厚度」而不是一个扁圆片 */
+  box-shadow:
+    inset 0 0 0 0.5px rgba(92, 72, 48, 0.3),
+    0 1px 2px color-mix(in srgb, var(--wt-ink) 26%, transparent),
+    0 2px 6px -1px color-mix(in srgb, var(--wt-ink) 20%, transparent);
+  transition: box-shadow var(--wt-dur-snap) var(--wt-ease-rise);
 }
-.wt-settings-page .setting-item-control input[type="range"]::-webkit-slider-thumb:hover {
-  border-color: var(--wt-accent);
+.wt-settings-page .setting-item-control input[type="range"]:hover::-webkit-slider-thumb,
+.wt-settings-page .setting-item-control input[type="range"]:active::-webkit-slider-thumb {
+  box-shadow:
+    inset 0 0 0 1.5px var(--wt-accent),
+    0 1px 2px color-mix(in srgb, var(--wt-ink) 26%, transparent),
+    0 0 0 3px var(--wt-accent-soft);
 }
 .wt-settings-page .setting-item-control button {
   height: 32px;

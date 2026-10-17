@@ -2,6 +2,7 @@ import { PluginSettingTab, Setting, App, Plugin } from "obsidian";
 import { WordCountMode } from "./wordcount";
 import { DEFAULT_SNAPSHOT_SETTINGS, SnapshotSettings } from "./snapshot";
 import { DEFAULT_CHAPTER_EXCLUDE_NAMES } from "./outlineText";
+import { setupSelectArrows, setupSliderFills } from "./settingControls";
 
 interface DailyHistory {
   [date: string]: number;
@@ -658,6 +659,11 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
     });
 
     this.activateTab(Math.min(this.activeTabIndex, sections.length - 1));
+
+    // 两件 CSS 做不了的小事：滑块填充比例、给 select 包一层画下拉箭头。
+    // 放在最后：此时所有面板的 setting-item 都已建好。
+    setupSliderFills(containerEl);
+    setupSelectArrows(containerEl);
   }
 
   private activateTab(index: number): void {
