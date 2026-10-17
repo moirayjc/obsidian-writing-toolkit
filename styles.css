@@ -1347,8 +1347,21 @@ body:not(.wt-theme-contrast) .cm-editor .HyperMD-quote {
    - 颜色走 --wt-* 令牌，四套主题自动适配，不需要单独的深色档。
    ========================================================================== */
 
-/* ── 阅读模式 ── */
-body.wt-heading-style .markdown-preview-view h1,
+/* 文档标题（笔记名显示在正文顶部那条）：Obsidian 用 `.inline-title` 渲染，
+   **它不是一个 <h1> 元素**——所以上面那些 `h1` 选择器管不到它。
+   用户反馈「H1 没看到朱砂和下划线」就是这条漏了。
+
+   刻意**不设 font-size**：Obsidian 自己给 .inline-title 定字号，用 em 会相对它
+   再放大一次（同一个坑，见 §3.6.4 的说明）。这里只对齐颜色与下划线，
+   让文档标题和正文里的 H1 看起来是同一套。 */
+body.wt-heading-style .inline-title {
+  color: var(--wt-accent);
+  padding-bottom: 0.18em;
+  border-bottom: 2px solid color-mix(in srgb, var(--wt-accent) 45%, transparent);
+  text-wrap: balance;
+}
+
+/* ── 阅读模式 ── */body.wt-heading-style .markdown-preview-view h1,
 body.wt-heading-style .markdown-rendered h1 {
   font-size: var(--wt-h1-size);
   font-weight: var(--wt-h1-weight);

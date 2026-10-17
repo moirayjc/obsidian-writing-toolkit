@@ -143,6 +143,24 @@ function main() {
     css.includes("text-wrap: balance")
   );
 
+  // ── 6. 文档标题（.inline-title）
+  // 实测教训：用户报「H1 没看到朱砂和下划线」，根因是——笔记名显示在正文顶部
+  // 那条由 Obsidian 用 `.inline-title` 渲染，**它不是一个 <h1> 元素**，
+  // 所以 h1 选择器全都管不到它。这条断言防止它再被漏掉。
+  const it = /body\.wt-heading-style\s+\.inline-title\s*\{([^}]*)\}/.exec(css);
+  r.check("覆盖了文档标题 .inline-title（它不是 <h1>，h1 选择器管不到）", !!it);
+  if (it) {
+    const body = it[1];
+    r.check(
+      ".inline-title 用强调色 + 下划线，与正文 H1 对齐",
+      /color:\s*var\(--wt-accent\)/.test(body) && /border-bottom:\s*2px/.test(body)
+    );
+    r.check(
+      ".inline-title **不设 font-size**（Obsidian 自己管字号，再用 em 会相对它双重放大）",
+      !/font-size/.test(body)
+    );
+  }
+
   return r.finish();
 }
 
