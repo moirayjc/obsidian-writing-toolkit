@@ -360,6 +360,39 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           //
           // 仍留在本页的是侧栏没有的：编辑工具条与范围、批注开关、回车即新段落、
           // 配色主题、快照、章节识别、作品位置。
+          //
+          // 顺序：把「排版」放最前——配色主题与标题样式是常调项，放上面少滚动。
+          this.group("排版", section, (el) => {
+            new Setting(el)
+              .setName("配色主题")
+              .setDesc("暖纸保持原有的米色书房风格；极简冷淡为低饱和的冷灰与蓝灰；高对比度为白底黑字、边线分明")
+              .addDropdown((dd) => {
+                for (const [key, label] of Object.entries(THEME_TONE_LABELS)) {
+                  dd.addOption(key, label);
+                }
+                dd.setValue(this.wt.settings.themeTone);
+                dd.onChange(async (val) => {
+                  this.wt.settings.themeTone = val as ThemeTone;
+                  await this.wt.saveSettings();
+                });
+              });
+
+            new Setting(el)
+              .setName("标题样式")
+              .setDesc(
+                "H1~H6 走一套克制的字号/字重阶梯（层级不靠颜色，只有 H1 用强调色做锚点），" +
+                  "并让多行标题自动均衡断行、正文消除末行孤字。主题的三套配色下自动适配。"
+              )
+              .addToggle((toggle) =>
+                toggle
+                  .setValue(this.wt.settings.headingStyle)
+                  .onChange(async (value) => {
+                    this.wt.settings.headingStyle = value;
+                    await this.wt.saveSettings();
+                  })
+              );
+
+          });
           this.group("编辑工具条", section, (el) => {
             new Setting(el)
               .setName("选中浮出格式工具条")
@@ -423,37 +456,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
           });
 
-          this.group("排版", section, (el) => {
-            new Setting(el)
-              .setName("配色主题")
-              .setDesc("暖纸保持原有的米色书房风格；极简冷淡为低饱和的冷灰与蓝灰；高对比度为白底黑字、边线分明")
-              .addDropdown((dd) => {
-                for (const [key, label] of Object.entries(THEME_TONE_LABELS)) {
-                  dd.addOption(key, label);
-                }
-                dd.setValue(this.wt.settings.themeTone);
-                dd.onChange(async (val) => {
-                  this.wt.settings.themeTone = val as ThemeTone;
-                  await this.wt.saveSettings();
-                });
-              });
-
-            new Setting(el)
-              .setName("标题样式")
-              .setDesc(
-                "H1~H6 走一套克制的字号/字重阶梯（层级不靠颜色，只有 H1 用强调色做锚点），" +
-                  "并让多行标题自动均衡断行、正文消除末行孤字。主题的三套配色下自动适配。"
-              )
-              .addToggle((toggle) =>
-                toggle
-                  .setValue(this.wt.settings.headingStyle)
-                  .onChange(async (value) => {
-                    this.wt.settings.headingStyle = value;
-                    await this.wt.saveSettings();
-                  })
-              );
-
-          });
         },
       },
       {
