@@ -50,7 +50,7 @@
   border-radius: var(--wt-radius-12px);
   background: color-mix(in srgb, var(--background-secondary) 65%, transparent);
   border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--wt-shadow-card);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -59,7 +59,7 @@
 
 .wt-calendar-view:hover {
   border-color: color-mix(in srgb, var(--background-modifier-border) 95%, transparent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--wt-shadow-card-hover);
 }
 
 .wt-calendar-header {
@@ -439,7 +439,7 @@
   background: var(--wt-menu-paper);
   border: 0.5px solid var(--wt-menu-rule);
   border-radius: var(--wt-radius-10px);
-  box-shadow: 0 1px 2px rgba(70, 50, 25, 0.08), 0 12px 28px -12px rgba(70, 50, 25, 0.35);
+  box-shadow: var(--wt-shadow-float);
   --wt-menu-paper: #fffcf6;
   --wt-menu-ink: #2b2620;
   --wt-menu-rule: rgba(92, 72, 48, 0.14);
@@ -1242,13 +1242,76 @@ body.wt-immersive .markdown-preview-view {
   background: var(--cmp-wash, color-mix(in srgb, var(--text-accent) 7%, transparent));
 }
 
-/* 正文里的选中色也跟随配色主题：批注第一步就是「选中文字」，
-   高对比度下跳出一块紫会显得很串味。只作用于编辑区，不动全局设置。 */
+/* 正文（编辑器）也跟随配色主题，整体才和谐——否则侧栏是暖纸、中间正文是
+   Obsidian 的中性底，割裂感很明显。
+
+   做法是**把主题令牌延伸进 .cm-editor**，而不是另写一份背景色：编辑器里
+   的插件元素（批注按钮、行尾序号、格式工具条）本来就全走 Obsidian 变量
+   （`--text-muted` 等），拿到令牌后自动跟着对——**那里没有任何写死的颜色**，
+   所以不会出现「背景改浅了、白字看不见」的问题。
+
+   高对比度那两档**有意排除在纸色之外**：它的纸是纯白/纯黑，已经把
+   --background-primary 自然映射成黑底白字，正是无障碍要的效果，不要用暖纸盖掉。
+   （下面高对比度的规则写在最后，靠顺序压过上面的纸色档。） */
 body:not(.wt-theme-cool):not(.wt-theme-contrast) .cm-editor {
+  /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
+  --wt-editor-bg: var(--wt-paper);
   --text-selection: rgba(181, 69, 47, 0.18);
+  --wt-paper: #f6f1e7;
+  --wt-card-bg: #fffcf6;
+  --wt-ink: #2b2620;
+  --wt-ink-2: #6c6255;
+  --wt-ink-3: #9d9282;
+  --wt-rule: rgba(92, 72, 48, 0.14);
+  --wt-rule-strong: rgba(92, 72, 48, 0.24);
+  --background-primary: var(--wt-paper);
+  --background-secondary: var(--wt-card-bg);
+  --background-modifier-border: var(--wt-rule);
 }
 body.theme-dark:not(.wt-theme-cool):not(.wt-theme-contrast) .cm-editor {
+  /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
+  --wt-editor-bg: var(--wt-paper);
   --text-selection: rgba(224, 122, 95, 0.24);
+  --wt-paper: #1d1a17;
+  --wt-card-bg: #27231f;
+  --wt-ink: #ece4d6;
+  --wt-ink-2: #b3a895;
+  --wt-ink-3: #85796a;
+  --wt-rule: rgba(236, 220, 190, 0.1);
+  --wt-rule-strong: rgba(236, 220, 190, 0.18);
+  --background-primary: var(--wt-paper);
+  --background-secondary: var(--wt-card-bg);
+  --background-modifier-border: var(--wt-rule);
+}
+body.wt-theme-cool .cm-editor {
+  /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
+  --wt-editor-bg: var(--wt-paper);
+  --text-selection: rgba(62, 97, 133, 0.2);
+  --wt-paper: #f4f6f8;
+  --wt-card-bg: #fdfdfe;
+  --wt-ink: #1e2630;
+  --wt-ink-2: #5a6673;
+  --wt-ink-3: #8b96a2;
+  --wt-rule: rgba(51, 72, 94, 0.13);
+  --wt-rule-strong: rgba(51, 72, 94, 0.22);
+  --background-primary: var(--wt-paper);
+  --background-secondary: var(--wt-card-bg);
+  --background-modifier-border: var(--wt-rule);
+}
+body.theme-dark.wt-theme-cool .cm-editor {
+  /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
+  --wt-editor-bg: var(--wt-paper);
+  --text-selection: rgba(143, 182, 212, 0.24);
+  --wt-paper: #16191d;
+  --wt-card-bg: #20252b;
+  --wt-ink: #e2e8ee;
+  --wt-ink-2: #9aa6b3;
+  --wt-ink-3: #6f7c8a;
+  --wt-rule: rgba(200, 215, 230, 0.1);
+  --wt-rule-strong: rgba(200, 215, 230, 0.18);
+  --background-primary: var(--wt-paper);
+  --background-secondary: var(--wt-card-bg);
+  --background-modifier-border: var(--wt-rule);
 }
 body.wt-theme-contrast .cm-editor {
   --text-selection: color-mix(in srgb, #000000 16%, transparent);
@@ -1256,11 +1319,20 @@ body.wt-theme-contrast .cm-editor {
 body.theme-dark.wt-theme-contrast .cm-editor {
   --text-selection: color-mix(in srgb, #ffffff 20%, transparent);
 }
-body.wt-theme-cool .cm-editor {
-  --text-selection: rgba(62, 97, 133, 0.2);
+
+/* 纸色背景真正落到编辑器上。高对比度两档用 --wt-editor-bg 的兜底值
+   （纯白/纯黑），即 Obsidian 自己的背景，等于不改。
+   !important 的理由与上面沉浸模式那段相同：Obsidian 给 .cm-editor 写了
+   background-color，不压过它就不生效。这是本文件第 78~79 处 !important。 */
+body:not(.wt-theme-contrast) .cm-editor,
+body:not(.wt-theme-contrast) .cm-scroller,
+body:not(.wt-theme-contrast) .cm-content {
+  background-color: var(--wt-editor-bg, var(--background-primary)) !important;
 }
-body.theme-dark.wt-theme-cool .cm-editor {
-  --text-selection: rgba(143, 182, 212, 0.24);
+/* 行内代码 / 引用块等自带底色的元素跟着纸色走，不然会在纸上留一块系统灰 */
+body:not(.wt-theme-contrast) .cm-editor .cm-line.HyperMD-codeblock,
+body:not(.wt-theme-contrast) .cm-editor .HyperMD-quote {
+  background-color: color-mix(in srgb, var(--wt-ink) 5%, transparent);
 }
 .wt-pomo-section {
   margin-top: 10px;
@@ -1272,7 +1344,7 @@ body.theme-dark.wt-theme-cool .cm-editor {
   border-radius: var(--wt-radius-12px);
   background: color-mix(in srgb, var(--background-secondary) 65%, transparent);
   border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--wt-shadow-card);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1280,7 +1352,7 @@ body.theme-dark.wt-theme-cool .cm-editor {
 }
 .wt-pomo-card:hover {
   border-color: color-mix(in srgb, var(--background-modifier-border) 95%, transparent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--wt-shadow-card-hover);
 }
 .wt-pomo-header {
   display: flex;
@@ -1427,6 +1499,9 @@ body.theme-dark.wt-theme-cool .cm-editor {
   --wt-jade: #8bb89a;
   --wt-amber: #d9a65a;
   --wt-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 22px -10px rgba(0, 0, 0, 0.55);
+  --wt-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 4px 10px -4px rgba(0, 0, 0, 0.38);
+  --wt-shadow-card-hover: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 18px -6px rgba(0, 0, 0, 0.5);
+  --wt-shadow-float: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 28px -12px rgba(0, 0, 0, 0.6);
 }
 
 /* 编辑台 / 工具箱 / 设置页的内部还大量用 Obsidian 变量，就地改写这一层，
@@ -3736,7 +3811,7 @@ body.theme-dark.wt-theme-cool .cm-editor {
   background: var(--wt-menu-paper);
   border: 0.5px solid var(--wt-menu-rule);
   border-radius: var(--wt-radius-10px);
-  box-shadow: 0 1px 2px rgba(70, 50, 25, 0.08), 0 12px 28px -12px rgba(70, 50, 25, 0.35);
+  box-shadow: var(--wt-shadow-float);
   --wt-menu-paper: #fffcf6;
   --wt-menu-ink: #2b2620;
   --wt-menu-rule: rgba(92, 72, 48, 0.14);
@@ -4822,6 +4897,9 @@ body.wt-mobile .wt-mbar.is-on:active {
    ========================================================================== */
 
 body.wt-theme-cool :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+  --wt-shadow-card: 0 1px 2px rgba(30, 45, 60, 0.05), 0 3px 8px -3px rgba(30, 45, 60, 0.08);
+  --wt-shadow-card-hover: 0 1px 2px rgba(30, 45, 60, 0.07), 0 6px 14px -5px rgba(30, 45, 60, 0.13);
+  --wt-shadow-float: 0 1px 2px rgba(30, 45, 60, 0.06), 0 10px 24px -12px rgba(30, 45, 60, 0.3);
   --wt-paper: #f4f6f8;
   --wt-paper-2: #e9edf2;
   --wt-card-bg: #fdfdfe;
@@ -4844,6 +4922,9 @@ body.wt-theme-cool :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
 }
 
 body.wt-theme-cool.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+  --wt-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 4px 10px -4px rgba(0, 0, 0, 0.38);
+  --wt-shadow-card-hover: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 18px -6px rgba(0, 0, 0, 0.5);
+  --wt-shadow-float: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 28px -12px rgba(0, 0, 0, 0.6);
   --wt-paper: #16191d;
   --wt-paper-2: #1c2025;
   --wt-card-bg: #20252b;
@@ -4896,7 +4977,7 @@ body.wt-theme-cool .wt-combo-menu {
   --wt-menu-ink: #1e2630;
   --wt-menu-rule: rgba(51, 72, 94, 0.14);
   --wt-menu-wash: rgba(51, 72, 94, 0.07);
-  box-shadow: 0 1px 2px rgba(30, 45, 60, 0.06), 0 10px 24px -12px rgba(30, 45, 60, 0.3);
+  box-shadow: var(--wt-shadow-float);
 }
 
 body.wt-theme-cool.theme-dark .wt-combo-menu {
@@ -4925,6 +5006,10 @@ body.wt-theme-cool.wt-immersive .cm-content {
    ========================================================================== */
 
 body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+  /* 高对比度不用柔光：给可辨识的实心轮廓 */
+  --wt-shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  --wt-shadow-card-hover: 0 0 0 1px rgba(0, 0, 0, 0.7);
+  --wt-shadow-float: 0 0 0 1px rgba(0, 0, 0, 0.5);
   --wt-paper: #ffffff;
   --wt-paper-2: #f2f2f2;
   --wt-card-bg: #ffffff;
@@ -4946,6 +5031,9 @@ body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
 }
 
 body.wt-theme-contrast.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+  --wt-shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.45);
+  --wt-shadow-card-hover: 0 0 0 1px rgba(255, 255, 255, 0.75);
+  --wt-shadow-float: 0 0 0 1px rgba(255, 255, 255, 0.55);
   --wt-paper: #000000;
   --wt-paper-2: #0d0d0d;
   --wt-card-bg: #000000;
@@ -5373,6 +5461,15 @@ body.theme-dark.wt-theme-contrast {
 }
 
 :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+  /* 内嵌卡（.wt-pomo-card / .wt-calendar-view）：比 --wt-shadow 更轻。
+     这两处原先写死 `0 2px 8px rgba(0,0,0,.04)`——中性黑，不随主题走，
+     结果在暖纸上是灰调、在高对比度下几乎看不见、在深色底上完全无效。
+     现在四套主题各配一份：贴边 1px 那层给「卡片厚度」，外扩层给「浮起高度」。
+     高对比度用实心细环（可辨识的轮廓），不用柔光。 */
+  --wt-shadow-card: 0 1px 2px rgba(70, 50, 25, 0.05), 0 3px 8px -3px rgba(70, 50, 25, 0.09);
+  --wt-shadow-card-hover: 0 1px 2px rgba(70, 50, 25, 0.07), 0 6px 14px -5px rgba(70, 50, 25, 0.15);
+  /* 浮层（下拉菜单等）：最重的一档 */
+  --wt-shadow-float: 0 1px 2px rgba(70, 50, 25, 0.08), 0 12px 28px -12px rgba(70, 50, 25, 0.35);
   --wt-paper: #f6f1e7;
 
 
