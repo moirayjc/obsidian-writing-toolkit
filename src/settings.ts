@@ -208,7 +208,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
           new Setting(statsCard)
             .setName("字数统计模式")
-            .setDesc("番茄模式统计所有非空白字符（含标点）；标准模式只统计汉字、字母和数字；原生模式按词组计数")
+            .setDesc("番茄：含标点的所有非空白字符｜标准：只数汉字、字母、数字｜原生：按词组")
             .addDropdown((dd) => {
               for (const [key, label] of Object.entries(WORD_COUNT_MODE_LABELS)) {
                 dd.addOption(key, label);
@@ -248,7 +248,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
           new Setting(statsCard)
             .setName("状态栏仅在沉浸模式显示")
-            .setDesc("常规编辑时右下角状态栏保持隐藏，由侧栏统一承载；进入沉浸模式时自动显现")
+            .setDesc("常规编辑时隐藏，改由侧栏显示；进入沉浸模式时自动出现")
             .addToggle((toggle) =>
               toggle
                 .setValue(this.wt.settings.statusBarOnlyImmersive)
@@ -262,7 +262,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           new Setting(statsCard)
             .setName("手机端常驻状态条")
             .setDesc(
-              "手机版没有状态栏，开启后在阅读 / 编辑正文时于屏幕底部显示一条轻量状态条（今日进度 · 番茄 · 时速），点击可打开菜单"
+              "手机版没有状态栏，开启后在屏幕底部显示一条：今日进度 · 番茄 · 时速"
             )
             .addToggle((toggle) =>
               toggle
@@ -365,7 +365,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           this.group("排版", section, (el) => {
             new Setting(el)
               .setName("配色主题")
-              .setDesc("暖纸保持原有的米色书房风格；极简冷淡为低饱和的冷灰与蓝灰；高对比度为白底黑字、边线分明")
+              .setDesc("暖纸（米色书房）｜极简冷淡（冷灰蓝）｜高对比度（白底黑字）")
               .addDropdown((dd) => {
                 for (const [key, label] of Object.entries(THEME_TONE_LABELS)) {
                   dd.addOption(key, label);
@@ -380,8 +380,8 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("标题样式")
               .setDesc(
-                "H1~H6 走一套克制的字号/字重阶梯（层级不靠颜色，只有 H1 用强调色做锚点），" +
-                  "并让多行标题自动均衡断行、正文消除末行孤字。主题的三套配色下自动适配。"
+                "为 H1~H6 排一套字号与字重阶梯（只有 H1 用强调色），" +
+                  "并优化标题断行。跟随配色主题。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -397,7 +397,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("选中浮出格式工具条")
               .setDesc(
-                "在编辑器里选中文字时浮出小工具条：加粗、斜体、下划线、删除线、高亮、字色。再点一次同一格式即取消；命令面板里也有对应的「格式：…」命令"
+                "选中文字时浮出：加粗、斜体、下划线、删除线、高亮、字色。再点同一格式即取消。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -411,7 +411,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("工具条生效范围")
               .setDesc(
-                "「正文」指作品正文草稿目录里的章节。字色、下划线是 HTML 写法：阅读视图正常显示，实时预览里可能看到原始标签；默认不在正文中浮出，设定、章纲、资料等不受影响，随时可调"
+                "哪些文件里允许浮出。默认排除「正文」（正文里的字色/下划线会写入 HTML 标签）。"
               )
               .addDropdown((dd) => {
                 dd.addOption("all", "全库所有文件");
@@ -429,7 +429,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("批注")
               .setDesc(
-                "选中文字后可以加批注（气泡上的批注按钮，或右键「添加批注」）。批注存在同目录的「文档名.批注.md」文件里，正文一个字都不动；适合「Agent 写稿 → 你批注 → Agent 读批注文件改稿」的流程"
+                "选中文字后加批注（气泡上的按钮，或右键「添加批注」）。批注存进同目录的「文档名.批注.md」，不改正文。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -443,7 +443,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("批注按钮全库可用")
               .setDesc(
-                "批注按钮不受上面「工具条生效范围」限制：开启后正文里也能批注；关闭则和格式工具条的范围一致"
+                "开启后不受上面「生效范围」限制，正文里也能批注。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -476,7 +476,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
             new Setting(el)
               .setName("快照文件夹")
-              .setDesc("相对库根目录的文件夹；默认 .wt-snapshots（隐藏，不显示在侧栏），如需随坚果云同步请改为普通文件夹")
+              .setDesc("相对库根目录。默认 .wt-snapshots（隐藏）。要用坚果云同步就改成普通文件夹名。")
               .addText((text) =>
                 text
                   .setValue(this.wt.settings.snapshotFolder)
@@ -541,7 +541,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           this.group("操作", section, (el) => {
             new Setting(el)
               .setName("立即保存")
-              .setDesc("为当前打开的笔记保存一份快照（任意 Markdown 文件均可）")
+              .setDesc("给当前笔记存一份快照（任意 Markdown 文件）")
               .addButton((button) =>
                 button.setButtonText("保存当前快照").onClick(async () => {
                   await this.wt.saveSnapshotNow();
@@ -564,7 +564,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           this.group("章节识别", section, (el) => {
             new Setting(el)
               .setName("正文章节关键词")
-              .setDesc("以逗号分隔。当打开路径或文件名包含这些词的 Markdown 文件时，侧栏章纲自动跟随；打开设定卡等其他文件时保留上一章内容。填 * 表示匹配所有笔记")
+              .setDesc("逗号分隔。打开路径或文件名含这些词的笔记时，侧栏章纲自动跟随；打开其他文件时保留上一章。填 * 匹配全部。")
               .addText((text) =>
                 text
                   .setPlaceholder("正文草稿, 正文, 章节, 草稿, 卷, draft, chapter")
@@ -577,7 +577,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
             new Setting(el)
               .setName("不算章节的文件名")
-              .setDesc("以逗号分隔。正文目录里的这些辅助文件（如 Agent.md）不会被当成章节，也不计入字数统计与章节列表；忽略大小写，.md 后缀可省略")
+              .setDesc("逗号分隔。如 Agent.md 这类辅助文件不算章节、不计字数。忽略大小写，.md 可省。")
               .addText((text) =>
                 text
                   .setPlaceholder(DEFAULT_CHAPTER_EXCLUDE_NAMES)
@@ -592,7 +592,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           this.group("存储方式", section, (el) => {
             new Setting(el)
               .setName("章纲数据存放机制")
-              .setDesc("推荐使用「独立伴生文件（sidecar）」，将章纲安全隔离存放在 .wt-outlines 目录，不修改任何正文 YAML，保护正文纯净")
+              .setDesc("侧栏章纲的存放位置。推荐 sidecar：存在 .wt-outlines 目录，不碰正文的 YAML。")
               .addDropdown((dd) =>
                 dd
                   .addOption("sidecar", "独立伴生文件（.wt-outlines，推荐）")
