@@ -49,6 +49,8 @@ function makeDom() {
     set min(v) { this._attrs.min = String(v); }
     get max() { return this._attrs.max ?? ""; }
     set max(v) { this._attrs.max = String(v); }
+    getAttribute(name) { return this._attrs[name] ?? null; }
+    setAttribute(name, value) { this._attrs[name] = String(value); }
     appendChild(child) {
       if (child.parentElement) {
         const i = child.parentElement.children.indexOf(child);
@@ -185,6 +187,7 @@ function main() {
       Math.abs(parseFloat(range.style._vars["--wt-fill"]) - 17.39) < 0.1,
       "实得 " + range.style._vars["--wt-fill"]);
 
+
     range.value = 120; range.fire("input");
     r.check("滑块：拉到最大值 → --wt-fill 100%",
       range.style._vars["--wt-fill"] === "100%",
@@ -226,6 +229,8 @@ function main() {
       control.children[0]._classes.has("wt-select-wrap") &&
       control.children[0].children[0] === select,
       "children=" + control.children.map((c) => c.className).join(","));
+    r.check("select：控制区带上稳定的 wt-select-control 宽度类",
+      control.classList.contains("wt-select-control"));
     r.check("select：位置正确（wrapper 取代了 select 原来的位置）",
       select.parentElement === control.children[0]);
 
@@ -234,6 +239,20 @@ function main() {
     r.check("select：重复调用是幂等的（不会套第二层 wrapper）",
       JSON.stringify(control.children.map((c) => c.className)) === snap,
       "实得 " + JSON.stringify(control.children.map((c) => c.className)));
+
+    // Obsidian 1.14 会为下拉额外生成一个隐藏的测量副本
+    // （.dropdown.is-measuring + aria-hidden）。它不能被包，否则会参与布局。
+    const measureByClass = dom.make("select", "dropdown is-measuring");
+    const measureByAria = dom.make("select", "dropdown");
+    measureByAria.setAttribute("aria-hidden", "true");
+    control.appendChild(measureByClass);
+    control.appendChild(measureByAria);
+    SC.setupSelectArrows(root);
+    r.check("select：Obsidian 的隐藏测量副本不会被包进 wrapper",
+      measureByClass.parentElement === control &&
+      measureByAria.parentElement === control &&
+      !measureByClass.dataset.wtSelectWrapped &&
+      !measureByAria.dataset.wtSelectWrapped);
 
     // 父节点不是 setting-item-control → 不该包（Obsidian 换结构时宁可没有箭头）
     const root2 = dom.arm(dom.make("div"));
@@ -256,10 +275,23 @@ function main() {
       "CSS：range 用 background-image 而不是 background 简写（简写会清掉填充渐变）",
       /background-image:\s*none/.test(rangeBlock[1]) && !/(^|[\s;])background\s*:/.test(rangeBlock[1])
     );
+    r.check(
+      "CSS：range 清掉 Obsidian 1.14 自带的灰胶囊底（只清 background-color，不用简写）",
+      /background-color:\s*transparent/.test(rangeBlock[1])
+    );
   }
   r.check(
-    "CSS：轨道用两道渐变叠出「已选填充」（读 --wt-fill）",
+    "CSS：轨道用渐变画出已选填充（读 --wt-fill）",
     /::-webkit-slider-runnable-track \{[\s\S]{0,600}?var\(--wt-fill/.test(css)
+  );
+  r.check(
+    "CSS：thumb 是主题纸色胶囊（不是白球，也不叠灰底）",
+    /::-webkit-slider-thumb \{[\s\S]{0,500}?background:\s*var\(--wt-card-bg\)/.test(css) &&
+      /::-webkit-slider-thumb \{[\s\S]{0,500}?border-radius:\s*var\(--wt-radius-pill\)/.test(css)
+  );
+  r.check(
+    "CSS：thumb 归零原生 top（保证把手垂直居中于轨道）",
+    /::-webkit-slider-thumb \{[\s\S]{0,500}?top:\s*0;/.test(css)
   );
   r.check(
     "CSS：wrapper 上有箭头，且原生 select 上**没有** ::after（Chrome 不生成）",
@@ -269,6 +301,26 @@ function main() {
   r.check(
     "CSS：包 wrapper 后字段框规则带上了 .wt-select-wrap select（否则 select 掉回默认样式）",
     /\.setting-item-control \.wt-select-wrap select,/.test(css)
+  );
+  r.check(
+    "CSS：Obsidian 的隐藏测量 select 脱离布局流（否则切标签页后仍会挤掉文字）",
+    /select\.is-measuring[\s\S]{0,260}?position:\s*absolute/.test(css) &&
+    /select\[aria-hidden="true"\][\s\S]{0,120}?position:\s*absolute/.test(css)
+  );
+  r.check(
+    "CSS：下拉控制区有可收缩的 260px 基准宽度（避免百分比 max-width 循环塌缩）",
+    /\.setting-item-control\.wt-select-control\s*\{[^}]*flex:\s*0 1 260px;[^}]*width:\s*260px;/s
+      .test(css)
+  );
+  r.check(
+    "CSS：设置弹窗本身被加宽，而不是误写在不存在的 .modal.vertical-tab-content 节点上",
+    /\.modal\.mod-settings:has\(\.wt-settings-page\)\s*\{[^}]*--dialog-width:\s*min\(820px,\s*94vw\)/s
+      .test(css)
+  );
+  r.check(
+    "CSS：设置页允许随窄窗口收缩（width: 100%; min-width: 0）",
+    /\.wt-settings-page\.vertical-tab-content\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;/s
+      .test(css)
   );
 
   // ── 接线 ──────────────────────────────────────────────────

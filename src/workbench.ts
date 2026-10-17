@@ -9,7 +9,6 @@ import {
   WorkspaceLeaf,
   setIcon,
 } from "obsidian";
-import { getWordCount } from "./wordcount";
 import {
   describeRenumberPlan,
   looksLikeDraftFolder,
@@ -20,20 +19,13 @@ import {
   renumberChapterName,
   volumeNumber,
 } from "./chapterOrder";
-import {
-  countChars,
-  getOutlinePath,
-  loadOutline,
-  readOutlineFromContent,
-  saveOutline,
-} from "./outlineText";
+import { countChars } from "./outlineText";
 import {
   ChapterEntry,
   NovelProject,
   ResourceGroup,
   VolumeEntry,
   allChapters,
-  discoverProjects,
   isInternalPath,
   projectForPath,
 } from "./project";
@@ -44,9 +36,21 @@ import {
   showMenuAt,
   type MenuPoint,
 } from "./mobile";
-import type WritingToolkitPlugin from "./main";
+import type { UiShellContext } from "./uiShellContext";
+import { WRITING_TOOLKIT_WORKBENCH } from "./uiSlots";
+import {
+  ARCHIVE_RE,
+  STATUS_LABEL,
+  displayFolderName,
+  displayProjectName,
+  fileStatCache,
+  parseResourceName,
+  relativeTime,
+  splitWords,
+  type WorkbenchStatus,
+} from "./uiShellShared";
 
-export const WRITING_TOOLKIT_WORKBENCH = "writing-toolkit-workbench";
+export { WRITING_TOOLKIT_WORKBENCH } from "./uiSlots";
 
 /** 章纲自动保存延迟（毫秒） */
 const OUTLINE_AUTOSAVE_DELAY = 800;
@@ -57,26 +61,8 @@ const MODIFY_DEBOUNCE = 1500;
 
 export type WorkbenchMode = "chapters" | "resources";
 
-/** 作品连载状态（存在插件数据里，按作品根目录记录） */
-export type WorkbenchStatus = "ongoing" | "completed" | "hiatus";
-
-export const STATUS_LABEL: Record<WorkbenchStatus, string> = {
-  ongoing: "连载中",
-  completed: "已完结",
-  hiatus: "暂停更新",
-};
-
-/** 文件统计缓存（跨视图重建复用；按 mtime + size 失效） */
-interface CachedFileStat {
-  mtime: number;
-  size: number;
-  words: number;
-  outline: boolean;
-}
-const statCache = new Map<string, CachedFileStat>();
-
-/** 供其它视图（主页的作品库页）只读复用的文件字数缓存 */
-export const fileStatCache = statCache;
+/** 迁移期别名：统计缓存已移到 uiShellShared，内部沿用旧名字。 */
+const statCache = fileStatCache;
 
 /** 卷折叠状态（会话内跨视图重建保留）：true = 折叠 */
 const volumeCollapse = new Map<string, boolean>();
@@ -86,9 +72,6 @@ const resourceGroupCollapse = new Map<string, boolean>();
 
 /** 卷数超过这个值时，默认只展开「当前卷」和「最后一卷」 */
 const AUTO_COLLAPSE_VOLUMES = 3;
-
-/** 存档类作品：在作品切换菜单里排到后面 */
-export const ARCHIVE_RE = /存档|归档|完结|archive/i;
 
 interface RowRef {
   entry: ChapterEntry;
@@ -130,33 +113,6 @@ function formatCompact(n: number): string {
   return formatNumber(n);
 }
 
-/** 总字数拆成「数字 + 单位」：超过一万用「万字」。 */
-export function splitWords(n: number): [string, string] {
-  if (n >= 10000) return [(n / 10000).toFixed(1), "万字"];
-  return [formatNumber(n), "字"];
-}
-
-/** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / 日期 */
-export function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
-  return new Date(ts).toLocaleDateString("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-  });
-}
-
-/** 目录名开头的排序码（如「1-1-5-2 」「P3.2-」）只是用来排顺序，展示时去掉。 */
-export function displayFolderName(name: string): string {
-  const cleaned = name
-    .replace(/^[A-Za-z]{0,2}\d+(?:[.-]\d+)*[\s.-]+\s*/, "")
-    .trim();
-  return cleaned || name;
-}
-
 /** 名字是否已经以排序码开头（1-1-5-4 / P3.4 / P4 这种）。 */
 function startsWithOrderCode(name: string): boolean {
   return /^[A-Za-z]{0,2}\d+(?:[.-]\d+)*(\s|[.·-]|$)/.test(name);
@@ -175,27 +131,6 @@ function formatDuration(seconds: number): string {
 }
 
 /** 书名显示：去掉外层《》，过长时交给 CSS 省略号 */
-export function displayProjectName(name: string): string {
-  const m = /^《(.+)》$/.exec(name.trim());
-  return m ? m[1] : name;
-}
-
-/**
- * 资料文件名拆分：`【资料】0713-李仪` → 标签「资料」+ 名称「李仪」。
- * 只做显示用，搜索仍匹配完整文件名。
- */
-export function parseResourceName(base: string): { tag: string | null; name: string } {
-  let tag: string | null = null;
-  let rest = base;
-  const m = /^[【[]([^】\]]{1,8})[】\]]\s*(.*)$/.exec(base);
-  if (m) {
-    tag = m[1];
-    rest = m[2];
-  }
-  // 去掉 `0713-` 这类日期前缀（修改时间已单独显示）
-  rest = rest.replace(/^\d{4}\s*[-_－—·]\s*/, "").trim();
-  return { tag, name: rest || base };
-}
 
 /** 输入框里的按键不交给列表键盘导航处理 */
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -216,7 +151,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * 3. 今日状态 —— 紧凑的今日码字进度细条 + 番茄 / 时长 / 快照速览（可点击交互）
  */
 export class WritingToolkitWorkbench extends ItemView {
-  private readonly plugin: WritingToolkitPlugin;
+  private readonly host: UiShellContext;
 
   private headEl!: HTMLElement;
   private searchEl!: HTMLElement;
@@ -228,7 +163,7 @@ export class WritingToolkitWorkbench extends ItemView {
   /** 手机版右下角主操作按钮（新章节 / 新分类） */
   private fabEl!: HTMLButtonElement;
 
-  private projects: NovelProject[] = [];
+  private projects: readonly NovelProject[] = [];
   private project: NovelProject | null = null;
   private mode: WorkbenchMode = "chapters";
   /** 搜索关键字（章节标题 / 章号 / 资料文件名） */
@@ -271,9 +206,9 @@ export class WritingToolkitWorkbench extends ItemView {
   private snapshotCountPath: string | null = null;
   private footSignature = "";
 
-  constructor(leaf: WorkspaceLeaf, plugin: WritingToolkitPlugin) {
+  constructor(leaf: WorkspaceLeaf, host: UiShellContext) {
     super(leaf);
-    this.plugin = plugin;
+    this.host = host;
   }
 
   getViewType(): string {
@@ -291,7 +226,7 @@ export class WritingToolkitWorkbench extends ItemView {
   async onOpen(): Promise<void> {
     this.contentEl.empty();
     this.contentEl.addClass("wt-wb");
-    this.mode = this.plugin.getWorkbenchMode();
+    this.mode = this.host.prefs.getWorkbenchMode();
 
     this.headEl = this.contentEl.createDiv({ cls: "wt-wb-head" });
     this.searchEl = this.contentEl.createDiv({ cls: "wt-wb-searchbar" });
@@ -342,6 +277,14 @@ export class WritingToolkitWorkbench extends ItemView {
       // 只同步高亮，不重建列表：滚动位置、展开的章纲编辑框都保持不动
       this.app.workspace.on("active-leaf-change", () => this.syncActive())
     );
+    this.register(
+      this.host.caps.outline.subscribe((change) => {
+        if (change.hasContent === undefined) return;
+        for (const path of change.paths) {
+          this.applyOutlineState(path, change.hasContent);
+        }
+      })
+    );
 
     this.footTimer = window.setInterval(() => this.renderFoot(), 1000);
     this.render();
@@ -382,7 +325,7 @@ export class WritingToolkitWorkbench extends ItemView {
   }
 
   /**
-   * 手动触发「全书章节重编号」（命令面板 / 卷菜单入口）。
+   * 手动触发「全书章节重编号」（卷右键菜单入口）。
    * 会先弹预览确认——这一步会改文件名，不该静默发生。
    */
   renumberBookNow(): void {
@@ -395,12 +338,12 @@ export class WritingToolkitWorkbench extends ItemView {
    */
   refreshLive(): void {
     this.updateCurrentPath();
-    const path = this.plugin.getLastKnownFilePath();
-    const text = this.plugin.getLastKnownText();
+    const path = this.host.recent.path();
+    const text = this.host.recent.text();
     if (path && text !== null) {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (file instanceof TFile) {
-        const words = getWordCount(text, this.plugin.settings.wordCountMode);
+        const words = this.host.actions.countWords(text);
         const ref = this.rows.get(path);
         const resRef = this.resourceRows.get(path);
         statCache.set(path, {
@@ -422,7 +365,7 @@ export class WritingToolkitWorkbench extends ItemView {
     if (!(file instanceof TFile) || file.extension !== "md") return;
     if (!this.rows.has(file.path) && !this.resourceRows.has(file.path)) return;
     // 正在编辑器里输入的文件由 refreshLive 负责，避免重复读盘
-    if (file.path === this.plugin.getLastKnownFilePath()) return;
+    if (file.path === this.host.recent.path()) return;
     this.pendingModify.add(file.path);
     if (this.modifyTimer) return;
     this.modifyTimer = window.setTimeout(() => {
@@ -439,7 +382,7 @@ export class WritingToolkitWorkbench extends ItemView {
       if (!(file instanceof TFile)) continue;
       try {
         const content = await this.app.vault.cachedRead(file);
-        const words = getWordCount(content, this.plugin.settings.wordCountMode);
+        const words = this.host.actions.countWords(content);
         const ref = this.rows.get(path);
         statCache.set(path, {
           mtime: file.stat.mtime,
@@ -461,11 +404,7 @@ export class WritingToolkitWorkbench extends ItemView {
   // ---------- 渲染 ----------
 
   private render(): void {
-    this.projects = discoverProjects(this.app, {
-      draftKeywords: this.plugin.settings.draftKeywords,
-      excludeNames: this.plugin.settings.chapterExcludeNames,
-      extraExcluded: [this.plugin.settings.snapshotFolder],
-    });
+    this.projects = this.host.services.project.projects();
     this.project = this.pickProject();
     this.updateCurrentPath();
     this.keyboardIndex = null;
@@ -486,7 +425,7 @@ export class WritingToolkitWorkbench extends ItemView {
   private pickProject(): NovelProject | null {
     if (this.projects.length === 0) return null;
 
-    const remembered = this.plugin.getWorkbenchProject();
+    const remembered = this.host.prefs.getWorkbenchProject();
     if (remembered) {
       const hit = this.projects.find((p) => p.root === remembered);
       if (hit) return hit;
@@ -494,7 +433,7 @@ export class WritingToolkitWorkbench extends ItemView {
 
     const active =
       this.app.workspace.getActiveFile()?.path ??
-      this.plugin.getLastKnownFilePath();
+      this.host.recent.path();
     if (active) {
       const hit = projectForPath(active, this.projects);
       if (hit) return hit;
@@ -518,7 +457,7 @@ export class WritingToolkitWorkbench extends ItemView {
   private updateCurrentPath(): void {
     const active =
       this.app.workspace.getActiveFile()?.path ??
-      this.plugin.getLastKnownFilePath();
+      this.host.recent.path();
     let path: string | null = null;
     if (this.project && active) {
       const hit = allChapters(this.project).find((c) => c.file.path === active);
@@ -576,9 +515,9 @@ export class WritingToolkitWorkbench extends ItemView {
       attr: { type: "button" },
     });
     btn.addEventListener("click", () => {
-      this.plugin.setWorkbenchProject(other.root);
+      this.host.prefs.setWorkbenchProject(other.root);
       this.render();
-      this.plugin.refreshHome();
+      this.host.nav.refreshHome();
     });
   }
 
@@ -634,15 +573,20 @@ export class WritingToolkitWorkbench extends ItemView {
       }
       menu.addSeparator();
       menu.addItem((item) =>
-        item.setTitle("打开书房主页").onClick(() => void this.plugin.openHome())
+        item.setTitle("打开书房主页").onClick(() => void this.host.nav.openHome())
       );
       menu.addItem((item) =>
         item.setTitle("在系统文件管理器中显示").onClick(() => {
-          if (this.project) this.plugin.revealPathInSystem(this.project.root);
+          if (this.project) this.host.actions.revealPathInSystem(this.project.root);
         })
       );
       menu.addItem((item) =>
-        item.setTitle("重新扫描作品").onClick(() => this.render())
+        item.setTitle("重新扫描作品").onClick(() => {
+          // 项目索引现在是带缓存的 Service：手动重扫必须先失效缓存，
+          // 否则文件系统在 Obsidian 事件之外被改动时看不到新作品。
+          this.host.services.project.invalidate();
+          this.render();
+        })
       );
       showMenuAt(menu, pt);
     });
@@ -709,7 +653,7 @@ export class WritingToolkitWorkbench extends ItemView {
   private showProjectSwitcherMenu(pt: MenuPoint): void {
     const menu = new Menu();
     const visible = this.projects.filter(
-      (p) => !this.plugin.isProjectHidden(p.root) || p.root === this.project?.root
+      (p) => !this.host.prefs.isProjectHidden(p.root) || p.root === this.project?.root
     );
     const activeList = visible.filter((p) => !ARCHIVE_RE.test(p.name));
     const archiveList = visible.filter((p) => ARCHIVE_RE.test(p.name));
@@ -723,9 +667,9 @@ export class WritingToolkitWorkbench extends ItemView {
           .setChecked(proj.root === this.project?.root)
           .onClick(() => {
             if (proj.root === this.project?.root) return;
-            this.plugin.setWorkbenchProject(proj.root);
+            this.host.prefs.setWorkbenchProject(proj.root);
             this.render();
-            this.plugin.refreshHome();
+            this.host.nav.refreshHome();
           })
       );
     };
@@ -738,10 +682,10 @@ export class WritingToolkitWorkbench extends ItemView {
 
     menu.addSeparator();
     menu.addItem((item) =>
-      item.setTitle("新建作品…").onClick(() => this.plugin.openNewProjectDialog())
+      item.setTitle("新建作品…").onClick(() => this.host.nav.openNewProjectDialog())
     );
     menu.addItem((item) =>
-      item.setTitle("打开书房主页").onClick(() => void this.plugin.openHome())
+      item.setTitle("打开书房主页").onClick(() => void this.host.nav.openHome())
     );
     showMenuAt(menu, pt);
   }
@@ -800,7 +744,7 @@ export class WritingToolkitWorkbench extends ItemView {
   /** 连载状态按钮：未标注时也显示，点一下即可设置。 */
   private renderStatusChip(parent: HTMLElement): void {
     if (!this.project) return;
-    const status = this.plugin.getWorkbenchStatus(this.project.root);
+    const status = this.host.prefs.getWorkbenchStatus(this.project.root);
     const btn = parent.createEl("button", {
       cls: `wt-wb-status is-${status ?? "unset"}`,
       attr: { type: "button", title: "设置连载状态" },
@@ -821,7 +765,7 @@ export class WritingToolkitWorkbench extends ItemView {
   private showStatusMenu(pt: MenuPoint): void {
     const root = this.project?.root;
     if (!root) return;
-    const current = this.plugin.getWorkbenchStatus(root);
+    const current = this.host.prefs.getWorkbenchStatus(root);
     const menu = new Menu();
     const order: WorkbenchStatus[] = ["ongoing", "completed", "hiatus"];
     for (const key of order) {
@@ -843,15 +787,15 @@ export class WritingToolkitWorkbench extends ItemView {
   }
 
   private applyStatus(root: string, status: WorkbenchStatus | null): void {
-    this.plugin.setWorkbenchStatus(root, status);
+    this.host.prefs.setWorkbenchStatus(root, status);
     this.renderHead();
-    this.plugin.refreshHome();
+    this.host.nav.refreshHome();
   }
 
   private switchMode(mode: WorkbenchMode): void {
     if (this.mode === mode) return;
     this.mode = mode;
-    this.plugin.setWorkbenchMode(mode);
+    this.host.prefs.setWorkbenchMode(mode);
     this.keyboardIndex = null;
     this.renderHead();
     this.renderSearchBar();
@@ -934,7 +878,7 @@ export class WritingToolkitWorkbench extends ItemView {
         new Notice("先打开一章，或在这篇作品里建一章");
         return;
       }
-      void this.plugin.copyCleanChapter(target);
+      void this.host.actions.copyCleanChapter(target);
       copyBtn.addClass("is-copied");
       setIcon(copyBtn, "check");
       if (this.copyFeedbackTimer) window.clearTimeout(this.copyFeedbackTimer);
@@ -1198,7 +1142,7 @@ export class WritingToolkitWorkbench extends ItemView {
     menu.addSeparator();
     menu.addItem((item) =>
       item.setTitle("在系统文件管理器中显示").setIcon("folder-open").onClick(() => {
-        this.plugin.revealPathInSystem(volume.path);
+        this.host.actions.revealPathInSystem(volume.path);
       })
     );
     if (this.canDeleteVolume(volume)) {
@@ -1442,7 +1386,7 @@ export class WritingToolkitWorkbench extends ItemView {
         );
         menu.addItem((item) =>
           item.setTitle("在系统文件管理器中显示").setIcon("folder-open").onClick(() => {
-            this.plugin.revealPathInSystem(group.path);
+            this.host.actions.revealPathInSystem(group.path);
           })
         );
         showMenuAt(menu, pt);
@@ -1566,10 +1510,8 @@ export class WritingToolkitWorkbench extends ItemView {
       let outline = false;
       try {
         const content = await this.app.vault.cachedRead(file);
-        words = getWordCount(content, this.plugin.settings.wordCountMode);
-        outline =
-          (await this.hasOutline(file)) ||
-          readOutlineFromContent(content).value.trim().length > 0;
+        words = this.host.actions.countWords(content);
+        outline = await this.hasOutline(file);
       } catch {
         /* 读取失败按空处理 */
       }
@@ -1595,11 +1537,24 @@ export class WritingToolkitWorkbench extends ItemView {
 
   private async hasOutline(file: TFile): Promise<boolean> {
     try {
-      const stat = await this.app.vault.adapter.stat(getOutlinePath(file.path));
-      return !!stat && stat.size > 0;
+      return await this.host.caps.outline.has(file);
     } catch {
       return false;
     }
+  }
+
+  private applyOutlineState(path: string, hasContent: boolean): void {
+    const ref = this.rows.get(path);
+    if (ref) {
+      ref.outline = hasContent;
+      ref.outlineBtn.toggleClass("is-on", hasContent);
+      ref.outlineBtn.setAttr(
+        "title",
+        hasContent ? "查看 / 编辑本章章纲（已写）" : "写本章章纲"
+      );
+    }
+    const cached = statCache.get(path);
+    if (cached) cached.outline = hasContent;
   }
 
   private applyChapterStats(ref: RowRef, words: number, outline: boolean): void {
@@ -1652,10 +1607,10 @@ export class WritingToolkitWorkbench extends ItemView {
   private renderFoot(): void {
     void this.ensureSnapshotCount();
 
-    const pomo = this.plugin.getTodayPomodoroSummary();
-    const duration = Math.round(this.plugin.dailyDurationSeconds || 0);
-    const todayWords = Math.max(0, this.plugin.dailyGross || 0);
-    const dailyGoal = Math.max(1, this.plugin.settings.dailyGoal || 2000);
+    const pomo = this.host.stats.getTodayPomodoroSummary();
+    const duration = Math.round(this.host.stats.durationSeconds() || 0);
+    const todayWords = Math.max(0, this.host.stats.gross() || 0);
+    const dailyGoal = Math.max(1, this.host.settings.dailyGoal || 2000);
 
     const signature = [
       !!this.project,
@@ -1680,21 +1635,21 @@ export class WritingToolkitWorkbench extends ItemView {
       details.push({
         text: `今日 ${formatNumber(todayWords)} 字`,
         title: `今日目标 ${formatNumber(dailyGoal)} 字（点击查看明细）`,
-        onClick: () => this.plugin.showDailyBreakdown(),
+        onClick: () => this.host.stats.showDailyBreakdown(),
       });
     }
     if (pomo && pomo.count > 0) {
       details.push({
         text: `${pomo.count} 番茄`,
         title: "点击打开工具箱侧栏",
-        onClick: () => void this.plugin.openSidebar(),
+        onClick: () => void this.host.nav.openSidebar(),
       });
     }
     if (duration > 0) {
       details.push({
         text: `码字 ${formatDuration(duration)}`,
         title: "点击打开工具箱侧栏",
-        onClick: () => void this.plugin.openSidebar(),
+        onClick: () => void this.host.nav.openSidebar(),
       });
     }
     if (this.snapshotCount !== null && this.snapshotCount > 0) {
@@ -1703,7 +1658,7 @@ export class WritingToolkitWorkbench extends ItemView {
         title: "点击对比当前章节最近快照",
         onClick: () => {
           if (this.currentPath) {
-            void this.plugin.openSnapshotDiffFor(this.currentPath);
+            void this.host.caps.snapshots.openDiff(this.currentPath);
           }
         },
       });
@@ -1757,7 +1712,7 @@ export class WritingToolkitWorkbench extends ItemView {
     this.snapshotCountPath = path;
     this.snapshotCount = null;
     try {
-      const entries = await this.plugin.listSnapshotEntries(path);
+      const entries = await this.host.caps.snapshots.list(path);
       if (this.snapshotCountPath !== path) return;
       this.snapshotCount = entries.length;
       this.renderFoot();
@@ -1886,7 +1841,7 @@ export class WritingToolkitWorkbench extends ItemView {
       );
       menu.addItem((item) =>
         item.setTitle("对比最近快照").onClick(() => {
-          void this.plugin.openSnapshotDiffFor(entry.file.path);
+          void this.host.caps.snapshots.openDiff(entry.file.path);
         })
       );
       const targets = (this.project?.volumes ?? []).filter(
@@ -1907,7 +1862,7 @@ export class WritingToolkitWorkbench extends ItemView {
     }
     menu.addItem((item) =>
       item.setTitle("在系统文件管理器中显示").onClick(() => {
-        this.plugin.revealPathInSystem(file.path);
+        this.host.actions.revealPathInSystem(file.path);
       })
     );
     menu.addItem((item) =>
@@ -1984,7 +1939,7 @@ export class WritingToolkitWorkbench extends ItemView {
       explicitCount > 0 &&
       volume.chapters.length === 0 &&
       !looksLikeVolumeFolder(volume.name) &&
-      looksLikeDraftFolder(volume.name, this.plugin.settings.draftKeywords)
+      looksLikeDraftFolder(volume.name, this.host.settings.draftKeywords)
     );
   }
 
@@ -2137,7 +2092,7 @@ export class WritingToolkitWorkbench extends ItemView {
   }
 
   private draftFolderPath(project: NovelProject): string | null {
-    const keywords = this.plugin.settings.draftKeywords;
+    const keywords = this.host.settings.draftKeywords;
     const hit = project.volumes
       .filter(
         (v) =>
@@ -2423,11 +2378,10 @@ export class WritingToolkitWorkbench extends ItemView {
     rowEl: HTMLElement
   ): Promise<void> {
     if (this.openOutlinePath === entry.file.path) {
-      await this.flushOutline();
-      this.closeOutlineEditor();
+      if (await this.flushOutline()) this.closeOutlineEditor();
       return;
     }
-    await this.flushOutline();
+    if (!(await this.flushOutline())) return;
     this.closeOutlineEditor();
 
     this.openOutlinePath = entry.file.path;
@@ -2456,19 +2410,24 @@ export class WritingToolkitWorkbench extends ItemView {
 
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      void this.flushOutline(ta, state).then(() => {
-        this.closeOutlineEditor();
-        this.bodyEl.focus();
+      void this.flushOutline(ta, state).then((saved) => {
+        if (saved) {
+          this.closeOutlineEditor();
+          this.bodyEl.focus();
+        }
       });
     });
 
-    const mode = this.plugin.settings.outlineStorageMode ?? "sidecar";
-    let loaded = "";
+    let loaded: string;
     try {
-      const res = await loadOutline(this.app, entry.file, mode);
+      const res = await this.host.caps.outline.load(entry.file);
       loaded = res.value;
-    } catch {
-      loaded = "";
+    } catch (error) {
+      console.error("写作工作台：读取章纲失败", error);
+      state.setText("读取失败");
+      new Notice("章纲读取失败");
+      ta.disabled = true;
+      return;
     }
     if (this.openOutlinePath !== entry.file.path) return;
     this.outlineLoadedText = loaded;
@@ -2491,9 +2450,11 @@ export class WritingToolkitWorkbench extends ItemView {
       e.stopPropagation();
       if (e.key === "Escape" || ((e.metaKey || e.ctrlKey) && e.key === "Enter")) {
         e.preventDefault();
-        void this.flushOutline(ta, state).then(() => {
-          this.closeOutlineEditor();
-          this.bodyEl.focus();
+        void this.flushOutline(ta, state).then((saved) => {
+          if (saved) {
+            this.closeOutlineEditor();
+            this.bodyEl.focus();
+          }
         });
       }
     });
@@ -2510,18 +2471,13 @@ export class WritingToolkitWorkbench extends ItemView {
   private async saveOutlineValue(
     value: string,
     stateEl?: HTMLElement
-  ): Promise<void> {
+  ): Promise<boolean> {
     const file = this.outlineFile;
-    if (!file) return;
-    if (value === this.outlineLoadedText) return;
-    this.outlineLoadedText = value;
-    const mode = this.plugin.settings.outlineStorageMode ?? "sidecar";
+    if (!file) return true;
+    if (value === this.outlineLoadedText) return true;
     try {
-      const skip =
-        mode === "sidecar" &&
-        !value.trim() &&
-        !(await this.app.vault.adapter.exists(getOutlinePath(file.path)));
-      if (!skip) await saveOutline(this.app, file, value, mode);
+      await this.host.caps.outline.save(file, value);
+      this.outlineLoadedText = value;
       stateEl?.setText(value.trim() ? "已保存" : "未填写");
       stateEl?.removeClass("is-dirty");
       const ref = this.rows.get(file.path);
@@ -2540,28 +2496,31 @@ export class WritingToolkitWorkbench extends ItemView {
           outline: hasContent,
         });
       }
+      return true;
     } catch (err) {
       console.error("写作工作台：保存章纲失败", err);
       stateEl?.setText("保存失败");
+      stateEl?.addClass("is-dirty");
       new Notice("章纲保存失败");
+      return false;
     }
   }
 
   private async flushOutline(
     ta?: HTMLTextAreaElement,
     stateEl?: HTMLElement
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (this.outlineSaveTimer) window.clearTimeout(this.outlineSaveTimer);
     this.outlineSaveTimer = 0;
     const box = this.outlineEditorEl;
-    if (!box) return;
+    if (!box) return true;
     const input =
       ta ?? (box.querySelector<HTMLTextAreaElement>("textarea"));
-    if (!input) return;
+    if (!input) return true;
     const state =
       stateEl ??
       box.querySelector<HTMLElement>(".wt-wb-outline-state");
-    await this.saveOutlineValue(input.value, state ?? undefined);
+    return this.saveOutlineValue(input.value, state ?? undefined);
   }
 
   private closeOutlineEditor(): void {

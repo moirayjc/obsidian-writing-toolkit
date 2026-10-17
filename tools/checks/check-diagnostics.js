@@ -126,7 +126,7 @@ function main() {
     currentPath: "正文/第1章.md",
     currentWords: 3210,
     pomodoroBaseCount: 3000,
-    pendingExternal: 0,
+    pendingExternal: 3,
   });
   for (const needle of [
     "# 写作工具箱 · 字数统计自检报告",
@@ -137,6 +137,7 @@ function main() {
     "基线条数：80",
     "算不算正文（isDailyCountFile）：是",
     "当前字数：3210",
+    "外部修改仍在队列里：3 个",
     "locateAll（批注定位，每次输入都会跑）：2 次",
     "## 怎么读这份报告",
   ]) {

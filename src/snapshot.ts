@@ -1,5 +1,6 @@
 import { Notice, Platform, TAbstractFile, TFile, TFolder, Vault } from "obsidian";
-import { getWordCount, WordCountMode } from "./wordcount";
+import type { WordCountMode } from "./wordcount";
+import type { WordCountService } from "./services/wordCountService";
 import { DEFAULT_CHAPTER_EXCLUDE_NAMES, isExcludedChapterName } from "./outlineText";
 
 // 插件在桌面端运行，Obsidian 会把 electron 注入到插件模块的 require 中。
@@ -51,6 +52,16 @@ export interface SnapshotEntry {
   wordCount: number;
 }
 
+/** 快照 UI 与恢复流程需要的最小能力面，不暴露自动保存生命周期。 */
+export interface SnapshotOperations {
+  saveSnapshotNow(showNotice?: boolean): Promise<void>;
+  openSnapshotFolder(): Promise<void>;
+  listSnapshots(sourcePath: string, mode: WordCountMode): Promise<SnapshotEntry[]>;
+  readSnapshot(snapshotPath: string): Promise<string>;
+  copySnapshot(snapshotPath: string): Promise<void>;
+  snapshotFileSilently(sourcePath: string, text: string): Promise<void>;
+}
+
 /**
  * 草稿版本快照管理器。
  *
@@ -62,8 +73,9 @@ export interface SnapshotEntry {
  * 快照存放于快照文件夹，镜像源文件目录结构，文件名为「原名-时间戳.md」。
  * 内容未变化时自动跳过快照；每个文件最多保留 snapshotMaxPerFile 份，超出删除最旧。
  */
-export class DraftSnapshotManager {
+export class DraftSnapshotManager implements SnapshotOperations {
   private readonly vault: Vault;
+  private readonly wordCount: WordCountService;
   private readonly getSettings: () => SnapshotSettingsView;
   private readonly getActiveFilePath: () => string | null;
   private readonly getActiveText: () => string | null;
@@ -83,12 +95,14 @@ export class DraftSnapshotManager {
 
   constructor(
     vault: Vault,
+    wordCount: WordCountService,
     getSettings: () => SnapshotSettingsView,
     getActiveFilePath: () => string | null,
     getActiveText: () => string | null,
     onSaved?: () => void
   ) {
     this.vault = vault;
+    this.wordCount = wordCount;
     this.getSettings = getSettings;
     this.getActiveFilePath = getActiveFilePath;
     this.getActiveText = getActiveText;
@@ -202,7 +216,10 @@ export class DraftSnapshotManager {
       const full = f.includes("/") ? f : `${dir}/${f}`;
       let wordCount = 0;
       try {
-        wordCount = getWordCount(await this.vault.adapter.read(full), mode);
+        wordCount = this.wordCount.count(
+          await this.vault.adapter.read(full),
+          mode
+        );
       } catch {
         // 单文件读取失败不影响列表
       }

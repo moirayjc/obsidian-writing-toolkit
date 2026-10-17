@@ -1,21 +1,12 @@
 import { App, Menu, Notice } from "obsidian";
-import { getWordCount, WordCountMode } from "./wordcount";
+import type { WordCountService } from "./services/wordCountService";
+import type { StatusBarState } from "./services/statsService";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import { TextPromptModal } from "./promptModal";
 
 interface SpeedSample {
   time: number;
   count: number;
-}
-
-export interface StatusBarState {
-  showSpeed: boolean;
-  /** 今日净增（可正可负）：留着做参考与产品进度 */
-  dailyTotal: number;
-  /** 今日毛新增（只累加变多的部分，不会为负）：状态栏显示的就是它 */
-  dailyGross: number;
-  dailyGoal: number;
-  wordCountMode: WordCountMode;
 }
 
 /** 状态栏番茄钟入口需要的动作回调（由插件提供，避免状态栏直接持有插件）。 */
@@ -50,6 +41,7 @@ export class WritingStatusBar {
 
   private state: StatusBarState;
   private app: App;
+  private wordCount: WordCountService;
   private onGoalChange: () => void;
   private pomodoroActions: PomodoroActions;
 
@@ -58,15 +50,25 @@ export class WritingStatusBar {
    * words 为 null 表示该路径的基线被丢弃。
    */
   baselineListener: ((path: string, words: number | null) => void) | null = null;
+  /** 首次为某个路径建立基础字数时的通知。 */
+  baselineSeedListener: ((path: string) => void) | null = null;
+  /** 文件改名后迁移已有基线时的通知。 */
+  baselineMigrateListener:
+    | ((oldPath: string, newPath: string) => void)
+    | null = null;
+  /** 删除已有基线时的通知。 */
+  baselineDropListener: ((path: string) => void) | null = null;
 
   constructor(
     app: App,
+    wordCount: WordCountService,
     addStatusBarItem: () => HTMLElement,
     state: StatusBarState,
     onGoalChange: () => void,
     pomodoroActions: PomodoroActions
   ) {
     this.app = app;
+    this.wordCount = wordCount;
     this.state = state;
     this.onGoalChange = onGoalChange;
     this.pomodoroActions = pomodoroActions;
@@ -114,7 +116,7 @@ export class WritingStatusBar {
 
   onFileChange(path: string, text: string): void {
     this.currentFilePath = path;
-    const docCount = getWordCount(text, this.state.wordCountMode);
+    const docCount = this.wordCount.count(text, this.state.wordCountMode);
     this.selectedCount = 0;
     this.lastDocCount = docCount;
     // 切换文件后重置时速采样，按当前文件的输入速度重新计算
@@ -131,14 +133,16 @@ export class WritingStatusBar {
       this.cumulativeDelta = 0;
       this.speedEma = 0;
     }
-    const docCount = getWordCount(text, this.state.wordCountMode);
+    const docCount = this.wordCount.count(text, this.state.wordCountMode);
     this.lastDocCount = docCount;
     if (this.currentFilePath) this.rememberBaseline(this.currentFilePath, docCount);
     this.refresh(docCount);
   }
 
   setSelectionText(text: string): void {
-    this.selectedCount = text ? getWordCount(text, this.state.wordCountMode) : 0;
+    this.selectedCount = text
+      ? this.wordCount.count(text, this.state.wordCountMode)
+      : 0;
     if (this.lastDocCount >= 0) this.refresh(this.lastDocCount);
   }
 
@@ -147,7 +151,7 @@ export class WritingStatusBar {
    * 按文件路径的基线计算净变化，不碰当前编辑状态与时速采样。
    */
   onExternalFileChange(path: string, text: string): number {
-    const docCount = getWordCount(text, this.state.wordCountMode);
+    const docCount = this.wordCount.count(text, this.state.wordCountMode);
     const baseline = this.fileBaselines.get(path);
     let delta = 0;
     if (baseline === undefined || baseline === -1) {
@@ -160,13 +164,14 @@ export class WritingStatusBar {
   }
 
   /** 源文件重命名/移动后迁移基线，避免改名后增量失真或旧路径基线残留。 */
-  onFileRename(oldPath: string, newPath: string): void {
+  onFileRename(oldPath: string, newPath: string): boolean {
     const baseline = this.fileBaselines.get(oldPath);
-    if (baseline !== undefined) {
-      this.fileBaselines.delete(oldPath);
-      this.fileBaselines.set(newPath, baseline);
-    }
+    if (baseline === undefined) return false;
+    this.fileBaselines.delete(oldPath);
+    this.fileBaselines.set(newPath, baseline);
     if (this.currentFilePath === oldPath) this.currentFilePath = newPath;
+    this.baselineMigrateListener?.(oldPath, newPath);
+    return true;
   }
 
   /**
@@ -231,7 +236,7 @@ export class WritingStatusBar {
    * 整份内容算作本次新增。
    */
   onEditorChange(text: string, isNewFile = false): number {
-    const docCount = getWordCount(text, this.state.wordCountMode);
+    const docCount = this.wordCount.count(text, this.state.wordCountMode);
     const now = Date.now();
 
     if (this.lastDocCount >= 0) {
@@ -360,7 +365,10 @@ export class WritingStatusBar {
 
   /** 只记录基线，不产生增量（用于补建历史文件的档案）。 */
   seedBaseline(path: string, text: string): void {
-    this.rememberBaseline(path, getWordCount(text, this.state.wordCountMode));
+    this.rememberBaseline(
+      path,
+      this.wordCount.count(text, this.state.wordCountMode)
+    );
   }
 
   /** 丢弃某个文件的基线（文件被删除时调用）。 */
@@ -368,6 +376,7 @@ export class WritingStatusBar {
     if (!this.fileBaselines.has(path)) return;
     this.fileBaselines.delete(path);
     this.baselineListener?.(path, null);
+    this.baselineDropListener?.(path);
   }
 
   /**
@@ -375,7 +384,7 @@ export class WritingStatusBar {
    * 整份内容算作本次新增，避免「先写后改」时只统计到删减的负值。
    */
   countAsNewFile(path: string, text: string): number {
-    const docCount = getWordCount(text, this.state.wordCountMode);
+    const docCount = this.wordCount.count(text, this.state.wordCountMode);
     this.rememberBaseline(path, docCount);
     return docCount;
   }
@@ -393,9 +402,11 @@ export class WritingStatusBar {
    */
   private rememberBaseline(path: string, count: number): void {
     if (!path) return;
+    const isNewBaseline = !this.fileBaselines.has(path);
     this.fileBaselines.delete(path);
     this.fileBaselines.set(path, count);
     this.baselineListener?.(path, count);
+    if (isNewBaseline) this.baselineSeedListener?.(path);
     if (this.fileBaselines.size > this.MAX_BASELINES) {
       const excess = this.fileBaselines.size - this.MAX_BASELINES;
       let removed = 0;

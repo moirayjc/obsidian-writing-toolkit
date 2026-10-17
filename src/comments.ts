@@ -740,7 +740,7 @@ export function parseCommentFile(text: string): WtComment[] {
 /* ---------- 给 Agent 的现成指令 ---------- */
 
 /**
- * 「批注：复制给 Agent 的处理指令」命令用的话术（命令面板里调用）。
+ * 工具箱批注面板「复制处理指令」按钮用的话术。
  * 传入当前文档的批注统计后，指令里会写明待处理条数，避免 Agent 重复处理。
  */
 export function buildAgentPrompt(

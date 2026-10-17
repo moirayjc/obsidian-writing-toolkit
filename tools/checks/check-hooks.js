@@ -5,6 +5,7 @@
  * 所以把 `commentSkip(...)` 这个调用从业务代码里删掉，它照样全绿——这是实测过的
  * 真实盲区。埋点一旦被顺手删掉，自检报告就永远显示 0 次，反而比没有更误导。
  *
+ * 自检的“命令入口”已按产品要求移除，但底层诊断与报告构建能力仍保留。
  * 所以这里做一件朴素的事：读关键源文件，确认那些埋点调用点仍然存在。
  * 这是**文本级**检查（不跑行为），能挡住"被删掉/被重构掉"，挡不住"被改成错的参数"。
  */
@@ -41,6 +42,11 @@ const REQUIRED_HOOKS = {
     call("commentSidecarDeleted"),
     /commentIoDiag\.lastWriteError\s*=/,
   ],
+  "src/features/commentsModule.ts": [
+    call("recordLocate"),
+    call("return buildCommentDiagReport"),
+    /recordTiming\("comments:locate"/,
+  ],
   "src/main.ts": [
     /statsDiag\.editorChanges\+\+/,
     /statsDiag\.programmaticIgnored\+\+/,
@@ -48,15 +54,15 @@ const REQUIRED_HOOKS = {
     /statsDiag\.skippedNotChapter\+\+/,
     /statsDiag\.vaultModifies\+\+/,
     call("statsApplied"),
-    call("recordLocate"),
     call("recordStatusRefresh"),
-    // 三条自检命令与实现
-    /id:\s*"comment-selfcheck"/,
-    /id:\s*"stats-selfcheck"/,
-    /id:\s*"full-selfcheck"/,
-    call("return buildCommentDiagReport"),
+    /pendingExternal:\s*this\.externalModifyPending/,
+    /this\.statusBar\.baselineSeedListener\s*=/,
+    /this\.statusBar\.baselineMigrateListener\s*=/,
+    /this\.statusBar\.baselineDropListener\s*=/,
+    // 命令面板不注册自检入口，但底层诊断与报告构建能力仍在
+    /private async runFormatSelfCheck\(/,
+    /private async runDiagnostic\(/,
     call("return buildStatsDiagReport"),
-    new RegExp("^" + IND + "(?:void )?this\\.runDiagnostic\\(", "m"),
   ],
 };
 

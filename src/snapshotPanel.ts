@@ -1,21 +1,40 @@
-import { DraftSnapshotManager, pathBasename, SnapshotEntry } from "./snapshot";
-import { showSnapshotDiff } from "./snapshotDiff";
-import { getWordCount, WordCountMode } from "./wordcount";
+import {
+  pathBasename,
+  type SnapshotEntry,
+  type SnapshotOperations,
+} from "./snapshot";
+import {
+  showSnapshotDiff,
+  type SnapshotDiffHost,
+} from "./snapshotDiff";
 import { setIcon } from "obsidian";
+import type { WordCountMode } from "./wordcount";
 
 interface RowRef {
   deltaEl: HTMLElement;
   count: number;
 }
 
+export interface SnapshotPanelRuntime extends SnapshotDiffHost {
+  getActiveText(): string | null;
+  getWordCountMode(): WordCountMode;
+  getSnapshotMaxPerFile(): number;
+}
+
+export interface SnapshotPanelHandle {
+  refresh(): void;
+  updateLive(text?: string | null): void;
+  destroy(): void;
+}
+
 /**
  * 侧栏「草稿快照」操作面板：
  * 保存当前快照、按时间列出快照、对比（diff）、恢复、复制内容用于粘贴修文。
  */
-export class SnapshotOperationPanel {
+export class SnapshotOperationPanel implements SnapshotPanelHandle {
   private readonly el: HTMLElement;
-  private readonly plugin: any;
-  private readonly manager: DraftSnapshotManager;
+  private readonly operations: SnapshotOperations;
+  private readonly runtime: SnapshotPanelRuntime;
 
   private currentFilePath: string | null = null;
   private currentCount = 0;
@@ -24,10 +43,14 @@ export class SnapshotOperationPanel {
   private renderTimer: number = 0;
   private renderSeq = 0;
 
-  constructor(el: HTMLElement, plugin: any, manager: DraftSnapshotManager) {
+  constructor(
+    el: HTMLElement,
+    operations: SnapshotOperations,
+    runtime: SnapshotPanelRuntime
+  ) {
     this.el = el;
-    this.plugin = plugin;
-    this.manager = manager;
+    this.operations = operations;
+    this.runtime = runtime;
   }
 
   /** 全量刷新（切换文件 / 保存快照后调用，内部防抖）。 */
@@ -43,14 +66,17 @@ export class SnapshotOperationPanel {
   updateCurrentCount(text?: string | null): void {
     if (!this.currentFilePath) return;
     if (text === null || text === undefined) return;
-    const mode: WordCountMode = this.plugin.settings.wordCountMode;
-    this.currentCount = text ? getWordCount(text, mode) : 0;
+    this.currentCount = text ? this.runtime.countWords(text) : 0;
     if (this.currentNumEl) {
       this.currentNumEl.setText(formatNumber(this.currentCount));
     }
     for (const ref of this.rowRefs) {
       this.updateDelta(ref.deltaEl, ref.count - this.currentCount);
     }
+  }
+
+  updateLive(text?: string | null): void {
+    this.updateCurrentCount(text);
   }
 
   destroy(): void {
@@ -67,7 +93,7 @@ export class SnapshotOperationPanel {
     this.currentNumEl = null;
     this.currentFilePath = null;
 
-    const path = this.plugin.getLastKnownFilePath();
+    const path = this.runtime.getActiveFilePath();
     this.currentFilePath = path;
 
     const toolbar = el.createDiv({ cls: "wt-snap-toolbar" });
@@ -81,12 +107,11 @@ export class SnapshotOperationPanel {
     setIcon(saveBtn, "save");
     saveBtn.createSpan({ text: "保存快照" });
     saveBtn.addEventListener("click", () => {
-      void this.manager.saveSnapshotNow().then(() => this.refresh());
+      void this.operations.saveSnapshotNow().then(() => this.refresh());
     });
 
-    const mode: WordCountMode = this.plugin.settings.wordCountMode;
-    const currentText = this.plugin.getLastKnownText();
-    this.currentCount = currentText ? getWordCount(currentText, mode) : 0;
+    const currentText = this.runtime.getActiveText();
+    this.currentCount = currentText ? this.runtime.countWords(currentText) : 0;
     const currentWrap = el.createDiv({ cls: "wt-snap-current" });
     currentWrap.createDiv({ cls: "wt-snap-current-dot" });
     currentWrap.createSpan({ cls: "wt-snap-current-label", text: "当前" });
@@ -106,7 +131,10 @@ export class SnapshotOperationPanel {
     const list = el.createDiv({ cls: "wt-snap-list" });
     let entries: SnapshotEntry[] = [];
     try {
-      entries = await this.manager.listSnapshots(path, mode);
+      entries = await this.operations.listSnapshots(
+        path,
+        this.runtime.getWordCountMode()
+      );
     } catch {
       entries = [];
     }
@@ -141,8 +169,13 @@ export class SnapshotOperationPanel {
         setIcon(openEl, "chevron-right");
         // 点击整行 → 直接进入对比界面（编辑/恢复都在那里完成）
         row.addEventListener("click", () => {
-          showSnapshotDiff(this.plugin, sourcePath, entry.path, entry.name, () =>
-            this.refresh()
+          showSnapshotDiff(
+            this.runtime,
+            this.operations,
+            sourcePath,
+            entry.path,
+            entry.name,
+            () => this.refresh()
           );
         });
       }
@@ -150,7 +183,7 @@ export class SnapshotOperationPanel {
     this.updateCurrentCount(currentText);
 
     const footer = el.createDiv({ cls: "wt-snap-footer" });
-    const max = this.plugin.settings.snapshotMaxPerFile;
+    const max = this.runtime.getSnapshotMaxPerFile();
     footer.createSpan({
       cls: "wt-snap-meta",
       text: `共 ${entries.length} 份${max > 0 ? ` / 上限 ${max}` : ""}`,
@@ -160,7 +193,9 @@ export class SnapshotOperationPanel {
     });
     setIcon(openBtn, "folder-open");
     openBtn.createSpan({ text: "打开文件夹" });
-    openBtn.addEventListener("click", () => void this.manager.openSnapshotFolder());
+    openBtn.addEventListener("click", () =>
+      void this.operations.openSnapshotFolder()
+    );
   }
 
   private updateDelta(el: HTMLElement, delta: number): void {
@@ -169,6 +204,14 @@ export class SnapshotOperationPanel {
     el.toggleClass("is-neg", delta < 0);
   }
 
+}
+
+export function createSnapshotPanel(
+  el: HTMLElement,
+  operations: SnapshotOperations,
+  runtime: SnapshotPanelRuntime
+): SnapshotPanelHandle {
+  return new SnapshotOperationPanel(el, operations, runtime);
 }
 
 function formatNumber(n: number): string {

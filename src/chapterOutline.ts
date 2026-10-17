@@ -1,97 +1,146 @@
-import { Menu, Notice, TFile, setIcon } from "obsidian";
-import { OutlineEditorModal } from "./outlineModal";
 import {
-  DEFAULT_CHAPTER_EXCLUDE_NAMES,
-  DEFAULT_DRAFT_KEYWORDS,
+  App,
+  Component,
+  MarkdownRenderer,
+  Notice,
+  TFile,
+  type TAbstractFile,
+  setIcon,
+} from "obsidian";
+import {
   attachOutlineEditing,
   countChars,
-  getOutlinePath,
-  isDraftPath,
-  loadOutline,
-  saveOutline,
-  naturalCompare,
 } from "./outlineText";
-
-export * from "./outlineText";
 
 /** 输入停顿多久后自动写盘（毫秒） */
 const AUTOSAVE_DELAY = 800;
+
+/** 章纲面板的两种状态：阅读态渲染 Markdown，编辑态显示/编辑源码。 */
+export type OutlinePanelMode = "read" | "edit";
+
+/**
+ * 打开章纲时的默认状态：
+ * - 有内容 → 阅读态，先把 Markdown 渲染出来（这一版的核心诉求）；
+ * - 空章纲 → 直接进编辑态，免得空面板还要再点一次。
+ */
+export function defaultOutlineMode(text: string): OutlinePanelMode {
+  return text.trim() ? "read" : "edit";
+}
+
+function parentPath(path: string): string {
+  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+}
+
+/**
+ * Vault 事件里的路径是否会影响当前章节目录：目录内文件、目录本身，
+ * 或目录的任意祖先（例如「小说/正文」整体改名）。
+ */
+export function isOutlineFolderAffected(
+  currentFolder: string,
+  eventPath: string
+): boolean {
+  if (!currentFolder || !eventPath) return false;
+  return (
+    parentPath(eventPath) === currentFolder ||
+    currentFolder === eventPath ||
+    currentFolder.startsWith(eventPath + "/")
+  );
+}
+
+export interface OutlinePanelEditorHandle {
+  close(): void;
+  flush(): Promise<void>;
+  getFilePath(): string | null;
+  onVaultRename(file: TAbstractFile, oldPath: string): Promise<void>;
+  onVaultDelete(file: TAbstractFile): void;
+  isAffected(path: string): boolean;
+}
+
+export interface OutlinePanelRuntime {
+  readonly app: App;
+  /** 章节识别统一由 Project Service 决定，面板不再复制路径规则。 */
+  isChapter(file: TFile): boolean;
+  /** 侧栏获得焦点后 getActiveFile() 可能为空，用最近章节兜底。 */
+  fallbackFile(): TFile | null;
+  /** 返回该章所属卷内的章节（按 Project Service 的顺序）。 */
+  chapterFiles(file: TFile): TFile[];
+  loadOutline(file: TFile): Promise<string>;
+  saveOutline(file: TFile, value: string): Promise<void>;
+  openEditor(
+    file: TFile,
+    chapters: TFile[],
+    onDone: (file: TFile) => void
+  ): OutlinePanelEditorHandle | null;
+}
+
+export interface ChapterOutlinePanelHandle {
+  refresh(): void;
+  flush(): Promise<void>;
+  destroy(): void;
+  onActiveLeafChange(): void;
+  onVaultCreate(file: TAbstractFile): void;
+  onVaultRename(file: TAbstractFile, oldPath: string): Promise<void>;
+  onVaultDelete(file: TAbstractFile): void;
+  onOutlineChanged(paths: readonly string[]): void;
+}
 
 /**
  * 侧栏「章纲」面板：
  * - 纯粹的章节便签文档形式，支持大段剧情速记、场景构思与零碎想法；
  * - 默认使用「独立伴生文件（.wt-outlines）」存储，完全不修改正文 YAML，保护正文纯净；
- * - 智能跟随正文章节，查阅设定卡/资料等非章节文件时，章纲自动锁定保留；
- * - 支持图钉（Pin）锁定：锁定后查阅任何文件都不切换；
- * - 顶部紧凑导航胶囊：上一章 / 章节快速跳转菜单 / 下一章，不抢占垂直空间。
+ * - 智能跟随正文章节，查阅设定卡/资料等非章节文件时保留当前章纲、不清空；
+ * - 顶部只有章节标题（纯展示，不提供手动跳转），把宽度留给章纲正文。
  */
-export class ChapterOutlinePanel {
+export class ChapterOutlinePanel implements ChapterOutlinePanelHandle {
   private readonly el: HTMLElement;
-  private readonly plugin: any;
+  private readonly runtime: OutlinePanelRuntime;
 
   /** 当前编辑目标文件 */
   private file: TFile | null = null;
-  /** 是否处于图钉锁定状态（锁定后打开任何文件都不跳走） */
-  private isPinned = false;
   /** 文本内容 */
   private rawText = "";
-  private loadedText = "";
+  /** 最后一次确认已落盘的内容；只有 save 成功才推进。 */
+  private persistedText = "";
 
   private textarea: HTMLTextAreaElement | null = null;
   private stateEl: HTMLElement | null = null;
-  private editorModal: OutlineEditorModal | null = null;
+  private editorModal: OutlinePanelEditorHandle | null = null;
+
+  /** 阅读态 / 编辑态；阅读态 = Markdown 渲染结果，编辑态 = 源码 textarea */
+  private mode: OutlinePanelMode = "read";
+  /** 主内容区容器（head / foot 之外），切换模式时只重画它 */
+  private bodyEl: HTMLElement | null = null;
+  private modeBtn: HTMLButtonElement | null = null;
+  /** 阅读态渲染的 Component：切章/切模式/销毁时必须 unload，否则链接与嵌入监听器泄漏 */
+  private previewComponent: Component | null = null;
+  /** 阅读态渲染代数：异步渲染晚到时丢弃旧结果 */
+  private previewSeq = 0;
+  /** 「退出编辑态」防重入：blur 与按钮点击可能同时触发 */
+  private exitingEdit = false;
+  /** 编辑态收到外部刷新：先挂起，等退出编辑态之后再 render（不能中途重建 DOM） */
+  private pendingReload = false;
+  /** 在途保存：blur 与按钮 click 可能各发一次，同文件同内容复用同一个 Promise */
+  private inflightSave: {
+    filePath: string;
+    value: string;
+    promise: Promise<boolean>;
+  } | null = null;
 
   private autoSaveTimer = 0;
   private reloadTimer = 0;
   private renderSeq = 0;
   private destroyed = false;
-  private cleanups: Array<() => void> = [];
+  /** 文件被删除时丢弃 dirty 内容，避免把已删章纲重新写回来。 */
+  private discardChanges = false;
 
-  constructor(el: HTMLElement, plugin: any) {
+  constructor(el: HTMLElement, runtime: OutlinePanelRuntime) {
     this.el = el;
-    this.plugin = plugin;
-
-    // 活动文件切换：章节自动跟随；非章节保留当前章纲（方便对照查阅）
-    const ws = plugin.app.workspace;
-    const activeRef = ws.on("active-leaf-change", () => this.onActiveFileChange());
-    this.cleanups.push(() => ws.offref(activeRef));
-
-    // 监听重命名：跟着切换当前章；章纲文件的搬迁由插件级监听统一处理
-    const vault = plugin.app.vault;
-    const renRef = vault.on("rename", async (file: TFile, oldPath: string) => {
-      if (file instanceof TFile && this.file && this.file.path === oldPath) {
-        this.file = file;
-      }
-      if (this.inChapterFolder(file?.path) || this.inChapterFolder(oldPath)) {
-        this.scheduleReload();
-      }
-    });
-    this.cleanups.push(() => vault.offref(renRef));
-
-    // 监听删除：同步清理关联章纲
-    const delRef = vault.on("delete", async (file: TFile) => {
-      if (file instanceof TFile) {
-        const outlinePath = getOutlinePath(file.path);
-        if (await vault.adapter.exists(outlinePath)) {
-          try {
-            await vault.adapter.trashLocal(outlinePath);
-          } catch {
-            await vault.adapter.remove(outlinePath);
-          }
-        }
-      }
-      if (this.inChapterFolder(file?.path)) this.scheduleReload();
-    });
-    this.cleanups.push(() => vault.offref(delRef));
-
-    const createRef = vault.on("create", (file: TFile) => {
-      if (this.inChapterFolder(file?.path)) this.scheduleReload();
-    });
-    this.cleanups.push(() => vault.offref(createRef));
+    this.runtime = runtime;
   }
 
   destroy(): void {
     this.destroyed = true;
+    this.renderSeq++;
     if (this.autoSaveTimer) window.clearTimeout(this.autoSaveTimer);
     this.autoSaveTimer = 0;
     if (this.reloadTimer) window.clearTimeout(this.reloadTimer);
@@ -100,45 +149,37 @@ export class ChapterOutlinePanel {
       this.editorModal.close();
       this.editorModal = null;
     }
-    void this.saveIfDirty();
-    for (const fn of this.cleanups) fn();
-    this.cleanups = [];
+    this.unloadPreview();
+    if (!this.discardChanges) void this.flush();
     this.el.empty();
     this.file = null;
+    this.mode = "read";
+    this.pendingReload = false;
+    this.inflightSave = null;
     this.textarea = null;
     this.stateEl = null;
-  }
-
-  focusEditor(): void {
-    this.textarea?.focus();
-  }
-
-  private isFocused(): boolean {
-    return this.textarea !== null && document.activeElement === this.textarea;
+    this.bodyEl = null;
+    this.modeBtn = null;
   }
 
   private isDirty(): boolean {
-    return this.textarea !== null && this.textarea.value !== this.loadedText;
+    return this.textarea !== null && this.textarea.value !== this.persistedText;
+  }
+
+  refresh(): void {
+    this.scheduleReload();
+  }
+
+  async flush(): Promise<void> {
+    this.flushAutoSave();
+    await this.saveIfDirty();
   }
 
   /** 活动文件切换：智能识别章节 */
-  private onActiveFileChange(): void {
-    if (this.isPinned) return; // 图钉锁定中，不跟随切换
-    const active = this.plugin.app.workspace.getActiveFile() as TFile | null;
+  onActiveLeafChange(): void {
+    const active = this.runtime.app.workspace.getActiveFile();
     if (!(active instanceof TFile)) return;
-    const snapshotFolder = this.plugin.settings?.snapshotFolder ?? ".wt-snapshots";
-    const keywords = this.plugin.settings?.draftKeywords ?? DEFAULT_DRAFT_KEYWORDS;
-    const excludeNames =
-      this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
-    if (
-            !isDraftPath(
-              active.path,
-              snapshotFolder,
-              keywords,
-              excludeNames,
-              this.plugin.app.vault.configDir
-            )
-          ) {
+    if (!this.runtime.isChapter(active)) {
       // 打开非章节文件（设定集、大纲、人物卡等），保留当前章纲，绝对不清空！
       return;
     }
@@ -146,48 +187,145 @@ export class ChapterOutlinePanel {
     void this.selectFile(active);
   }
 
+  onVaultCreate(file: TAbstractFile): void {
+    if (file instanceof TFile && this.inChapterFolder(file.path)) {
+      this.scheduleReload();
+    }
+  }
+
+  async onVaultRename(
+    file: TAbstractFile,
+    oldPath: string
+  ): Promise<void> {
+    if (!this.inChapterFolder(file.path, oldPath)) return;
+    this.flushAutoSave();
+    if (file instanceof TFile && this.file && this.file.path === oldPath) {
+      this.file = file;
+    }
+    await this.saveIfDirty();
+  }
+
+  onVaultDelete(file: TAbstractFile): void {
+    if (!this.inChapterFolder(file.path)) return;
+    if (this.autoSaveTimer) window.clearTimeout(this.autoSaveTimer);
+    this.autoSaveTimer = 0;
+    if (this.reloadTimer) window.clearTimeout(this.reloadTimer);
+    this.reloadTimer = 0;
+
+    const currentPath = this.file?.path;
+    if (
+      currentPath === file.path ||
+      (currentPath !== undefined && currentPath.startsWith(file.path + "/"))
+    ) {
+      // 作废在途 render：否则它晚到后会把已删的 TFile 写回 this.file、清掉 discardChanges。
+      this.renderSeq++;
+      this.pendingReload = false;
+      this.discardChanges = true;
+      this.file = null;
+      this.editorModal?.onVaultDelete(file);
+      this.editorModal = null;
+    }
+  }
+
+  onOutlineChanged(paths: readonly string[]): void {
+    const currentPath = this.file?.path;
+    if (
+      currentPath &&
+      paths.some(
+        (path) =>
+          path === currentPath ||
+          currentPath.startsWith(path + "/") ||
+          path.startsWith(currentPath + "/")
+      )
+    ) {
+      this.scheduleReload();
+    }
+  }
+
   scheduleReload(): void {
     if (this.destroyed) return;
     if (this.reloadTimer) window.clearTimeout(this.reloadTimer);
     this.reloadTimer = window.setTimeout(() => {
       this.reloadTimer = 0;
-      void this.saveIfDirty().then(() => this.render());
+      if (this.mode === "edit" && this.textarea) {
+        // 编辑态绝不重建 DOM：重建会丢焦点/光标/滚动位置，还会把正在输入的内容
+        // 当成“已保存”渲染出去。先保存挂起，等 exitEditMode 回阅读态时再统一 render。
+        void this.saveIfDirty();
+        this.pendingReload = true;
+        return;
+      }
+      void this.saveIfDirty().then((saved) => {
+        if (saved) void this.render();
+      });
     }, 60);
   }
 
   private async selectFile(file: TFile): Promise<void> {
-    await this.saveIfDirty();
+    const saved = await this.saveIfDirty();
+    if (!saved) return;
+    if (this.destroyed) return;
     this.file = file;
+    this.discardChanges = false;
     await this.render();
   }
 
-  private async saveIfDirty(): Promise<void> {
-    if (!this.file || !this.textarea) return;
+  private async saveIfDirty(): Promise<boolean> {
+    if (!this.file || !this.textarea || this.discardChanges) return true;
+    const file = this.file;
     const valueToSave = this.textarea.value;
-    if (valueToSave === this.loadedText) return;
+    if (valueToSave === this.persistedText) {
+      // 输入后又撤销回已保存内容：状态别停在「未保存」。
+      this.setState(valueToSave.trim() ? "已保存" : "未填写");
+      return true;
+    }
 
-    this.loadedText = valueToSave;
+    const inflight = this.inflightSave;
+    if (
+      inflight &&
+      inflight.filePath === file.path &&
+      inflight.value === valueToSave
+    ) {
+      return inflight.promise;
+    }
+
+    const promise = this.writeOutline(file, valueToSave);
+    this.inflightSave = { filePath: file.path, value: valueToSave, promise };
+    void promise.finally(() => {
+      if (this.inflightSave?.promise === promise) this.inflightSave = null;
+    });
+    return promise;
+  }
+
+  /** 真正写盘。抽出来是为了 saveIfDirty 能在途去重、避免同一内容写两次。 */
+  private async writeOutline(file: TFile, valueToSave: string): Promise<boolean> {
     this.rawText = valueToSave;
     this.setState("保存中…");
     try {
-      await saveOutline(
-        this.plugin.app,
-        this.file,
-        valueToSave,
-        this.plugin.settings?.outlineStorageMode ?? "sidecar"
+      await this.runtime.saveOutline(file, valueToSave);
+      this.persistedText = valueToSave;
+      this.setState(
+        this.textarea?.value === valueToSave
+          ? valueToSave.trim()
+            ? "已保存"
+            : "未填写"
+          : "未保存"
       );
-      this.setState(valueToSave.trim() ? "已保存" : "未填写");
+      return true;
     } catch (e) {
       console.error("保存章纲失败", e);
       this.setState("保存失败");
       new Notice("章纲保存失败");
+      return false;
     }
   }
 
   private setState(text: string): void {
     if (!this.stateEl) return;
     this.stateEl.setText(text);
-    this.stateEl.toggleClass("is-dirty", text === "未保存");
+    this.stateEl.toggleClass(
+      "is-dirty",
+      text === "未保存" || text === "保存中…" || text === "保存失败"
+    );
     this.stateEl.toggleClass("is-empty", text === "未填写");
   }
 
@@ -204,60 +342,26 @@ export class ChapterOutlinePanel {
     this.autoSaveTimer = 0;
   }
 
-  private resolveTarget(snapshotFolder: string): TFile | null {
-    const app = this.plugin.app;
+  private resolveTarget(): TFile | null {
+    const app = this.runtime.app;
     if (this.file) {
       const still = app.vault.getAbstractFileByPath(this.file.path);
       if (still instanceof TFile) return still;
     }
     const active = app.workspace.getActiveFile();
-    const keywords = this.plugin.settings?.draftKeywords ?? DEFAULT_DRAFT_KEYWORDS;
-    const excludeNames =
-      this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
-    if (
-      active instanceof TFile &&
-      isDraftPath(
-        active.path,
-        snapshotFolder,
-        keywords,
-        excludeNames,
-        app.vault.configDir
-      )
-    ) {
-      return active;
-    }
-    return null;
-  }
-
-  private chapterFiles(file: TFile): TFile[] {
-    const folder = file.parent;
-    if (!folder) return [file];
-    const snapshotFolder = this.plugin.settings?.snapshotFolder ?? ".wt-snapshots";
-    const keywords = this.plugin.settings?.draftKeywords ?? DEFAULT_DRAFT_KEYWORDS;
-    const excludeNames =
-      this.plugin.settings?.chapterExcludeNames ?? DEFAULT_CHAPTER_EXCLUDE_NAMES;
-    const out = (folder.children ?? []).filter(
-      (c: unknown): c is TFile =>
-        c instanceof TFile &&
-        c.extension === "md" &&
-        isDraftPath(
-          c.path,
-          snapshotFolder,
-          keywords,
-          excludeNames,
-          this.plugin.app.vault.configDir
-        )
-    );
-    out.sort((a, b) => naturalCompare(a.basename, b.basename));
-    return out.length > 0 ? out : [file];
+    if (active instanceof TFile && this.runtime.isChapter(active)) return active;
+    return this.runtime.fallbackFile();
   }
 
   private async render(): Promise<void> {
+    if (this.reloadTimer) {
+      window.clearTimeout(this.reloadTimer);
+      this.reloadTimer = 0;
+    }
+    this.pendingReload = false;
     if (this.destroyed) return;
     const seq = ++this.renderSeq;
-    const app = this.plugin.app;
-    const snapshotFolder = this.plugin.settings?.snapshotFolder ?? ".wt-snapshots";
-    const target = this.resolveTarget(snapshotFolder);
+    const target = this.resolveTarget();
 
     if (!target) {
       this.file = null;
@@ -269,122 +373,74 @@ export class ChapterOutlinePanel {
 
     let loaded = "";
     try {
-      const res = await loadOutline(
-        app,
-        target,
-        this.plugin.settings?.outlineStorageMode ?? "sidecar"
-      );
-      loaded = res.value;
+      loaded = await this.runtime.loadOutline(target);
     } catch {
       loaded = "";
     }
-    if (seq !== this.renderSeq) return;
+    if (this.destroyed || seq !== this.renderSeq) return;
 
     this.rawText = loaded;
-    this.loadedText = loaded;
+    this.persistedText = loaded;
+    this.discardChanges = false;
+    this.mode = defaultOutlineMode(loaded);
 
-    const chapters = this.chapterFiles(target);
+    const chapters = this.runtime.chapterFiles(target);
 
     this.freshContainer();
     this.renderHead(target, chapters);
 
     const mainWrap = this.el.createDiv({ cls: "wt-outline-body" });
-    this.renderEditor(mainWrap, loaded);
+    this.bodyEl = mainWrap;
+    this.renderBody();
 
     this.renderFoot();
   }
 
   private freshContainer(): void {
+    this.unloadPreview();
     this.el.empty();
     this.el.addClass("wt-outline");
     this.textarea = null;
     this.stateEl = null;
+    this.bodyEl = null;
+    this.modeBtn = null;
   }
 
-  private inChapterFolder(path?: string): boolean {
+  private inChapterFolder(...paths: Array<string | undefined>): boolean {
     const folder = this.file?.parent?.path;
-    if (path === undefined || folder === undefined) return false;
-    const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-    return parent === folder;
+    if (!folder) return false;
+    return paths.some(
+      (path) => path !== undefined && isOutlineFolderAffected(folder, path)
+    );
   }
 
-  /** 顶部栏：左侧章节标题 + 右侧统一规格工具栏 */
+  /** 顶部栏：左侧章节标题（纯展示） + 右侧统一规格工具栏 */
   private renderHead(file: TFile, chapters: TFile[]): void {
     const head = this.el.createDiv({ cls: "wt-outline-head" });
     const idx = chapters.findIndex((c) => c.path === file.path);
 
-    // 1. 左侧章节标题按钮（点击弹出快速切换菜单）
-    const titleBtn = head.createEl("button", {
-      cls: "wt-outline-title-btn",
-      attr: { type: "button", title: "点击切换章节" },
-    });
-    titleBtn.createSpan({ cls: "wt-outline-title-text", text: file.basename });
+    // 1. 左侧章节标题：面板自动跟随当前正文章节，不提供手动跳转
+    const title = head.createDiv({ cls: "wt-outline-head-title" });
+    title.createSpan({ cls: "wt-outline-title-text", text: file.basename });
     if (chapters.length > 1 && idx >= 0) {
-      titleBtn.createSpan({
+      title.createSpan({
         cls: "wt-outline-title-pos",
         text: `${idx + 1}/${chapters.length}`,
       });
     }
-    const chevron = titleBtn.createSpan({ cls: "wt-outline-title-chevron" });
-    setIcon(chevron, "chevron-down");
-    titleBtn.addEventListener("click", (e) => {
-      this.showChapterMenu(chapters, e);
-    });
 
-    // 2. 右侧统一尺寸的工具栏按钮组 [ ◀ ] [ ▶ ] [ 📌 ] [ ↗ ] [ ⛶ ]
+    // 2. 右侧统一尺寸的工具栏按钮组 [ ✎ ] [ ⛶ ]
     const toolbar = head.createDiv({ cls: "wt-outline-toolbar" });
 
-    // ◀ 上一章
-    const prevBtn = toolbar.createEl("button", {
-      cls: "wt-outline-tb-btn",
-      attr: {
-        type: "button",
-        title: idx > 0 ? `上一章: ${chapters[idx - 1].basename}` : "已是第一章",
-      },
+    // ✎ 阅读 / 编辑切换
+    const modeBtn = toolbar.createEl("button", {
+      cls: "wt-outline-tb-btn wt-outline-mode-btn",
+      attr: { type: "button" },
     });
-    setIcon(prevBtn, "chevron-left");
-    if (idx <= 0) prevBtn.disabled = true;
-    prevBtn.addEventListener("click", () => {
-      if (idx > 0) void this.selectFile(chapters[idx - 1]);
-    });
-
-    // ▶ 下一章
-    const nextBtn = toolbar.createEl("button", {
-      cls: "wt-outline-tb-btn",
-      attr: {
-        type: "button",
-        title: idx >= 0 && idx < chapters.length - 1 ? `下一章: ${chapters[idx + 1].basename}` : "已是最后一章",
-      },
-    });
-    setIcon(nextBtn, "chevron-right");
-    if (idx < 0 || idx >= chapters.length - 1) nextBtn.disabled = true;
-    nextBtn.addEventListener("click", () => {
-      if (idx >= 0 && idx < chapters.length - 1) void this.selectFile(chapters[idx + 1]);
-    });
-
-    // 📌 图钉锁定
-    const pinBtn = toolbar.createEl("button", {
-      cls: `wt-outline-tb-btn wt-outline-pin-btn ${this.isPinned ? "is-pinned" : ""}`,
-      attr: {
-        type: "button",
-        title: this.isPinned ? "取消锁定当前章纲" : "锁定当前章纲（查阅其他文件时不切换）",
-      },
-    });
-    setIcon(pinBtn, "pin");
-    pinBtn.addEventListener("click", () => {
-      this.isPinned = !this.isPinned;
-      pinBtn.toggleClass("is-pinned", this.isPinned);
-      pinBtn.setAttr("title", this.isPinned ? "取消锁定当前章纲" : "锁定当前章纲（查阅其他文件时不切换）");
-      new Notice(this.isPinned ? "已锁定当前章纲，查阅设定集不会离开" : "已解除锁定，将自动跟随正在编辑的章节");
-    });
-
-    // ↗ 在主编辑区打开本章正文
-    const openBtn = toolbar.createEl("button", {
-      cls: "wt-outline-tb-btn",
-      attr: { type: "button", title: "在主编辑区打开本章正文" },
-    });
-    setIcon(openBtn, "external-link");
-    openBtn.addEventListener("click", () => void this.openFile(file));
+    this.modeBtn = modeBtn;
+    this.updateModeButton();
+    this.keepEditingFocus(modeBtn);
+    modeBtn.addEventListener("click", () => this.toggleMode());
 
     // ⛶ 放大浮窗编辑
     const expandBtn = toolbar.createEl("button", {
@@ -392,26 +448,18 @@ export class ChapterOutlinePanel {
       attr: { type: "button", title: "在大窗口浮窗中编辑章纲" },
     });
     setIcon(expandBtn, "maximize-2");
+    this.keepEditingFocus(expandBtn);
     expandBtn.addEventListener("click", () => void this.openEditorModal());
   }
 
-  /** 弹出轻量章节切换菜单 */
-  private showChapterMenu(chapters: TFile[], e: MouseEvent): void {
-    const menu = new Menu();
-    chapters.forEach((ch, i) => {
-      const isCurrent = ch.path === this.file?.path;
-      menu.addItem((item) => {
-        item
-          .setTitle(`${i + 1}. ${ch.basename}`)
-          .setChecked(isCurrent)
-          .onClick(() => {
-            if (ch.path !== this.file?.path) {
-              void this.selectFile(ch);
-            }
-          });
-      });
-    });
-    menu.showAtMouseEvent(e);
+  /**
+   * 让工具栏按钮不要抢走 textarea 的焦点。
+   * 否则点击时顺序是 blur → exitEditMode 开始保存 → click 里再保存一次：
+   * 同一内容会写两遍，而且会先把旧章节的阅读态渲染出来闪一下。
+   * 键盘 Tab 在编辑态被 attachOutlineEditing 拦成缩进，所以只影响鼠标/触摸。
+   */
+  private keepEditingFocus(btn: HTMLElement): void {
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
   }
 
   /** 章节便签文档编辑器 */
@@ -437,17 +485,156 @@ export class ChapterOutlinePanel {
     });
 
     ta.addEventListener("blur", () => {
+      // 失焦 = 本次编辑结束：先落盘，再回阅读态（保存失败则留在编辑态，避免丢内容）。
       this.flushAutoSave();
-      void this.saveIfDirty();
+      void this.exitEditMode();
     });
 
     ta.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
-        this.flushAutoSave();
-        void this.saveIfDirty();
+        // ⌘/Ctrl + ↵ = 保存并回到阅读态（与失焦同一条路径）。
+        void this.exitEditMode();
       }
     });
+  }
+
+  /** 按当前模式重画主内容区；顶栏与底栏保持不动。 */
+  private renderBody(): void {
+    const body = this.bodyEl;
+    if (!body) return;
+    this.unloadPreview();
+    this.textarea = null;
+    body.empty();
+    if (this.mode === "edit") {
+      this.renderEditor(body, this.rawText);
+    } else {
+      this.renderPreview(body);
+    }
+    this.updateStatsDirectly();
+  }
+
+  /**
+   * 阅读态：把章纲当 Markdown 渲染。
+   * 渲染是异步的，用 previewSeq 丢弃过期结果；component 必须随面板卸载，
+   * 否则每次切章都会遗留一批链接/嵌入监听器。
+   */
+  private renderPreview(container: HTMLElement): void {
+    const preview = container.createDiv({
+      cls: "wt-outline-preview markdown-rendered",
+    });
+    preview.addEventListener("dblclick", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("a, button, input, textarea, select")) return;
+      this.enterEditMode();
+    });
+    preview.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement | null;
+      // 任务列表复选框只是渲染结果：这里没有可回写的正文文件，勾了也不会保存，
+      // 拦掉默认勾选，避免让人以为改动生效（要勾选请进编辑态改 `- [ ]`）。
+      if (target?.closest('input[type="checkbox"]')) event.preventDefault();
+    });
+
+    if (!this.rawText.trim()) {
+      const empty = preview.createDiv({ cls: "wt-outline-preview-empty" });
+      const icon = empty.createDiv({ cls: "wt-outline-empty-icon" });
+      setIcon(icon, "pencil");
+      empty.createDiv({
+        text: "这一章还没有章纲。写下剧情梗概、场景要点或备忘，阅读时会自动渲染 Markdown。",
+      });
+      const start = empty.createEl("button", {
+        cls: "wt-outline-preview-start",
+        text: "开始写章纲",
+        attr: { type: "button" },
+      });
+      start.addEventListener("click", () => this.enterEditMode());
+      return;
+    }
+
+    const component = new Component();
+    component.load();
+    this.previewComponent = component;
+    const seq = ++this.previewSeq;
+    const app = this.runtime.app;
+    // sourcePath 用正文章节路径，[[双链]] 与图片等相对路径才按章节所在目录解析。
+    const sourcePath = this.file?.path ?? "";
+    const markdown = this.rawText;
+    void MarkdownRenderer.render(app, markdown, preview, sourcePath, component)
+      .then(() => {
+        // 过期渲染（切章/切模式/销毁）已由 unloadPreview 统一卸载，这里不重复 unload。
+        if (this.destroyed || seq !== this.previewSeq) return;
+      })
+      .catch((error) => {
+        if (this.destroyed || seq !== this.previewSeq) return;
+        console.error("写作工具箱：章纲 Markdown 渲染失败", error);
+        component.unload();
+        if (this.previewComponent === component) this.previewComponent = null;
+        preview.empty();
+        preview.createEl("pre", {
+          cls: "wt-outline-preview-fallback",
+          text: markdown,
+        });
+      });
+  }
+
+  /** 卸载当前阅读态渲染（切模式、切章、销毁时都必须调用）。 */
+  private unloadPreview(): void {
+    this.previewSeq++;
+    const component = this.previewComponent;
+    this.previewComponent = null;
+    if (component) component.unload();
+  }
+
+  private toggleMode(): void {
+    if (this.mode === "edit") void this.exitEditMode();
+    else this.enterEditMode();
+  }
+
+  private enterEditMode(): void {
+    if (this.mode === "edit" || !this.file) return;
+    this.mode = "edit";
+    this.renderBody();
+    this.updateModeButton();
+    const ta = this.textarea;
+    if (ta) {
+      ta.focus();
+      const end = ta.value.length;
+      ta.setSelectionRange(end, end);
+    }
+  }
+
+  /** 保存后回到阅读态；保存失败就留在编辑态，不丢用户正在写的内容。 */
+  private async exitEditMode(): Promise<void> {
+    if (this.mode !== "edit" || this.exitingEdit) return;
+    this.exitingEdit = true;
+    try {
+      this.flushAutoSave();
+      const saved = await this.saveIfDirty();
+      if (!saved || this.destroyed) return;
+      if (this.mode !== "edit" || !this.bodyEl) return;
+      this.mode = "read";
+      if (this.pendingReload) {
+        // 编辑期间攒下的外部刷新：现在才重建（render 会按最新磁盘内容重画）。
+        this.pendingReload = false;
+        void this.render();
+      } else {
+        this.renderBody();
+        this.updateModeButton();
+      }
+    } finally {
+      this.exitingEdit = false;
+    }
+  }
+
+  private updateModeButton(): void {
+    const btn = this.modeBtn;
+    if (!btn) return;
+    const editing = this.mode === "edit";
+    setIcon(btn, editing ? "check" : "pencil");
+    const label = editing ? "完成编辑，回到渲染后的章纲" : "编辑本章章纲";
+    btn.setAttr("title", label);
+    btn.setAttr("aria-label", label);
+    btn.toggleClass("is-active", editing);
   }
 
   /** 底部统计与状态 */
@@ -477,12 +664,12 @@ export class ChapterOutlinePanel {
   private async openEditorModal(): Promise<void> {
     const file = this.file;
     if (!file) return;
-    const chapters = this.chapterFiles(file);
+    const chapters = this.runtime.chapterFiles(file);
     this.flushAutoSave();
-    await this.saveIfDirty();
-    if (this.editorModal) return;
-    this.editorModal = new OutlineEditorModal(
-      this.plugin.app,
+    const saved = await this.saveIfDirty();
+    if (!saved) return;
+    if (this.destroyed || this.editorModal) return;
+    this.editorModal = this.runtime.openEditor(
       file,
       chapters,
       (finalFile) => {
@@ -491,13 +678,6 @@ export class ChapterOutlinePanel {
         this.scheduleReload();
       }
     );
-    this.editorModal.open();
-  }
-
-  private async openFile(file: TFile): Promise<void> {
-    await this.saveIfDirty();
-    const leaf = this.plugin.app.workspace.getLeaf(false);
-    await leaf.openFile(file);
   }
 
   private renderEmpty(text: string): void {

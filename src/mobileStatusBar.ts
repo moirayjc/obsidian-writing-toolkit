@@ -2,7 +2,8 @@ import { MarkdownView, Menu, Notice } from "obsidian";
 import { TextPromptModal } from "./promptModal";
 import { isMobileUI, showMenuAt } from "./mobile";
 import type { PomodoroState } from "./pomodoro";
-import type WritingToolkitPlugin from "./main";
+import type { UiShellContext } from "./uiShellContext";
+import type { EventScope, TimerHandle } from "./services/eventsService";
 
 /**
  * 手机端常驻状态条。
@@ -13,18 +14,20 @@ import type WritingToolkitPlugin from "./main";
  * 阅读 / 编辑正文以外的界面（主页、编辑台、工具箱）不显示，避免和那些界面自带的数字重复。
  */
 export class MobileStatusBar {
-  private readonly plugin: WritingToolkitPlugin;
+  private readonly host: UiShellContext;
+  private readonly events: EventScope;
   private el!: HTMLElement;
   private fillEl!: HTMLElement;
   private goalEl!: HTMLElement;
   private pomoEl!: HTMLElement;
   private speedEl!: HTMLElement;
   private speedSepEl!: HTMLElement;
-  private timer = 0;
+  private timer: TimerHandle | null = null;
   private shown = false;
 
-  constructor(plugin: WritingToolkitPlugin) {
-    this.plugin = plugin;
+  constructor(host: UiShellContext, events: EventScope) {
+    this.host = host;
+    this.events = events;
   }
 
   mount(): void {
@@ -38,20 +41,17 @@ export class MobileStatusBar {
     this.speedSepEl = this.el.createSpan({ cls: "wt-mbar-sep" });
     this.speedEl = this.el.createSpan({ cls: "wt-mbar-speed" });
 
-    this.plugin.registerEvent(
-      this.plugin.app.workspace.on("active-leaf-change", () => this.sync())
-    );
-    this.plugin.registerEvent(
-      this.plugin.app.workspace.on("layout-change", () => this.sync())
-    );
+    this.events.onWorkspace("active-leaf-change", () => this.sync());
+    this.events.onWorkspace("layout-change", () => this.sync());
     // 数字每秒跟着番茄钟 / 今日统计走；`sync` 里会顺带决定要不要显示。
-    this.timer = window.setInterval(() => this.sync(), 1000);
+    this.timer = this.events.setInterval(() => this.sync(), 1000);
     this.sync();
   }
 
   destroy(): void {
-    if (this.timer) window.clearInterval(this.timer);
-    this.timer = 0;
+    this.timer?.dispose();
+    this.timer = null;
+    this.events.dispose();
     this.el?.remove();
   }
 
@@ -62,9 +62,9 @@ export class MobileStatusBar {
 
   private shouldShow(): boolean {
     if (!isMobileUI()) return false;
-    if (this.plugin.settings.mobileStatusBar === false) return false;
+    if (this.host.settings.mobileStatusBar === false) return false;
     // 只在看正文时出现：其余界面（主页 / 编辑台 / 工具箱）自己就有这些数字。
-    return !!this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+    return !!this.host.app.workspace.getActiveViewOfType(MarkdownView);
   }
 
   private sync(): void {
@@ -75,29 +75,27 @@ export class MobileStatusBar {
     }
     if (!show) return;
 
-    const goal = Math.max(1, this.plugin.settings.dailyGoal);
-    const gross = Math.max(0, this.plugin.dailyGross);
+    const goal = Math.max(1, this.host.settings.dailyGoal);
+    const gross = Math.max(0, this.host.stats.gross());
     const pct = Math.min(100, (gross / goal) * 100);
     this.fillEl.style.width = `${pct}%`;
     this.el.toggleClass("is-done", gross >= goal);
-    this.goalEl.setText(
-      `${formatNumber(gross)} / ${formatNumber(goal)}`
-    );
+    this.goalEl.setText(`${formatNumber(gross)} / ${formatNumber(goal)}`);
 
-    const state = this.plugin.getPomodoroState();
+    const state = this.host.caps.pomodoro.getPomodoroState();
     const pomoText = this.pomodoroText(state);
     this.pomoEl.setText(pomoText);
     this.pomoEl.toggleClass("is-hidden", !pomoText);
 
-    const speed = this.plugin.settings.showSpeed
-      ? this.plugin.statusBarSpeed()
+    const speed = this.host.settings.showSpeed
+      ? this.host.stats.statusBarSpeed()
       : 0;
     const showSpeed = speed > 0;
     this.speedEl.setText(`${formatNumber(speed)}字/时`);
     this.speedEl.toggleClass("is-hidden", !showSpeed);
     this.speedSepEl.toggleClass("is-hidden", !showSpeed || !pomoText);
 
-    const entry = this.plugin.getTodayPomodoroSummary();
+    const entry = this.host.stats.getTodayPomodoroSummary();
     this.el.setAttr(
       "title",
       `今日新增 ${formatNumber(gross)} 字 · 目标 ${formatNumber(goal)} 字` +
@@ -116,23 +114,23 @@ export class MobileStatusBar {
         state.remainingMs
       )}`;
     }
-    const entry = this.plugin.getTodayPomodoroSummary();
+    const entry = this.host.stats.getTodayPomodoroSummary();
     return entry && entry.count > 0 ? `🍅 ${entry.count}` : "";
   }
 
   private openMenu(): void {
     const rect = this.el.getBoundingClientRect();
     const pt = { x: rect.left + rect.width / 2, y: rect.top };
-    const state = this.plugin.getPomodoroState();
-    const entry = this.plugin.getTodayPomodoroSummary();
+    const state = this.host.caps.pomodoro.getPomodoroState();
+    const entry = this.host.stats.getTodayPomodoroSummary();
 
     const menu = new Menu();
-    const gross = Math.max(0, this.plugin.dailyGross);
+    const gross = Math.max(0, this.host.stats.gross());
     menu.addItem((item) =>
       item
         .setTitle(
           `今日新增 ${formatNumber(gross)} 字（净增 ${formatNumber(
-            this.plugin.dailyTotal
+            this.host.stats.total()
           )} 字）`
         )
         .setDisabled(true)
@@ -148,23 +146,27 @@ export class MobileStatusBar {
 
     if (!state || state.phase === "idle") {
       menu.addItem((item) =>
-        item.setTitle("开始番茄钟").onClick(() => this.plugin.startPomodoro())
+        item
+          .setTitle("开始番茄钟")
+          .onClick(() => this.host.caps.pomodoro.startPomodoro())
       );
     } else {
       menu.addItem((item) =>
         item
           .setTitle(state.paused ? "继续番茄钟" : "暂停番茄钟")
-          .onClick(() => this.plugin.togglePomodoroPause())
+          .onClick(() => this.host.caps.pomodoro.togglePomodoroPause())
       );
       if (state.phase === "break" || state.phase === "longBreak") {
         menu.addItem((item) =>
           item
             .setTitle("跳过休息")
-            .onClick(() => this.plugin.skipPomodoroBreak())
+            .onClick(() => this.host.caps.pomodoro.skipPomodoroBreak())
         );
       }
       menu.addItem((item) =>
-        item.setTitle("结束番茄钟").onClick(() => this.plugin.stopPomodoro())
+        item
+          .setTitle("结束番茄钟")
+          .onClick(() => this.host.caps.pomodoro.stopPomodoro())
       );
     }
     menu.addItem((item) =>
@@ -174,20 +176,20 @@ export class MobileStatusBar {
     menu.addItem((item) =>
       item
         .setTitle("打开书桌")
-        .onClick(() => void this.plugin.openHome())
+        .onClick(() => void this.host.nav.openHome())
     );
     menu.addItem((item) =>
       item
         .setTitle("打开工具箱")
-        .onClick(() => void this.plugin.openSidebar())
+        .onClick(() => void this.host.nav.openSidebar())
     );
     showMenuAt(menu, pt);
   }
 
   private promptGoal(): void {
-    const current = this.plugin.settings.dailyGoal;
+    const current = this.host.settings.dailyGoal;
     new TextPromptModal(
-      this.plugin.app,
+      this.host.app,
       "设置每日目标字数",
       String(current),
       (input) => {
@@ -196,9 +198,9 @@ export class MobileStatusBar {
           new Notice("请输入大于 0 的数字");
           return;
         }
-        this.plugin.settings.dailyGoal = num;
-        void this.plugin.saveSettings();
-        this.plugin.refreshHome();
+        this.host.settings.dailyGoal = num;
+        void this.host.actions.saveSettings();
+        this.host.nav.refreshHome();
         this.sync();
       }
     ).open();

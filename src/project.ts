@@ -301,7 +301,7 @@ export function discoverProjects(
 /** 某个文件属于哪个作品（取最长匹配的作品根）。 */
 export function projectForPath(
   path: string,
-  projects: NovelProject[]
+  projects: readonly NovelProject[]
 ): NovelProject | null {
   let best: NovelProject | null = null;
   for (const project of projects) {

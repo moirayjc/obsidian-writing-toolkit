@@ -25,14 +25,19 @@ function assertEsbuild() {
   }
 }
 
-/** 把单个 .ts 编译成 CommonJS（外部依赖 obsidian 交给 require 桩处理）。 */
-function compile(entry, name) {
+/**
+ * 把单个 .ts 编译成 CommonJS。
+ * obsidian 默认始终外置；其它仅在运行时按需 require 的模块（如 electron）可追加外置，
+ * 避免为了测一段纯逻辑把整个桌面端依赖打进检查产物。
+ */
+function compile(entry, name, externals) {
   assertEsbuild();
   const out = path.join(TMP, name + ".js");
   execFileSync(
     ESBUILD,
     [path.join(ROOT, entry), "--bundle", "--format=cjs", "--target=ES2020",
-     "--external:obsidian", "--outfile=" + out, "--log-level=warning"],
+     "--external:obsidian", ...(externals || []).map((dep) => "--external:" + dep),
+     "--outfile=" + out, "--log-level=warning"],
     { stdio: ["ignore", "ignore", "inherit"] }
   );
   return require(out);

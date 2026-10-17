@@ -1,6 +1,19 @@
 import { setIcon } from "obsidian";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 
+/**
+ * 番茄钟展示组件只依赖窄操作端口，不 import main.ts 或功能模块实现。
+ * 端口由工具箱的 UI Shell 上下文注入。
+ */
+export interface PomodoroWidgetHost {
+  getPomodoroState?(): PomodoroState | null;
+  getTodayPomodoroSummary?(): { count: number; words: number } | null;
+  startPomodoro?(): void;
+  stopPomodoro?(): void;
+  togglePomodoroPause?(): void;
+  skipPomodoroBreak?(): void;
+}
+
 function formatDuration(ms: number): string {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(totalSec / 60);
@@ -17,7 +30,7 @@ const CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS; // ~339.292
 
 export class PomodoroWidget {
   private readonly containerEl: HTMLElement;
-  private readonly plugin: any;
+  private readonly host: PomodoroWidgetHost;
 
   private cardEl!: HTMLElement;
   private statusDotEl!: HTMLElement;
@@ -30,9 +43,9 @@ export class PomodoroWidget {
   private lastPhase: PomodoroPhase | null = null;
   private lastPaused: boolean | null = null;
 
-  constructor(containerEl: HTMLElement, plugin: any) {
+  constructor(containerEl: HTMLElement, host: PomodoroWidgetHost) {
     this.containerEl = containerEl;
-    this.plugin = plugin;
+    this.host = host;
     this.render();
   }
 
@@ -92,7 +105,7 @@ export class PomodoroWidget {
   }
 
   update(state?: PomodoroState): void {
-    const s = state ?? this.plugin.getPomodoroState?.() ?? {
+    const s = state ?? this.host.getPomodoroState?.() ?? {
       phase: "idle",
       totalMs: 25 * 60000,
       remainingMs: 25 * 60000,
@@ -137,7 +150,7 @@ export class PomodoroWidget {
     this.timeEl.setText(formatDuration(s.remainingMs));
 
     // 3. 今日番茄汇总统计（卡头右侧）
-    const summary = this.plugin.getTodayPomodoroSummary?.() ?? null;
+    const summary = this.host.getTodayPomodoroSummary?.() ?? null;
     if (summary && summary.count > 0) {
       this.todayStatEl.setText(`今日 ${summary.count} 个 · ${formatNumber(summary.words)} 字`);
     } else {
@@ -163,7 +176,7 @@ export class PomodoroWidget {
       setIcon(iconSpan, "play");
       startBtn.createSpan({ text: "开始专注" });
       startBtn.addEventListener("click", () => {
-        this.plugin.startPomodoro?.();
+        this.host.startPomodoro?.();
       });
     } else if (state.phase === "focus") {
       const pauseBtn = this.actionsEl.createEl("button", {
@@ -173,7 +186,7 @@ export class PomodoroWidget {
       setIcon(pauseIcon, state.paused ? "play" : "pause");
       pauseBtn.createSpan({ text: state.paused ? "继续" : "暂停" });
       pauseBtn.addEventListener("click", () => {
-        this.plugin.togglePomodoroPause?.();
+        this.host.togglePomodoroPause?.();
       });
 
       const stopBtn = this.actionsEl.createEl("button", {
@@ -183,7 +196,7 @@ export class PomodoroWidget {
       setIcon(stopIcon, "square");
       stopBtn.createSpan({ text: "结束" });
       stopBtn.addEventListener("click", () => {
-        this.plugin.stopPomodoro?.();
+        this.host.stopPomodoro?.();
       });
     } else {
       const skipBtn = this.actionsEl.createEl("button", {
@@ -193,7 +206,7 @@ export class PomodoroWidget {
       setIcon(skipIcon, "skip-forward");
       skipBtn.createSpan({ text: "跳过休息" });
       skipBtn.addEventListener("click", () => {
-        this.plugin.skipPomodoroBreak?.();
+        this.host.skipPomodoroBreak?.();
       });
 
       const stopBtn = this.actionsEl.createEl("button", {
@@ -203,7 +216,7 @@ export class PomodoroWidget {
       setIcon(stopIcon, "square");
       stopBtn.createSpan({ text: "结束" });
       stopBtn.addEventListener("click", () => {
-        this.plugin.stopPomodoro?.();
+        this.host.stopPomodoro?.();
       });
     }
   }

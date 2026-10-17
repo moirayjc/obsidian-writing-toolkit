@@ -1,10 +1,13 @@
 # AGENTS.md — Writing Toolkit 插件仓库
 
-这是 **Writing Toolkit**（Obsidian 中文网文写作插件）的**开发检出**。开工前请先读
-[`docs/插件设计文档.md`](docs/插件设计文档.md)——里面有模块地图、数据模型、必须遵守的约定，
-以及一份「踩过的坑」清单（含已修 bug 的根因）。README 讲功能，那份文档讲代码为什么这么写、哪里不能碰。
+这是 **Writing Toolkit**（Obsidian 中文网文写作插件）的**开发检出**。开工前请按顺序读：
 
-## ⚠️ 两条硬约束
+1. [`docs/插件化架构说明.md`](docs/插件化架构说明.md)——单 Obsidian 插件内的 Host + Services + Feature Modules 架构、模块边界和硬约束。
+2. [`docs/插件设计文档.md`](docs/插件设计文档.md)——当前代码的模块地图、数据模型、必须遵守的约定和踩坑清单。
+
+如果正在做插件化迁移，再读 [`docs/插件化迁移计划.md`](docs/插件化迁移计划.md)。README 讲功能；设计文档讲当前代码为什么这么写、哪里不能碰。
+
+## ⚠️ 硬约束
 
 1. **只有在「测试库」这个检出里才能构建。**
    本目录是开发检出（含 `src/`、`package.json`、`node_modules/`、`.git`）。
@@ -22,6 +25,27 @@
    提交前会自动跑 `tools/release-check.sh` 体检（pre-commit 钩子），命中真实名会**直接拦下提交**；
    也**不要用 `--no-verify` 绕过**。真实名词表在 `.git/wt-blocklist.txt`（不进版本库）。
 
+4. **命令面板永远只有四个入口：打开主页、打开工具箱、打开编辑台、打开设置。**
+   这是产品硬约束，不是“尽量少”。三个页面和设置页就是唯一允许出现在 Command + P
+   里的插件命令；新增功能、格式命令、批注操作、自检、调试入口、移动端预览、章节重编号、
+   数据清理等，一律不得注册成 Obsidian 命令。它们应进入现有三页、侧栏、右键菜单、
+   设置页或编辑工具条。`tools/checks/check-commandsurface.js` 固定了命令 ID 与显示名称，
+   新增第五条命令必须被视为回归。
+
+## 插件化架构约束
+
+本项目是**单 Obsidian 插件内的插件化架构**：
+
+- 用户只安装一个 `writing-toolkit`；功能以内部 Feature Module 组织，不是多个 Obsidian 插件。
+- 不新增第二个 `manifest.json` / `main.js`，不把 `app.plugins` 当作内部模块加载器，不在运行时加载外部功能 bundle。
+- `main.ts` 的长期职责是启动 Host 和装配模块，不是继续承载新功能；新功能优先进入 Feature Module。
+- Feature Module 通过 Host Context 使用 Services，不直接 import `main.ts` 或兄弟模块内部实现。
+- 所有命令、视图、监听器、定时器、DOM 和编辑器扩展都必须可撤销；数据只由 Host 的持久化入口写入。
+- UI Shell 只依赖 `src/uiShellContext.ts` 的窄接口与 Services：`home` / `workbench` /
+  `sidebar` / `mobileStatusBar` 通过 `UiShellContext`，`statusbar` 只依赖
+  `WordCountService`；都不 import `main.ts`、不 import `features/` 实现、不互相
+  import；新增 Shell 能力先加显式端口，视图 id、四命令白名单和手机抽屉路径不得改。
+
 ## 常规动作
 
 ```bash
@@ -32,8 +56,9 @@ npm run release   # 发布：自检 + 构建 + 打包到 release/（见设计文
 npm run dev       # 监听构建（常驻进程，用完记得关）
 ```
 
-**项目没有测试框架、没有 eslint**，但已固化 3 项逻辑检查（`tools/checks/`，覆盖批注缓存、
-设置加载、作品识别），用 Node 直接跑**真实实现**，不必启动 Obsidian——办法见设计文档 §4.9。
+**项目没有测试框架**；已有 eslint 配置和本地审核脚本。逻辑检查以 `npm run verify` 为准
+（`tools/checks/run-all.sh` 统一调度，覆盖批注缓存、设置加载、作品识别等，用 Node 直接跑**真实实现**，
+不必启动 Obsidian；跑之前先构建）。办法见设计文档 §4.9。
 
 **加新检查时顺手做一次反向验证**：把修复改回坏的样子，确认检查会报警。否则你不知道它是不是永远绿。
 
@@ -47,6 +72,7 @@ npm run dev       # 监听构建（常驻进程，用完记得关）
 - 新增写入正文的记号 → 同步更新 `stripInlineFormatting`，否则字数统计虚增
 - 新增设置项 → 照 `loadPluginData` 里 `data.x ?? DEFAULT_SETTINGS.x` 的写法（**曾因漏写而丢掉用户 17 项配置**）
 - 新增计时器/监听器 → 配 `onunload` 清理；body 级监听用 `registerDomEvent`
+- 新增任何操作入口 → **不要注册新命令**；先放进三个主页面、侧栏、右键菜单、设置页或编辑工具条
 - 版本号 → `manifest.json`、git tag、`versions.json` **三处同步**
 
 ## 发布

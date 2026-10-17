@@ -48,10 +48,13 @@ export class CommentStore {
     const inflight = this.inflight.get(docPath);
     if (inflight) return inflight;
     const gen = this.generation.get(docPath) ?? 0;
-    const task = this.readFromVault(docPath, gen).finally(() => {
-      this.inflight.delete(docPath);
-    });
+    const task = this.readFromVault(docPath, gen);
     this.inflight.set(docPath, task);
+    const clear = (): void => {
+      // 失效会删除旧任务并允许新读取启动；旧任务落地时不能误删新任务。
+      if (this.inflight.get(docPath) === task) this.inflight.delete(docPath);
+    };
+    void task.then(clear, clear);
     return task;
   }
 
@@ -84,38 +87,64 @@ export class CommentStore {
 
   invalidate(docPath: string): void {
     this.cache.delete(docPath);
+    this.inflight.delete(docPath);
     this.generation.set(docPath, (this.generation.get(docPath) ?? 0) + 1);
+  }
+
+  /** 目录改名/删除后清掉整段缓存，避免旧路径的批注继续粘在内存里。 */
+  invalidatePrefix(prefix: string): void {
+    const matches = (path: string): boolean =>
+      path === prefix || path.startsWith(prefix + "/");
+    for (const path of new Set([
+      ...this.cache.keys(),
+      ...this.inflight.keys(),
+      ...this.generation.keys(),
+    ])) {
+      if (matches(path)) this.invalidate(path);
+    }
   }
 
   /** 把批注列表写回批注文件；列表为空时删除批注文件。 */
   async save(docPath: string, comments: readonly WtComment[]): Promise<void> {
     const sidecar = sidecarPathFor(docPath);
     const t0 = performance.now();
-    this.generation.set(docPath, (this.generation.get(docPath) ?? 0) + 1);
+    this.inflight.delete(docPath);
+    const startedAt = (this.generation.get(docPath) ?? 0) + 1;
+    this.generation.set(docPath, startedAt);
     const file = this.app.vault.getAbstractFileByPath(sidecar);
-    if (comments.length === 0) {
-      this.cache.set(docPath, []);
-      if (file instanceof TFile) {
-        // 用 FileManager.trashFile 而不是 Vault.delete：前者尊重用户「删除到回收站」的设置
-        await this.app.fileManager.trashFile(file);
-        commentSidecarDeleted(docPath);
-      }
-      return;
-    }
-    const text = serializeCommentFile(docPath, comments);
-    this.cache.set(docPath, [...comments]);
     try {
+      if (comments.length === 0) {
+        if (file instanceof TFile) {
+          // 用 FileManager.trashFile 而不是 Vault.delete：前者尊重用户「删除到回收站」的设置
+          await this.app.fileManager.trashFile(file);
+          commentSidecarDeleted(docPath);
+        }
+        if ((this.generation.get(docPath) ?? 0) === startedAt) {
+          // 写盘期间启动的读取拿到的是旧内容，提升代数让它们不能回写缓存。
+          this.generation.set(docPath, startedAt + 1);
+          this.cache.set(docPath, []);
+        }
+        return;
+      }
+      const text = serializeCommentFile(docPath, comments);
       if (file instanceof TFile) {
         await this.app.vault.modify(file, text);
       } else {
         await this.app.vault.create(sidecar, text);
       }
+      // 写盘期间若收到外部 modify 或另一次写入，代数会变化；
+      // 此时不能拿本次结果覆盖更新的缓存。
+      if ((this.generation.get(docPath) ?? 0) === startedAt) {
+        this.generation.set(docPath, startedAt + 1);
+        this.cache.set(docPath, [...comments]);
+      }
+      commentWrote(docPath, performance.now() - t0);
     } catch (error) {
       commentIoDiag.lastWriteError = `${docPath} → ${String(error)}`;
       commentError("CommentStore.save", error);
+      this.invalidate(docPath);
       throw error;
     }
-    commentWrote(docPath, performance.now() - t0);
   }
 
   /** vault "modify"：批注文件被外部（Agent / 编辑）改写 → 缓存失效。 */

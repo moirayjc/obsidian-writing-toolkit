@@ -49,19 +49,23 @@ function main() {
   const r = H.createReporter("标题样式开关（源码 + CSS 级）");
 
   const css = fs.readFileSync(path.join(H.ROOT, "styles.css"), "utf8");
+  const schemaSrc = fs.readFileSync(path.join(H.ROOT, "src/settingsSchema.ts"), "utf8");
   const settingsSrc = fs.readFileSync(path.join(H.ROOT, "src/settings.ts"), "utf8");
+  const settingsServiceSrc = fs.readFileSync(
+    path.join(H.ROOT, "src/services/settingsService.ts"),
+    "utf8"
+  );
   const typoSrc = fs.readFileSync(path.join(H.ROOT, "src/typography.ts"), "utf8");
   const sidebarSrc = fs.readFileSync(path.join(H.ROOT, "src/sidebar.ts"), "utf8");
-  const mainSrc = fs.readFileSync(path.join(H.ROOT, "src/main.ts"), "utf8");
 
   // ── 1. TS 侧的接线（接口 / 默认值 / body 类 / 清理 / 两处 UI / legacy 分支）
   r.check(
-    "settings.ts 接口声明 headingStyle",
-    /headingStyle:\s*boolean;/.test(settingsSrc)
+    "settingsSchema.ts 接口声明 headingStyle",
+    /headingStyle:\s*boolean;/.test(schemaSrc)
   );
   r.check(
-    "settings.ts 默认值 headingStyle: true",
-    /headingStyle:\s*true,/.test(settingsSrc)
+    "settingsSchema.ts 默认值 headingStyle: true",
+    /headingStyle:\s*true,/.test(schemaSrc)
   );
   r.check(
     "settings.ts 设置页有「标题样式」开关",
@@ -81,8 +85,10 @@ function main() {
     /removeClass\("wt-heading-style"\)/.test(typoSrc)
   );
   r.check(
-    "main.ts legacy 分支带上 headingStyle（否则老数据升级后类型不全）",
-    /headingStyle:\s*pick\(data\.headingStyle,\s*DEFAULT_SETTINGS\.headingStyle\)/.test(mainSrc)
+    "Settings Service 旧扁平分支读取 headingStyle",
+    /OLD_TOP_LEVEL_KEYS\s*=\s*\[[\s\S]*?"headingStyle"[\s\S]*?\]/.test(
+      settingsServiceSrc
+    )
   );
 
   // ── 2. CSS 侧：**每个**选择器都必须自己带 gate（逐条判，不看整串）

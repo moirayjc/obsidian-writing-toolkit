@@ -56,9 +56,20 @@ export function setupSelectArrows(root: HTMLElement): void {
   );
   selects.forEach((el) => {
     if (el.dataset.wtSelectWrapped === "1") return;
+    // Obsidian 1.14 会额外插入一个隐藏的测量副本
+    // （.dropdown.is-measuring + aria-hidden），用它计算下拉所需宽度。
+    // 它不在 setting-item-control 的可见流里；一旦被 wrapper 包住，宿主给
+    // select 的隐藏定位就会失效，控件宽度翻倍并把左侧说明挤成一条竖线。
+    if (
+      el.classList.contains("is-measuring") ||
+      el.getAttribute("aria-hidden") === "true"
+    ) {
+      return;
+    }
     const parent = el.parentElement;
     if (!parent || !parent.classList.contains("setting-item-control")) return;
     el.dataset.wtSelectWrapped = "1";
+    parent.classList.add("wt-select-control");
     const wrap = document.createElement("span");
     wrap.className = "wt-select-wrap";
     parent.insertBefore(wrap, el);

@@ -22,6 +22,14 @@ export interface FocusResult {
   isLongBreak: boolean;
 }
 
+export interface PomodoroInterval {
+  dispose(): void;
+}
+
+export interface PomodoroScheduler {
+  setInterval(callback: () => void, delayMs: number): PomodoroInterval;
+}
+
 interface PomodoroEvents {
   onUpdate: (state: PomodoroState) => void;
   onFocusComplete: (result: FocusResult) => void;
@@ -29,12 +37,22 @@ interface PomodoroEvents {
 }
 
 const TICK_MS = 1000;
+const WINDOW_SCHEDULER: PomodoroScheduler = {
+  setInterval(callback, delayMs) {
+    const handle = window.setInterval(callback, delayMs);
+    return {
+      dispose() {
+        window.clearInterval(handle);
+      },
+    };
+  },
+};
 
 export class PomodoroTimer {
   private phase: PomodoroPhase = "idle";
   private deadline = 0;
   private pausedRemaining = 0;
-  private tickHandle: number | null = null;
+  private tickHandle: PomodoroInterval | null = null;
   private consecutive = 0;
   private baseCount: number | null = null;
   private words = 0;
@@ -42,7 +60,8 @@ export class PomodoroTimer {
   constructor(
     private readonly config: () => PomodoroConfig,
     private readonly getCount: () => number,
-    private readonly events: PomodoroEvents
+    private readonly events: PomodoroEvents,
+    private readonly scheduler: PomodoroScheduler = WINDOW_SCHEDULER
   ) {}
 
   /** 自检用：番茄基准字数（未运行时为 null）。 */
@@ -131,6 +150,13 @@ export class PomodoroTimer {
     this.baseCount = this.getCount();
   }
 
+  /** 编辑器已确认新文本后立即结算增量，避免文件切换事件顺序导致丢字。 */
+  captureCurrentWords(): void {
+    if (this.phase !== "focus" || this.baseCount === null) return;
+    this.words += this.currentFocusWords();
+    this.baseCount = this.getCount();
+  }
+
   skipBreak(): void {
     if (this.phase !== "break" && this.phase !== "longBreak") return;
     this.stopTicking();
@@ -146,12 +172,12 @@ export class PomodoroTimer {
   private startTicking(): void {
     this.stopTicking();
     this.emit();
-    this.tickHandle = window.setInterval(() => this.tick(), TICK_MS);
+    this.tickHandle = this.scheduler.setInterval(() => this.tick(), TICK_MS);
   }
 
   private stopTicking(): void {
     if (this.tickHandle !== null) {
-      window.clearInterval(this.tickHandle);
+      this.tickHandle.dispose();
       this.tickHandle = null;
     }
   }

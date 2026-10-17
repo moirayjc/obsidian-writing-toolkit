@@ -99,28 +99,61 @@ export async function migrateOutlineSidecar(
   const adapter = app.vault.adapter;
   const from = getOutlinePath(oldPath);
   const to = getOutlinePath(newPath);
-  try {
-    const stat = await adapter.stat(from);
-    if (!stat) return;
+  const stat = await adapter.stat(from);
+  if (!stat) return;
 
-    if (stat.type === "file") {
-      await ensureFolder(adapter, to.slice(0, to.lastIndexOf("/")));
-      if (await adapter.exists(to)) await adapter.remove(to);
-      await adapter.rename(from, to);
+  /** 目标在改名竞态中可能刚被面板写入；较新的目标优先，避免旧内容倒灌。 */
+  async function moveFile(source: string, target: string): Promise<void> {
+    await ensureFolder(adapter, target.slice(0, target.lastIndexOf("/")));
+    if (!(await adapter.exists(target))) {
+      await adapter.rename(source, target);
       return;
     }
 
-    // 目录：整卷/整个文件夹的章纲跟着搬
-    const files = await listFilesDeep(adapter, from);
-    for (const file of files) {
-      const relative = file.slice(from.length + 1);
-      const target = `${to}/${relative}`;
-      await ensureFolder(adapter, target.slice(0, target.lastIndexOf("/")));
-      if (await adapter.exists(target)) await adapter.remove(target);
-      await adapter.rename(file, target);
+    const [sourceStat, targetStat] = await Promise.all([
+      adapter.stat(source),
+      adapter.stat(target),
+    ]);
+    if (!sourceStat) return;
+    if (!targetStat) {
+      await adapter.rename(source, target);
+      return;
     }
-  } catch (err) {
-    console.error("写作工具箱：迁移章纲伴生文件失败", err);
+
+    let sameContent = false;
+    try {
+      const [sourceText, targetText] = await Promise.all([
+        adapter.read(source),
+        adapter.read(target),
+      ]);
+      sameContent = sourceText === targetText;
+    } catch {
+      /* 读不到就按时间戳决定 */
+    }
+
+    if (sameContent || targetStat.mtime >= sourceStat.mtime) {
+      await adapter.remove(source);
+      return;
+    }
+    await adapter.remove(target);
+    await adapter.rename(source, target);
+  }
+
+  if (stat.type === "file") {
+    await moveFile(from, to);
+    return;
+  }
+
+  // 目录：整卷/整个文件夹的章纲跟着搬
+  const files = await listFilesDeep(adapter, from);
+  for (const file of files) {
+    const relative = file.slice(from.length + 1);
+    await moveFile(file, `${to}/${relative}`);
+  }
+  try {
+    await adapter.rmdir(from, true);
+  } catch {
+    /* 目录里可能还有并发写入，留空目录比误删更安全 */
   }
 }
 
@@ -226,35 +259,71 @@ export function serializeBeats(beats: BeatItem[]): string {
     .join("\n");
 }
 
-/** 读取章纲：优先读取 .wt-outlines 伴生文件，不存在则平滑兼容读取旧 Frontmatter */
+/**
+ * 读取章纲：当前存储模式优先；当前来源不存在时，兼容读取另一种历史来源。
+ * “当前来源明确存在但内容为空”会直接返回空，不能被另一边的旧内容复活。
+ */
 export async function loadOutline(
   app: App,
   file: TFile,
   storageMode: "sidecar" | "frontmatter" = "sidecar"
 ): Promise<{ value: string; hasKey: boolean; isLegacyFm: boolean }> {
   const sidecarPath = getOutlinePath(file.path);
-  // 1. 如果伴生文件存在，直接读
-  if (await app.vault.adapter.exists(sidecarPath)) {
+  const readSidecar = async (): Promise<{
+    value: string;
+    hasKey: boolean;
+    isLegacyFm: boolean;
+  } | null> => {
     try {
+      if (!(await app.vault.adapter.exists(sidecarPath))) return null;
       const text = await app.vault.adapter.read(sidecarPath);
       return { value: text, hasKey: true, isLegacyFm: false };
     } catch (e) {
       console.error("读取伴生章纲失败:", e);
+      return null;
     }
-  }
+  };
 
-  // 2. 检查旧 Frontmatter（历史数据兼容）
-  try {
-    const content = await app.vault.cachedRead(file);
-    const parsed = readOutlineFromContent(content);
-    if (parsed.hasKey && parsed.value.trim() !== "") {
-      return { value: parsed.value, hasKey: true, isLegacyFm: true };
+  const readFrontmatter = async (): Promise<{
+    value: string;
+    hasKey: boolean;
+    isLegacyFm: boolean;
+  } | null> => {
+    try {
+      const content = await app.vault.cachedRead(file);
+      const parsed = readOutlineFromContent(content);
+      if (parsed.hasKey) {
+        return { value: parsed.value, hasKey: true, isLegacyFm: true };
+      }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
-  }
+    return null;
+  };
+
+  const preferred =
+    storageMode === "frontmatter"
+      ? await readFrontmatter()
+      : await readSidecar();
+  if (preferred) return preferred;
+
+  const fallback =
+    storageMode === "frontmatter"
+      ? await readSidecar()
+      : await readFrontmatter();
+  if (fallback) return fallback;
 
   return { value: "", hasKey: false, isLegacyFm: false };
+}
+
+/** 当前模式下是否存在非空章纲；空文件/空 frontmatter 视为未填写。 */
+export async function hasOutline(
+  app: App,
+  file: TFile,
+  storageMode: "sidecar" | "frontmatter" = "sidecar"
+): Promise<boolean> {
+  const loaded = await loadOutline(app, file, storageMode);
+  return loaded.value.trim().length > 0;
 }
 
 /** 保存章纲：默认存为独立伴生文件，保护正文纯净；支持切换回 frontmatter */

@@ -142,6 +142,145 @@ async function main() {
     r.check("缓存已失效", store.getCached(DOC) === undefined);
   }
 
+  // 7) 目录改名/删除：整段缓存一起失效
+  {
+    const { vault, app } = makeVault();
+    const second = "正文/第2章.批注.md";
+    vault.files.set(SIDECAR, SAMPLE);
+    vault.files.set(second, SAMPLE.replace("第1章", "第2章"));
+    const store = new CommentStore(app);
+    await store.load(DOC);
+    await store.load("正文/第2章.md");
+    store.invalidatePrefix("正文");
+    r.check(
+      "invalidatePrefix 清空目录下全部缓存",
+      store.getCached(DOC) === undefined &&
+        store.getCached("正文/第2章.md") === undefined
+    );
+  }
+
+  // 8) 写盘失败不能把未落盘内容留在缓存里
+  {
+    const { vault, app } = makeVault();
+    vault.files.set(SIDECAR, SAMPLE);
+    const store = new CommentStore(app);
+    await store.load(DOC);
+    const originalModify = vault.modify;
+    vault.modify = async () => {
+      throw new Error("disk full");
+    };
+    let rejected = false;
+    try {
+      await store.save(DOC, [{
+        id: 9,
+        status: "pending",
+        quote: "未落盘",
+        paragraph: "",
+        paragraphHint: 0,
+        lineHint: 1,
+        createdAt: "2026-10-16 10:00",
+        content: "不应留在缓存",
+        reply: "",
+        current: "",
+      }]);
+    } catch {
+      rejected = true;
+    }
+    r.check(
+      "写盘失败向调用方报错且缓存失效",
+      rejected && store.getCached(DOC) === undefined
+    );
+    vault.modify = originalModify;
+    r.check(
+      "写盘失败后下次读取回到磁盘真值",
+      (await store.load(DOC)).length === 1
+    );
+  }
+
+  // 9) 失效期间不能把旧的「读取中」任务复用给新读取
+  {
+    const { vault, app } = makeVault();
+    vault.files.set(SIDECAR, SAMPLE);
+    const gates = [];
+    let reads = 0;
+    vault.read = async (file) => {
+      reads++;
+      const snapshot = vault.files.get(file.path);
+      await new Promise((resolve) => gates.push(resolve));
+      return snapshot;
+    };
+    const store = new CommentStore(app);
+    const first = store.load(DOC);
+    await new Promise((resolve) => setImmediate(resolve));
+    const updated = SAMPLE + "\n### 批注 2\n- 状态：待处理\n- 原文：x\n- 内容：y\n";
+    vault.files.set(SIDECAR, updated);
+    store.handleModified(SIDECAR);
+    const second = store.load(DOC);
+    await new Promise((resolve) => setImmediate(resolve));
+    const readCountBeforeRelease = reads;
+    gates[0]();
+    const firstItems = await first;
+    if (gates[1]) gates[1]();
+    const secondItems = await second;
+    r.check(
+      "失效后新读取不复用旧的 in-flight 结果",
+      readCountBeforeRelease === 2 &&
+        firstItems.length === 1 &&
+        secondItems.length === 2 &&
+        (store.getCached(DOC) ?? []).length === 2
+    );
+  }
+
+  // 10) 写盘期间启动的读取不能把旧内容回写到缓存
+  {
+    const { vault, app } = makeVault();
+    vault.files.set(SIDECAR, SAMPLE);
+    let releaseWrite;
+    let releaseRead;
+    vault.modify = async (file, text) => {
+      await new Promise((resolve) => {
+        releaseWrite = resolve;
+      });
+      vault.files.set(file.path, text);
+    };
+    vault.read = async (file) => {
+      const snapshot = vault.files.get(file.path);
+      await new Promise((resolve) => {
+        releaseRead = resolve;
+      });
+      return snapshot;
+    };
+    const store = new CommentStore(app);
+    const next = [{
+      id: 9,
+      status: "pending",
+      quote: "新内容",
+      paragraph: "",
+      paragraphHint: 0,
+      lineHint: 1,
+      createdAt: "2026-10-17 12:00",
+      content: "只保留新缓存",
+      reply: "",
+      current: "",
+    }];
+    const save = store.save(DOC, next);
+    await new Promise((resolve) => setImmediate(resolve));
+    const staleRead = store.load(DOC);
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseWrite();
+    await save;
+    releaseRead();
+    const staleItems = await staleRead;
+    const cached = store.getCached(DOC) ?? [];
+    r.check(
+      "写盘期间启动的旧读取不会覆盖新缓存",
+      staleItems.length === 1 &&
+        staleItems[0].id === 1 &&
+        cached.length === 1 &&
+        cached[0].id === 9
+    );
+  }
+
   // 顺手确认编译出来的是真实现（防止抽样到空模块）
   r.check("comments.ts 真实实现可用",
     typeof comments.parseCommentFile === "function" &&

@@ -149,7 +149,7 @@ function buildDecorations(
   state: EditorState,
   config: CommentDecorConfig
 ): DecorationSet {
-  // 诊断：每条「为什么没走到构建」的判据都记一笔，供「批注：自检」报告使用
+  // 诊断：每条「为什么没走到构建」的判据都记一笔，供内部批注诊断报告使用
   const startedAt = performance.now();
   const finish = (reason: string | null, set: DecorationSet, extra?: {
     located: number; via: Record<string, number>; marks: number; chips: number;

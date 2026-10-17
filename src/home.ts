@@ -11,37 +11,35 @@ import {
   WorkspaceLeaf,
   setIcon,
 } from "obsidian";
-import { WritingCalendar } from "./calendar";
+import type { CalendarHandle, UiShellContext } from "./uiShellContext";
 import { DAILY_DISPLAY_MODE_LABELS } from "./settings";
-import { getWordCount } from "./wordcount";
 import {
   ChapterEntry,
   NovelProject,
   allChapters,
-  discoverProjects,
   isInternalPath,
 } from "./project";
 import {
   ARCHIVE_RE,
   STATUS_LABEL,
-  WorkbenchStatus,
+  WORD_COUNT_MODE_LABELS,
   displayFolderName,
   displayProjectName,
   fileStatCache,
   parseResourceName,
   relativeTime,
   splitWords,
-} from "./workbench";
-import { WORD_COUNT_MODE_LABELS } from "./sidebar";
+  type WorkbenchStatus,
+} from "./uiShellShared";
 import {
   bindContextMenu,
   showMenuAt,
   type MenuPoint,
 } from "./mobile";
+import { WRITING_TOOLKIT_HOME } from "./uiSlots";
 import type { WordCountMode } from "./wordcount";
-import type WritingToolkitPlugin from "./main";
 
-export const WRITING_TOOLKIT_HOME = "writing-toolkit-home";
+export { WRITING_TOOLKIT_HOME } from "./uiSlots";
 
 /** 中间大页面的四块入口；以后想加别的，往这一列里放。 */
 export type HomePage = "desk" | "library" | "stats" | "docs";
@@ -215,13 +213,13 @@ class CoverPickModal extends FuzzySuggestModal<TFile> {
  * 书架管所有书；写作本身仍在左侧工作台，临时工具留在右侧「工具箱」。
  */
 export class WritingToolkitHome extends ItemView {
-  private readonly plugin: WritingToolkitPlugin;
+  private readonly host: UiShellContext;
   private page: HomePage = "desk";
   private mainEl!: HTMLElement;
   private navEls = new Map<HomePage, HTMLElement>();
   private railTodayEl: HTMLElement | null = null;
 
-  private calendar: WritingCalendar | null = null;
+  private calendar: CalendarHandle | null = null;
   private calendarYear: number | null = null;
   private statsProjectKey: string | null = null;
 
@@ -241,9 +239,9 @@ export class WritingToolkitHome extends ItemView {
   private closed = false;
   private wasActive = false;
 
-  constructor(leaf: WorkspaceLeaf, plugin: WritingToolkitPlugin) {
+  constructor(leaf: WorkspaceLeaf, host: UiShellContext) {
     super(leaf);
-    this.plugin = plugin;
+    this.host = host;
   }
 
   getViewType(): string {
@@ -260,7 +258,7 @@ export class WritingToolkitHome extends ItemView {
 
   async onOpen(): Promise<void> {
     this.closed = false;
-    this.page = this.plugin.getHomePage();
+    this.page = this.host.prefs.getHomePage();
     this.contentEl.empty();
     this.contentEl.addClass("wt-home");
 
@@ -356,7 +354,7 @@ export class WritingToolkitHome extends ItemView {
   private switchPage(page: HomePage): void {
     if (this.page === page) return;
     this.page = page;
-    this.plugin.setHomePage(page);
+    this.host.prefs.setHomePage(page);
     this.renderPage(true);
   }
 
@@ -390,11 +388,7 @@ export class WritingToolkitHome extends ItemView {
   }
 
   private discover(): NovelProject[] {
-    return discoverProjects(this.app, {
-      draftKeywords: this.plugin.settings.draftKeywords,
-      excludeNames: this.plugin.settings.chapterExcludeNames,
-      extraExcluded: [this.plugin.settings.snapshotFolder],
-    });
+    return [...this.host.services.project.projects()];
   }
 
   /** 页面块：带依次浮现动画的序号 */
@@ -460,8 +454,8 @@ export class WritingToolkitHome extends ItemView {
   private today(): { date: Date; words: number; goal: number } {
     return {
       date: new Date(),
-      words: Math.max(0, this.plugin.dailyGross),
-      goal: Math.max(1, this.plugin.settings.dailyGoal),
+      words: Math.max(0, this.host.stats.gross()),
+      goal: Math.max(1, this.host.settings.dailyGoal),
     };
   }
 
@@ -518,7 +512,7 @@ export class WritingToolkitHome extends ItemView {
         let words = 0;
         try {
           const content = await this.app.vault.cachedRead(job.file);
-          words = getWordCount(content, this.plugin.settings.wordCountMode);
+          words = this.host.actions.countWords(content);
         } catch {
           /* 读取失败按空处理 */
         }
@@ -570,15 +564,15 @@ export class WritingToolkitHome extends ItemView {
 
   /** 设为当前作品；openBench 为 true 时顺手打开左侧工作台 */
   private makeCurrent(project: NovelProject, openBench: boolean): void {
-    this.plugin.setWorkbenchProject(project.root);
-    this.plugin.refreshWorkbenches();
-    if (openBench) void this.plugin.openWorkbench();
+    this.host.prefs.setWorkbenchProject(project.root);
+    this.host.nav.refreshWorkbenches();
+    if (openBench) void this.host.nav.openWorkbench();
   }
 
   // ---------- 封面 ----------
 
   private coverFile(root: string): TFile | null {
-    const path = this.plugin.getProjectCover(root);
+    const path = this.host.prefs.getProjectCover(root);
     if (!path) return null;
     const file = this.app.vault.getAbstractFileByPath(path);
     return file instanceof TFile && IMAGE_EXT.has(file.extension.toLowerCase())
@@ -636,12 +630,12 @@ export class WritingToolkitHome extends ItemView {
         .setIcon("upload")
         .onClick(() => this.importCover(project))
     );
-    if (this.plugin.getProjectCover(project.root)) {
+    if (this.host.prefs.getProjectCover(project.root)) {
       menu.addItem((item) =>
         item
           .setTitle("恢复默认封面")
           .setIcon("rotate-ccw")
-          .onClick(() => this.plugin.setProjectCover(project.root, null))
+          .onClick(() => this.host.prefs.setProjectCover(project.root, null))
       );
     }
   }
@@ -658,7 +652,7 @@ export class WritingToolkitHome extends ItemView {
       return;
     }
     new CoverPickModal(this.app, images, (file) =>
-      this.plugin.setProjectCover(project.root, file.path)
+      this.host.prefs.setProjectCover(project.root, file.path)
     ).open();
   }
 
@@ -689,7 +683,7 @@ export class WritingToolkitHome extends ItemView {
         } else {
           await this.app.vault.createBinary(path, data);
         }
-        this.plugin.setProjectCover(project.root, path);
+        this.host.prefs.setProjectCover(project.root, path);
         new Notice(`封面已保存到「${path}」`);
       } catch (err) {
         console.error(err);
@@ -734,7 +728,7 @@ export class WritingToolkitHome extends ItemView {
     this.liveUpdaters.push(updateGreeting);
 
     const projects = this.discover();
-    const currentRoot = this.plugin.getWorkbenchProject();
+    const currentRoot = this.host.prefs.getWorkbenchProject();
     const current = projects.find((p) => p.root === currentRoot) ?? null;
 
     const top = page.createDiv({ cls: "wt-desk-top" });
@@ -763,7 +757,7 @@ export class WritingToolkitHome extends ItemView {
         () => this.switchPage("library")
       );
       this.button(actions, "新建作品", "plus").addEventListener("click", () =>
-        this.plugin.openNewProjectDialog()
+        this.host.nav.openNewProjectDialog()
       );
       return;
     }
@@ -780,7 +774,7 @@ export class WritingToolkitHome extends ItemView {
     const body = hero.createDiv({ cls: "wt-desk-hero-body" });
     const eyebrow = body.createDiv({ cls: "wt-eyebrow" });
     eyebrow.createSpan({ text: "正在写" });
-    const status = this.plugin.getWorkbenchStatus(project.root);
+    const status = this.host.prefs.getWorkbenchStatus(project.root);
     if (status) {
       eyebrow.createSpan({ cls: `wt-pill is-${status}`, text: STATUS_LABEL[status] });
     }
@@ -803,7 +797,7 @@ export class WritingToolkitHome extends ItemView {
     todayFig.unit.setText("字");
     const updateBookToday = (): void => {
       const value =
-        this.plugin.projectForDisplay(project.root)[dayKey(new Date())] ?? 0;
+        this.host.stats.projectForDisplay(project.root)[dayKey(new Date())] ?? 0;
       todayFig.num.setText(fmt(Math.max(0, value)));
     };
     updateBookToday();
@@ -886,14 +880,14 @@ export class WritingToolkitHome extends ItemView {
     const streakEl = row("flame", "连续写作");
     const pomoEl = row("timer", "番茄");
     const timeEl = row("clock", "写作时长");
-    const speedEl = this.plugin.settings.showSpeed ? row("gauge", "平均时速") : null;
+    const speedEl = this.host.settings.showSpeed ? row("gauge", "平均时速") : null;
 
     const detail = card.createEl("button", {
       cls: "wt-link",
       attr: { type: "button" },
       text: "今日字数明细 ›",
     });
-    detail.addEventListener("click", () => this.plugin.showDailyBreakdown());
+    detail.addEventListener("click", () => this.host.stats.showDailyBreakdown());
 
     const update = (): void => {
       const { date, words, goal } = this.today();
@@ -906,11 +900,11 @@ export class WritingToolkitHome extends ItemView {
       numEl.setText(fmt(words));
       goalEl.setText(words >= goal ? "今日已达成" : `/ ${fmt(goal)} 字`);
 
-      const streak = currentStreak(this.plugin.dailyForDisplay(), date);
+      const streak = currentStreak(this.host.stats.dailyForDisplay(), date);
       streakEl.setText(streak > 0 ? `${streak} 天` : "今天开始");
-      const pomo = this.plugin.getTodayPomodoroSummary();
+      const pomo = this.host.stats.getTodayPomodoroSummary();
       pomoEl.setText(pomo ? `${pomo.count} 个` : "—");
-      const seconds = this.plugin.getTodayDurationSeconds();
+      const seconds = this.host.stats.getTodayDurationSeconds();
       timeEl.setText(seconds >= 60 ? formatMinutes(seconds) : "—");
       if (speedEl) {
         speedEl.setText(
@@ -932,8 +926,8 @@ export class WritingToolkitHome extends ItemView {
     const chart = card.createDiv({ cls: "wt-week" });
 
     const update = (): void => {
-      const hist = this.plugin.dailyForDisplay();
-      const goal = Math.max(1, this.plugin.settings.dailyGoal);
+      const hist = this.host.stats.dailyForDisplay();
+      const goal = Math.max(1, this.host.settings.dailyGoal);
       const today = new Date();
       const days = Array.from({ length: 7 }, (_, i) => addDays(today, i - 6));
       const values = days.map((d) => Math.max(0, hist[dayKey(d)] ?? 0));
@@ -989,7 +983,7 @@ export class WritingToolkitHome extends ItemView {
       .filter(
         (p) =>
           p !== current &&
-          !this.plugin.isProjectHidden(p.root) &&
+          !this.host.prefs.isProjectHidden(p.root) &&
           !ARCHIVE_RE.test(p.root)
       )
       .map((project) => ({ project, at: projectActivity(project) }))
@@ -1014,7 +1008,7 @@ export class WritingToolkitHome extends ItemView {
       const text = item.createDiv({ cls: "wt-mini-book-text" });
       text.createDiv({ cls: "wt-mini-book-name", text: displayProjectName(project.name) });
       const meta = text.createDiv({ cls: "wt-mini-book-meta" });
-      const status = this.plugin.getWorkbenchStatus(project.root);
+      const status = this.host.prefs.getWorkbenchStatus(project.root);
       meta.createSpan({ text: status ? STATUS_LABEL[status] : `${project.chapterCount} 章` });
       if (at > 0) meta.createSpan({ text: relativeTime(at) });
       item.setAttr("title", "设为正在写的书");
@@ -1029,7 +1023,7 @@ export class WritingToolkitHome extends ItemView {
 
   private renderLibraryPage(main: HTMLElement): void {
     const page = main.createDiv({ cls: "wt-home-page" });
-    const view = this.plugin.getLibraryView();
+    const view = this.host.prefs.getLibraryView();
 
     const head = this.pageHead(page, "书架", "所有作品都在这里；点一本就切过去写。");
     const toolbar = head.createDiv({ cls: "wt-home-toolbar" });
@@ -1051,14 +1045,14 @@ export class WritingToolkitHome extends ItemView {
       });
       setIcon(btn, mode.icon);
       btn.addEventListener("click", () => {
-        if (this.plugin.getLibraryView() === mode.key) return;
-        this.plugin.setLibraryView(mode.key);
+        if (this.host.prefs.getLibraryView() === mode.key) return;
+        this.host.prefs.setLibraryView(mode.key);
         this.renderPage(false);
       });
     }
 
     const newBtn = this.button(toolbar, "新建作品", "plus", "is-primary");
-    newBtn.addEventListener("click", () => this.plugin.openNewProjectDialog());
+    newBtn.addEventListener("click", () => this.host.nav.openNewProjectDialog());
 
     const listEl = this.block(
       page,
@@ -1070,7 +1064,7 @@ export class WritingToolkitHome extends ItemView {
 
   private renderLibraryList(listEl: HTMLElement): void {
     listEl.empty();
-    const grid = this.plugin.getLibraryView() === "grid";
+    const grid = this.host.prefs.getLibraryView() === "grid";
     const projects = this.discover();
     const q = this.libQuery.trim().toLowerCase();
     const matches = (project: NovelProject): boolean => {
@@ -1100,8 +1094,8 @@ export class WritingToolkitHome extends ItemView {
     const sorted = projects
       .map((project) => ({ project, at: projectActivity(project) }))
       .sort((a, b) => b.at - a.at);
-    const hidden = sorted.filter((x) => this.plugin.isProjectHidden(x.project.root));
-    const visible = sorted.filter((x) => !this.plugin.isProjectHidden(x.project.root));
+    const hidden = sorted.filter((x) => this.host.prefs.isProjectHidden(x.project.root));
+    const visible = sorted.filter((x) => !this.host.prefs.isProjectHidden(x.project.root));
     const archived = visible.filter((x) => ARCHIVE_RE.test(x.project.root));
     const active = visible.filter((x) => !ARCHIVE_RE.test(x.project.root));
 
@@ -1241,7 +1235,7 @@ export class WritingToolkitHome extends ItemView {
         .setTitle(inHidden ? "取消隐藏" : "隐藏此作品")
         .setIcon(inHidden ? "eye" : "eye-off")
         .onClick(() => {
-          this.plugin.setProjectHidden(project.root, !inHidden);
+          this.host.prefs.setProjectHidden(project.root, !inHidden);
           rerender();
         })
     );
@@ -1249,7 +1243,7 @@ export class WritingToolkitHome extends ItemView {
       item
         .setTitle("在系统文件管理器中显示")
         .setIcon("folder-open")
-        .onClick(() => this.plugin.revealPathInSystem(project.root))
+        .onClick(() => this.host.actions.revealPathInSystem(project.root))
     );
     showMenuAt(menu, pt);
   }
@@ -1262,7 +1256,7 @@ export class WritingToolkitHome extends ItemView {
     inHidden: boolean,
     rerender: () => void
   ): void {
-    const current = project.root === this.plugin.getWorkbenchProject();
+    const current = project.root === this.host.prefs.getWorkbenchProject();
     const card = parent.createDiv({
       cls: `wt-book${current ? " is-current" : ""}${inHidden ? " is-hidden" : ""}`,
     });
@@ -1284,7 +1278,7 @@ export class WritingToolkitHome extends ItemView {
     setIcon(eye, inHidden ? "eye" : "eye-off");
     eye.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.plugin.setProjectHidden(project.root, !inHidden);
+      this.host.prefs.setProjectHidden(project.root, !inHidden);
       rerender();
     });
 
@@ -1332,7 +1326,7 @@ export class WritingToolkitHome extends ItemView {
     inHidden: boolean,
     rerender: () => void
   ): void {
-    const current = project.root === this.plugin.getWorkbenchProject();
+    const current = project.root === this.host.prefs.getWorkbenchProject();
     const row = parent.createDiv({
       cls: `wt-lib-row${current ? " is-current" : ""}`,
     });
@@ -1399,7 +1393,7 @@ export class WritingToolkitHome extends ItemView {
     setIcon(eye, inHidden ? "eye" : "eye-off");
     eye.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.plugin.setProjectHidden(project.root, !inHidden);
+      this.host.prefs.setProjectHidden(project.root, !inHidden);
       rerender();
     });
 
@@ -1411,7 +1405,7 @@ export class WritingToolkitHome extends ItemView {
 
   /** 状态徽章内容：连载中 / 已完结 / 暂停更新 / 未标注 */
   private fillStatusChip(btn: HTMLElement, root: string): void {
-    const status = this.plugin.getWorkbenchStatus(root);
+    const status = this.host.prefs.getWorkbenchStatus(root);
     btn.empty();
     btn.className = `wt-lib-status is-${status ?? "unset"}`;
     btn.createSpan({ cls: "wt-lib-status-dot" });
@@ -1423,7 +1417,7 @@ export class WritingToolkitHome extends ItemView {
     pt: MenuPoint,
     after: () => void
   ): void {
-    const current = this.plugin.getWorkbenchStatus(root);
+    const current = this.host.prefs.getWorkbenchStatus(root);
     const menu = new Menu();
     const order: WorkbenchStatus[] = ["ongoing", "completed", "hiatus"];
     for (const key of order) {
@@ -1432,8 +1426,8 @@ export class WritingToolkitHome extends ItemView {
           .setTitle(STATUS_LABEL[key])
           .setChecked(current === key)
           .onClick(() => {
-            this.plugin.setWorkbenchStatus(root, key);
-            this.plugin.refreshWorkbenches();
+            this.host.prefs.setWorkbenchStatus(root, key);
+            this.host.nav.refreshWorkbenches();
             after();
           })
       );
@@ -1444,8 +1438,8 @@ export class WritingToolkitHome extends ItemView {
         .setTitle("清除标注")
         .setDisabled(current === null)
         .onClick(() => {
-          this.plugin.setWorkbenchStatus(root, null);
-          this.plugin.refreshWorkbenches();
+          this.host.prefs.setWorkbenchStatus(root, null);
+          this.host.nav.refreshWorkbenches();
           after();
         })
     );
@@ -1457,8 +1451,8 @@ export class WritingToolkitHome extends ItemView {
   /** 当前统计范围下的每日字数 */
   private scopedHistory(): Record<string, number> {
     return this.statsProjectKey
-      ? this.plugin.projectForDisplay(this.statsProjectKey)
-      : this.plugin.dailyForDisplay();
+      ? this.host.stats.projectForDisplay(this.statsProjectKey)
+      : this.host.stats.dailyForDisplay();
   }
 
   private renderStatsPage(main: HTMLElement): void {
@@ -1469,7 +1463,7 @@ export class WritingToolkitHome extends ItemView {
     const toolbar = head.createDiv({ cls: "wt-home-toolbar" });
     const scope = toolbar.createEl("select", { cls: "dropdown wt-scope" });
     scope.createEl("option", { value: "", text: "全部作品" });
-    for (const project of this.plugin.getProjects(this.statsProjectKey)) {
+    for (const project of this.host.stats.getProjects(this.statsProjectKey)) {
       scope.createEl("option", {
         value: project.key,
         text: displayProjectName(project.label),
@@ -1535,19 +1529,10 @@ export class WritingToolkitHome extends ItemView {
       attr: { type: "button" },
       text: "今日字数明细 ›",
     });
-    detail.addEventListener("click", () => this.plugin.showDailyBreakdown());
+    detail.addEventListener("click", () => this.host.stats.showDailyBreakdown());
     const calendarHolder = calCard.createDiv();
-    this.calendar = new WritingCalendar(
+    this.calendar = this.host.caps.calendar.create(
       calendarHolder,
-      {
-        history: () => this.plugin.dailyForDisplay(),
-        durationHistory: () => this.plugin.dailyDurationHistory,
-        projectHistory: (key) => this.plugin.projectForDisplay(key),
-        projectDurationHistory: (key) =>
-          this.plugin.projectDurationHistory[key] || {},
-        displayMode: () => this.plugin.settings.dailyDisplayMode,
-        dailyGoal: () => this.plugin.settings.dailyGoal,
-      },
       this.calendarYear ?? undefined
     );
     this.calendar.setProject(this.statsProjectKey);
@@ -1561,11 +1546,11 @@ export class WritingToolkitHome extends ItemView {
       const h = shareCard.createDiv({ cls: "wt-card-head" });
       h.createDiv({ cls: "wt-card-label", text: "今年各作品" });
       const yearPrefix = `${new Date().getFullYear()}-`;
-      const rows = this.plugin
+      const rows = this.host.stats
         .getProjects()
         .map((p) => {
           let sum = 0;
-          for (const [day, v] of Object.entries(this.plugin.projectForDisplay(p.key))) {
+          for (const [day, v] of Object.entries(this.host.stats.projectForDisplay(p.key))) {
             if (day.startsWith(yearPrefix)) sum += Math.max(0, v);
           }
           return { label: displayProjectName(p.label), sum };
@@ -1605,10 +1590,15 @@ export class WritingToolkitHome extends ItemView {
     });
     setIcon(foldHead.createSpan({ cls: "wt-fold-icon" }), "settings-2");
     foldHead.createSpan({ cls: "wt-fold-label", text: "统计设置" });
-    foldHead.createSpan({
+    const foldDesc = foldHead.createSpan({
       cls: "wt-fold-desc",
-      text: `每日目标 ${fmt(this.plugin.settings.dailyGoal)} 字 · ${WORD_COUNT_MODE_LABELS[this.plugin.settings.wordCountMode]}`,
+      text: `每日目标 ${fmt(this.host.settings.dailyGoal)} 字 · ${WORD_COUNT_MODE_LABELS[this.host.settings.wordCountMode]}`,
     });
+    const updateSettingsSummary = (): void => {
+      foldDesc.setText(
+        `每日目标 ${fmt(this.host.settings.dailyGoal)} 字 · ${WORD_COUNT_MODE_LABELS[this.host.settings.wordCountMode]}`
+      );
+    };
     setIcon(
       foldHead.createSpan({ cls: "wt-fold-chevron" }),
       statsSettingsOpen ? "chevron-up" : "chevron-down"
@@ -1618,22 +1608,29 @@ export class WritingToolkitHome extends ItemView {
       this.renderPage(false);
     });
     if (statsSettingsOpen) {
-      this.renderStatsSettings(settings.createDiv({ cls: "wt-home-settings" }));
+      this.renderStatsSettings(
+        settings.createDiv({ cls: "wt-home-settings" }),
+        updateSettingsSummary
+      );
     }
   }
 
-  private renderStatsSettings(card: HTMLElement): void {
+  private renderStatsSettings(
+    card: HTMLElement,
+    updateSummary: () => void
+  ): void {
     new Setting(card)
       .setName("每日目标")
       .setDesc("目标字数（影响热力图达标阈值与今日进度）")
       .addText((text) =>
-        text.setValue(String(this.plugin.settings.dailyGoal)).onChange(async (value) => {
+        text.setValue(String(this.host.settings.dailyGoal)).onChange(async (value) => {
           const goal = parseInt(value, 10);
           if (goal > 0) {
-            this.plugin.settings.dailyGoal = goal;
-            await this.plugin.saveSettings();
+            this.host.settings.dailyGoal = goal;
+            await this.host.actions.saveSettings();
             this.calendar?.refresh();
             this.updateRailToday();
+            updateSummary();
           }
         })
       );
@@ -1645,9 +1642,10 @@ export class WritingToolkitHome extends ItemView {
         for (const [key, label] of Object.entries(WORD_COUNT_MODE_LABELS)) {
           dropdown.addOption(key, label);
         }
-        dropdown.setValue(this.plugin.settings.wordCountMode).onChange(async (value) => {
-          this.plugin.setWordCountMode(value as WordCountMode);
-          await this.plugin.saveSettings();
+        dropdown.setValue(this.host.settings.wordCountMode).onChange(async (value) => {
+          this.host.stats.setWordCountMode(value as WordCountMode);
+          await this.host.actions.saveSettings();
+          updateSummary();
         });
       });
 
@@ -1658,10 +1656,10 @@ export class WritingToolkitHome extends ItemView {
         for (const [key, label] of Object.entries(DAILY_DISPLAY_MODE_LABELS)) {
           dropdown.addOption(key, label);
         }
-        dropdown.setValue(this.plugin.settings.dailyDisplayMode).onChange(async (value) => {
-          this.plugin.settings.dailyDisplayMode =
-            value as typeof this.plugin.settings.dailyDisplayMode;
-          await this.plugin.saveSettings();
+        dropdown.setValue(this.host.settings.dailyDisplayMode).onChange(async (value) => {
+          this.host.settings.dailyDisplayMode =
+            value as typeof this.host.settings.dailyDisplayMode;
+          await this.host.actions.saveSettings();
           this.calendar?.refresh();
         });
       });
@@ -1670,19 +1668,19 @@ export class WritingToolkitHome extends ItemView {
       .setName("显示码字时速")
       .setDesc("状态栏里显示当前时速")
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showSpeed).onChange(async (value) => {
-          this.plugin.settings.showSpeed = value;
-          await this.plugin.saveSettings();
+        toggle.setValue(this.host.settings.showSpeed).onChange(async (value) => {
+          this.host.settings.showSpeed = value;
+          await this.host.actions.saveSettings();
         })
       );
 
     new Setting(card)
       .setName("状态栏仅在沉浸模式显示")
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.statusBarOnlyImmersive).onChange(async (value) => {
-          this.plugin.settings.statusBarOnlyImmersive = value;
-          this.plugin.updateStatusBarVisibility();
-          await this.plugin.saveSettings();
+        toggle.setValue(this.host.settings.statusBarOnlyImmersive).onChange(async (value) => {
+          this.host.settings.statusBarOnlyImmersive = value;
+          this.host.actions.updateStatusBarVisibility();
+          await this.host.actions.saveSettings();
         })
       );
   }
@@ -1703,7 +1701,7 @@ export class WritingToolkitHome extends ItemView {
 
   /** 共用资料目录里的全部 Markdown（递归） */
   private sharedLibraryFiles(): TFile[] {
-    const path = (this.plugin.settings.sharedLibraryFolder ?? "")
+    const path = (this.host.settings.sharedLibraryFolder ?? "")
       .trim()
       .replace(/^\/+|\/+$/g, "");
     if (!path) return [];
@@ -1835,7 +1833,7 @@ export class WritingToolkitHome extends ItemView {
         item
           .setTitle("在系统文件管理器中显示")
           .setIcon("folder-open")
-          .onClick(() => this.plugin.revealPathInSystem(file.path))
+          .onClick(() => this.host.actions.revealPathInSystem(file.path))
       );
       showMenuAt(menu, pt);
     });

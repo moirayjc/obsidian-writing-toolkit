@@ -56,7 +56,9 @@ export interface CommentPanelHost {
   deleteComment(docPath: string, id: number): void;
   /** 锚点失效的批注：进入「重新绑定」流程（在正文里选中新位置）。 */
   rebindComment(docPath: string, id: number): void;
-  /** 清除已处理批注；docPath 省略时作用于当前活动文档（命令面板入口用）。 */
+  /** 复制该文档给 Agent 的处理指令；docPath 省略时作用于当前活动文档。 */
+  copyAgentPrompt(docPath?: string): void;
+  /** 清除已处理批注；docPath 省略时作用于当前活动文档。 */
   clearResolvedComments(docPath?: string): void;
 }
 
@@ -273,14 +275,22 @@ export class CommentPanelBody {
       this.renderResolvedGroup(root, resolved);
     }
 
-    // 底部工具行：只有「清除已处理」，没有已处理批注时不占位
-    if (resolved.length > 0) {
+    // 底部工具行：有待处理项时可复制 Agent 指令，有已处理项时可清理。
+    if (pending.length > 0 || resolved.length > 0) {
       const foot = root.createDiv({ cls: "wt-comments-footer" });
-      const clearBtn = foot.createEl("button", { text: "清除已处理" });
-      clearBtn.addEventListener("click", () =>
-        // 传面板自己的文档路径：不能让它去猜「当前活动文档」（可能已经飘到别处）
-        this.host.clearResolvedComments(model.docPath ?? undefined)
-      );
+      if (pending.length > 0) {
+        const copyBtn = foot.createEl("button", { text: "复制处理指令" });
+        copyBtn.addEventListener("click", () =>
+          this.host.copyAgentPrompt(model.docPath ?? undefined)
+        );
+      }
+      if (resolved.length > 0) {
+        const clearBtn = foot.createEl("button", { text: "清除已处理" });
+        clearBtn.addEventListener("click", () =>
+          // 传面板自己的文档路径：不能让它去猜「当前活动文档」（可能已经飘到别处）
+          this.host.clearResolvedComments(model.docPath ?? undefined)
+        );
+      }
     }
     this.restoreScroll(scroller, keepTop);
   }

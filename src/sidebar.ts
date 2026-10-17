@@ -1,25 +1,23 @@
 import { ItemView, Setting, WorkspaceLeaf, setIcon } from "obsidian";
-import { WordCountMode } from "./wordcount";
-import { SnapshotOperationPanel } from "./snapshotPanel";
-import { ChapterOutlinePanel } from "./chapterOutline";
-import { CommentPanelBody, CommentPanelModel } from "./commentView";
+import type { UiPanelGroup } from "./services/uiService";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import { PomodoroWidget } from "./pomodoroWidget";
+import { WRITING_TOOLKIT_SIDEBAR } from "./uiSlots";
+import type { UiShellContext } from "./uiShellContext";
 
-export const WRITING_TOOLKIT_SIDEBAR = "writing-toolkit-sidebar";
+export { WRITING_TOOLKIT_SIDEBAR } from "./uiSlots";
 
-export const WORD_COUNT_MODE_LABELS: Record<WordCountMode, string> = {
-  webnovel: "番茄模式（含标点）",
-  standard: "标准模式（汉字+字母+数字）",
-  native: "原生模式（分词计数）",
-};
+/** 侧栏只消费徽标需要的窄视图，不依赖批注面板的实现模块。 */
+interface CommentsBadgeView {
+  items: ReadonlyArray<{ status: string }>;
+}
 
 export class WritingToolkitSidebar extends ItemView {
-  private readonly plugin: any;
+  private readonly host: UiShellContext;
   private pomodoroWidget: PomodoroWidget | null = null;
-  private snapshotPanel: SnapshotOperationPanel | null = null;
-  private chapterOutline: ChapterOutlinePanel | null = null;
-  private commentsPanel: CommentPanelBody | null = null;
+  private snapshotPanel: UiPanelGroup | null = null;
+  private outlinePanel: UiPanelGroup | null = null;
+  private commentsPanel: UiPanelGroup | null = null;
   /** 「批注」标签上的计数徽标 */
   private commentsBadgeEl: HTMLSpanElement | null = null;
   /** 徽标异步更新的代数（防止旧结果覆盖新结果） */
@@ -35,9 +33,9 @@ export class WritingToolkitSidebar extends ItemView {
   /** combo 下拉菜单的清理函数（滚动监听 + 菜单 DOM），视图关闭时统一释放 */
   private comboCleanups: Array<() => void> = [];
 
-  constructor(leaf: WorkspaceLeaf, plugin: any) {
+  constructor(leaf: WorkspaceLeaf, host: UiShellContext) {
     super(leaf);
-    this.plugin = plugin;
+    this.host = host;
   }
 
   getViewType(): string {
@@ -54,10 +52,6 @@ export class WritingToolkitSidebar extends ItemView {
 
   async onOpen(): Promise<void> {
     this.render();
-    // 活动文档切换时，批注标签的计数与列表跟着走
-    this.registerEvent(
-      this.app.workspace.on("active-leaf-change", () => this.refreshComments())
-    );
   }
 
   async onClose(): Promise<void> {
@@ -65,8 +59,8 @@ export class WritingToolkitSidebar extends ItemView {
     this.pomodoroWidget = null;
     this.snapshotPanel?.destroy();
     this.snapshotPanel = null;
-    this.chapterOutline?.destroy();
-    this.chapterOutline = null;
+    this.outlinePanel?.destroy();
+    this.outlinePanel = null;
     this.commentsPanel?.destroy();
     this.commentsPanel = null;
     this.commentsBadgeEl = null;
@@ -78,11 +72,7 @@ export class WritingToolkitSidebar extends ItemView {
 
   refresh(text?: string): void {
     this.pomodoroWidget?.update();
-    this.snapshotPanel?.updateCurrentCount(text ?? null);
-  }
-
-  refreshSnapshotList(): void {
-    this.snapshotPanel?.refresh();
+    this.snapshotPanel?.updateLive(text ?? null);
   }
 
   refreshSettings(): void {
@@ -92,6 +82,11 @@ export class WritingToolkitSidebar extends ItemView {
   /** 重建工具箱里的批注列表并更新标签计数（主插件在批注变化 / 切文档时调用）。 */
   refreshComments(): void {
     this.commentsPanel?.refresh();
+    this.refreshCommentsBadge();
+  }
+
+  /** 批注数据或活动文档变化后只更新标签徽标，面板刷新由 comments 模块负责。 */
+  refreshCommentsBadge(): void {
     void this.updateCommentsBadge();
   }
 
@@ -100,9 +95,9 @@ export class WritingToolkitSidebar extends ItemView {
     const badge = this.commentsBadgeEl;
     if (!badge) return;
     const seq = ++this.badgeSeq;
-    let model: CommentPanelModel;
+    let model: CommentsBadgeView;
     try {
-      model = await this.plugin.getCommentPanelModel();
+      model = await this.host.caps.comments.panelModel();
     } catch {
       return;
     }
@@ -319,8 +314,8 @@ export class WritingToolkitSidebar extends ItemView {
     this.pomodoroWidget = null;
     this.snapshotPanel?.destroy();
     this.snapshotPanel = null;
-    this.chapterOutline?.destroy();
-    this.chapterOutline = null;
+    this.outlinePanel?.destroy();
+    this.outlinePanel = null;
     this.commentsPanel?.destroy();
     this.commentsPanel = null;
     contentEl.addClass("wt-sidebar");
@@ -343,7 +338,7 @@ export class WritingToolkitSidebar extends ItemView {
         build: (section) => {
           // 专注计时在最上面（今日目标、全年热力图与统计设置都在中间「主页」，
           // 这里不重复放一份）。
-          this.pomodoroWidget = new PomodoroWidget(section, this.plugin);
+          this.pomodoroWidget = new PomodoroWidget(section, this.host.caps.pomodoro);
 
           // 书写：打字机与排版
           const writeCard = this.card(section, "书写");
@@ -351,25 +346,25 @@ export class WritingToolkitSidebar extends ItemView {
           this.toggleRow(
             writeCard,
             "打字机模式",
-            this.plugin.settings.typewriterMode,
+            this.host.settings.typewriterMode,
             async (value) => {
-              this.plugin.settings.typewriterMode = value;
-              this.plugin.setTypewriterMode(value);
-              await this.plugin.saveSettings();
+              this.host.settings.typewriterMode = value;
+              this.host.editorOptions.setTypewriterMode(value);
+              await this.host.actions.saveSettings();
             }
           );
 
           this.comboSetting(
             writeCard,
             "光标位置",
-            Math.round(this.plugin.settings.typewriterOffset * 100),
+            Math.round(this.host.settings.typewriterOffset * 100),
             20,
             70,
             5,
             (v) => {
-              this.plugin.settings.typewriterOffset = v / 100;
-              this.plugin.setTypewriterOffset(v / 100);
-              void this.plugin.saveSettings();
+              this.host.settings.typewriterOffset = v / 100;
+              this.host.editorOptions.setTypewriterOffset(v / 100);
+              void this.host.actions.saveSettings();
             },
             "%"
           );
@@ -378,36 +373,36 @@ export class WritingToolkitSidebar extends ItemView {
           this.comboSetting(
             writeCard,
             "行高",
-            this.plugin.settings.lineHeight,
+            this.host.settings.lineHeight,
             1.2,
             2.5,
             0.1,
             (v) => {
-              this.plugin.settings.lineHeight = v;
-              void this.plugin.saveSettings();
+              this.host.settings.lineHeight = v;
+              void this.host.actions.saveSettings();
             }
           );
 
           this.comboSetting(
             writeCard,
             "段间距",
-            this.plugin.settings.paragraphSpacing,
+            this.host.settings.paragraphSpacing,
             0,
             1.5,
             0.1,
             (v) => {
-              this.plugin.settings.paragraphSpacing = v;
-              void this.plugin.saveSettings();
+              this.host.settings.paragraphSpacing = v;
+              void this.host.actions.saveSettings();
             }
           );
 
           this.toggleRow(
             writeCard,
             "段首缩进",
-            this.plugin.settings.paragraphIndent,
+            this.host.settings.paragraphIndent,
             async (value) => {
-              this.plugin.settings.paragraphIndent = value;
-              await this.plugin.saveSettings();
+              this.host.settings.paragraphIndent = value;
+              await this.host.actions.saveSettings();
             }
           );
 
@@ -416,64 +411,64 @@ export class WritingToolkitSidebar extends ItemView {
           this.toggleRow(
             focusCard,
             "沉浸模式",
-            this.plugin.settings.immersiveMode,
+            this.host.settings.immersiveMode,
             async (value) => {
-              this.plugin.settings.immersiveMode = value;
-              this.plugin.setImmersiveMode(value);
-              await this.plugin.saveSettings();
+              this.host.settings.immersiveMode = value;
+              this.host.editorOptions.setImmersiveMode(value);
+              await this.host.actions.saveSettings();
             }
           );
 
           this.toggleRow(
             focusCard,
             "高亮当前段落",
-            this.plugin.settings.immersiveParagraphHighlight,
+            this.host.settings.immersiveParagraphHighlight,
             async (value) => {
-              this.plugin.settings.immersiveParagraphHighlight = value;
-              this.plugin.setParagraphHighlight(value);
-              await this.plugin.saveSettings();
+              this.host.settings.immersiveParagraphHighlight = value;
+              this.host.editorOptions.setParagraphHighlight(value);
+              await this.host.actions.saveSettings();
             }
           );
 
           this.toggleRow(
             focusCard,
             "中文标点辅助",
-            this.plugin.settings.punctuationAssist,
+            this.host.settings.punctuationAssist,
             async (value) => {
-              this.plugin.settings.punctuationAssist = value;
-              this.plugin.setPunctuationAssist(value);
-              await this.plugin.saveSettings();
+              this.host.settings.punctuationAssist = value;
+              this.host.editorOptions.setPunctuationAssist(value);
+              await this.host.actions.saveSettings();
             }
           );
 
           this.toggleRow(
             focusCard,
             "海明威模式",
-            this.plugin.settings.hemingwayMode,
+            this.host.settings.hemingwayMode,
             async (value) => {
-              this.plugin.settings.hemingwayMode = value;
-              this.plugin.setHemingwayMode(value);
-              await this.plugin.saveSettings();
+              this.host.settings.hemingwayMode = value;
+              this.host.editorOptions.setHemingwayMode(value);
+              await this.host.actions.saveSettings();
             }
           );
 
           this.toggleRow(
             focusCard,
             "信纸横线",
-            this.plugin.settings.letterPaperMode,
+            this.host.settings.letterPaperMode,
             async (value) => {
-              this.plugin.settings.letterPaperMode = value;
-              await this.plugin.saveSettings();
+              this.host.settings.letterPaperMode = value;
+              await this.host.actions.saveSettings();
             }
           );
 
           this.toggleRow(
             focusCard,
             "标题样式",
-            this.plugin.settings.headingStyle,
+            this.host.settings.headingStyle,
             async (value) => {
-              this.plugin.settings.headingStyle = value;
-              await this.plugin.saveSettings();
+              this.host.settings.headingStyle = value;
+              await this.host.actions.saveSettings();
             }
           );
         },
@@ -481,9 +476,12 @@ export class WritingToolkitSidebar extends ItemView {
       {
         title: "章纲",
         build: (section) => {
-          const outlineSection = section.createDiv({ cls: "wt-sidebar-section" });
-          this.chapterOutline = new ChapterOutlinePanel(outlineSection, this.plugin);
-          this.chapterOutline.scheduleReload();
+          const outlineSection = section.createDiv({
+            cls: "wt-sidebar-section",
+          });
+          const panels = this.host.caps.panels.mountOutlinePanels(outlineSection);
+          this.outlinePanel = panels;
+          panels.refresh();
         },
       },
       {
@@ -495,8 +493,9 @@ export class WritingToolkitSidebar extends ItemView {
         },
         build: (section) => {
           const panelEl = section.createDiv({ cls: "wt-tb-comments" });
-          this.commentsPanel = new CommentPanelBody(panelEl, this.plugin);
-          this.commentsPanel.refresh();
+          const panel = this.host.caps.panels.mountCommentsPanels(panelEl);
+          this.commentsPanel = panel;
+          panel.refresh();
           void this.updateCommentsBadge();
         },
       },
@@ -504,12 +503,9 @@ export class WritingToolkitSidebar extends ItemView {
         title: "快照",
         build: (section) => {
           const panelEl = section.createDiv({ cls: "wt-snapshot-panel" });
-          this.snapshotPanel = new SnapshotOperationPanel(
-            panelEl,
-            this.plugin,
-            this.plugin.snapshotManager
-          );
-          this.snapshotPanel.refresh();
+          const panels = this.host.caps.panels.mountSnapshotPanels(panelEl);
+          this.snapshotPanel = panels;
+          panels.refresh();
         },
       },
     ];
@@ -534,12 +530,11 @@ export class WritingToolkitSidebar extends ItemView {
     this.activateTab(Math.min(this.activeTabIndex, sections.length - 1), tabEls, panelEls);
   }
 
-  /** 切到「批注」标签并定位到某条批注的卡片（正文里点标记时调用）。 */
-  revealCommentCard(id: number): void {
+  /** 切到「批注」标签；具体卡片定位由 comments 模块的插槽句柄完成。 */
+  activateCommentsTab(): void {
     if (this.commentsTabIndex >= 0 && this.tabEls.length) {
       this.activateTab(this.commentsTabIndex, this.tabEls, this.panelEls);
     }
-    void this.commentsPanel?.revealCard(id, this.contentEl);
   }
 
   private activateTab(index: number, tabs: HTMLElement[], panels: HTMLElement[]): void {
