@@ -1254,6 +1254,12 @@ body.wt-immersive .markdown-preview-view {
    --background-primary 自然映射成黑底白字，正是无障碍要的效果，不要用暖纸盖掉。
    （下面高对比度的规则写在最后，靠顺序压过上面的纸色档。） */
 body:not(.wt-theme-cool):not(.wt-theme-contrast) .cm-editor {
+  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
+     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
+     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
+     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
+  --wt-accent: #b5452f;
+  --wt-accent-soft: rgba(181, 69, 47, 0.1);
   /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
   --wt-editor-bg: var(--wt-paper);
   --text-selection: rgba(181, 69, 47, 0.18);
@@ -1269,6 +1275,12 @@ body:not(.wt-theme-cool):not(.wt-theme-contrast) .cm-editor {
   --background-modifier-border: var(--wt-rule);
 }
 body.theme-dark:not(.wt-theme-cool):not(.wt-theme-contrast) .cm-editor {
+  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
+     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
+     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
+     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
+  --wt-accent: #e07a5f;
+  --wt-accent-soft: rgba(224, 122, 95, 0.14);
   /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
   --wt-editor-bg: var(--wt-paper);
   --text-selection: rgba(224, 122, 95, 0.24);
@@ -1284,6 +1296,12 @@ body.theme-dark:not(.wt-theme-cool):not(.wt-theme-contrast) .cm-editor {
   --background-modifier-border: var(--wt-rule);
 }
 body.wt-theme-cool .cm-editor {
+  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
+     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
+     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
+     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
+  --wt-accent: #3e6185;
+  --wt-accent-soft: rgba(62, 97, 133, 0.1);
   /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
   --wt-editor-bg: var(--wt-paper);
   --text-selection: rgba(62, 97, 133, 0.2);
@@ -1299,6 +1317,12 @@ body.wt-theme-cool .cm-editor {
   --background-modifier-border: var(--wt-rule);
 }
 body.theme-dark.wt-theme-cool .cm-editor {
+  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
+     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
+     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
+     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
+  --wt-accent: #8fb6d4;
+  --wt-accent-soft: rgba(143, 182, 212, 0.14);
   /* 显式上背景：只设 --background-primary 不会改变编辑器本体（那只是设了个变量） */
   --wt-editor-bg: var(--wt-paper);
   --text-selection: rgba(143, 182, 212, 0.24);
@@ -1314,9 +1338,21 @@ body.theme-dark.wt-theme-cool .cm-editor {
   --background-modifier-border: var(--wt-rule);
 }
 body.wt-theme-contrast .cm-editor {
+  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
+     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
+     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
+     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
+  --wt-accent: #000000;
+  --wt-accent-soft: rgba(0, 0, 0, 0.12);
   --text-selection: color-mix(in srgb, #000000 16%, transparent);
 }
 body.theme-dark.wt-theme-contrast .cm-editor {
+  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
+     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
+     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
+     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
+  --wt-accent: #ffffff;
+  --wt-accent-soft: rgba(255, 255, 255, 0.14);
   --text-selection: color-mix(in srgb, #ffffff 20%, transparent);
 }
 
@@ -1355,7 +1391,9 @@ body:not(.wt-theme-contrast) .cm-editor .HyperMD-quote {
    再放大一次（同一个坑，见 §3.6.4 的说明）。这里只对齐颜色与下划线，
    让文档标题和正文里的 H1 看起来是同一套。 */
 body.wt-heading-style .inline-title {
-  color: var(--wt-accent);
+  /* !important：Obsidian 给 .inline-title 的 color 也带 !important，
+     而 !important 不比较特异性——不加就压不过它。 */
+  color: var(--wt-accent) !important;
   padding-bottom: 0.18em;
   border-bottom: 2px solid color-mix(in srgb, var(--wt-accent) 45%, transparent);
   text-wrap: balance;

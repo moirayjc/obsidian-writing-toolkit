@@ -161,6 +161,38 @@ function main() {
     );
   }
 
+  // ── 7. 令牌作用域：这是「H1 一直没有朱砂」的真正原因
+  // `--wt-accent` 只定义在 .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上。
+  // 普通笔记里**没有这些容器**，所以标题规则里 var(--wt-accent) 解析不到，
+  // 整条 color 声明静默作废——**没有任何报错**，只能靠眼睛发现。
+  // 修法是把它延伸进六档 .cm-editor 主题规则。
+  // 必须**落在编辑器主题段里**才有效——只数全文件的 --wt-accent 会假绿：
+  // 文件里本来就有 7 处主题块的定义，删光编辑器那 6 处总数仍 ≥6（反向验证抓到的）。
+  const edStart = css.indexOf("/* 正文（编辑器）也跟随配色主题");
+  const edEnd = css.indexOf("标题样式（设置 → 写作 → 标题样式");
+  const edSeg = edStart >= 0 && edEnd > edStart ? css.slice(edStart, edEnd) : "";
+  const inEditor = (edSeg.match(/--wt-accent:\s*#[0-9a-fA-F]{3,6};/g) || []).length;
+  r.check(
+    `强调色已延伸进编辑器主题段（段内 ${inEditor} 处，应 6 处：暖纸/冷淡/高对比 × 深浅）`,
+    inEditor >= 6,
+    inEditor < 6
+      ? "只定义在 .wt-* 容器上则**普通笔记里解析不到**，标题的 color 会静默作废"
+      : ""
+  );
+  // 每个消费 --wt-accent 的标题规则，其选择器必须能在没有容器的情况下命中
+  const accentSels = [];
+  const ruleRe = /(^|\})([^{}]*?)\{([^{}]*)\}/g;
+  let rm;
+  while ((rm = ruleRe.exec(css)) !== null) {
+    const sel = rm[2].trim();
+    if (!sel.includes("body.wt-heading-style")) continue;
+    if (/var\(--wt-accent\)/.test(rm[3])) accentSels.push(sel.split(",")[0].trim());
+  }
+  r.check(
+    "消费 --wt-accent 的标题规则存在（H1 / 文档标题）",
+    accentSels.length > 0
+  );
+
   return r.finish();
 }
 
