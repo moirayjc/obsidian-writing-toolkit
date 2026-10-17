@@ -22,6 +22,7 @@ CHECKS=(
   "check-anchors.js:批注四层锚点定位"
   "check-formatwrap.js:格式包裹与还原"
   "check-renumber.js:全书章节重编号"
+  "check-headingstyle.js:标题样式开关"
 )
 
 failed=""

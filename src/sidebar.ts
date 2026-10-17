@@ -466,6 +466,16 @@ export class WritingToolkitSidebar extends ItemView {
               await this.plugin.saveSettings();
             }
           );
+
+          this.toggleRow(
+            focusCard,
+            "标题样式",
+            this.plugin.settings.headingStyle,
+            async (value) => {
+              this.plugin.settings.headingStyle = value;
+              await this.plugin.saveSettings();
+            }
+          );
         },
       },
       {

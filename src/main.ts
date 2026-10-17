@@ -2765,6 +2765,7 @@ export default class WritingToolkitPlugin extends Plugin implements CommentPanel
           paragraphSpacing: pick(data.paragraphSpacing, DEFAULT_SETTINGS.paragraphSpacing),
           letterPaperMode: pick(data.letterPaperMode, DEFAULT_SETTINGS.letterPaperMode),
           paragraphIndent: pick(data.paragraphIndent, DEFAULT_SETTINGS.paragraphIndent),
+          headingStyle: pick(data.headingStyle, DEFAULT_SETTINGS.headingStyle),
           snapshotEnabled: pick(data.snapshotEnabled, DEFAULT_SETTINGS.snapshotEnabled),
           snapshotFolder: pick(data.snapshotFolder, DEFAULT_SETTINGS.snapshotFolder),
           snapshotIntervalMinutes: pick(data.snapshotIntervalMinutes, DEFAULT_SETTINGS.snapshotIntervalMinutes),

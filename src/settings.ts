@@ -27,6 +27,8 @@ export interface WritingToolkitSettings extends SnapshotSettings {
   paragraphSpacing: number;
   letterPaperMode: boolean;
   paragraphIndent: boolean;
+  /** 标题样式：层级只靠字号/字重/间距，不用颜色（参照 Claude Design System） */
+  headingStyle: boolean;
   typewriterMode: boolean;
   typewriterOffset: number;
   immersiveMode: boolean;
@@ -71,6 +73,7 @@ export const DEFAULT_SETTINGS: WritingToolkitSettings = {
   paragraphSpacing: 0.5,
   letterPaperMode: true,
   paragraphIndent: true,
+  headingStyle: true,
   typewriterMode: false,
   typewriterOffset: 0.4,
   immersiveMode: false,
@@ -434,6 +437,21 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   await this.wt.saveSettings();
                 });
               });
+
+            new Setting(el)
+              .setName("标题样式")
+              .setDesc(
+                "H1~H6 走一套克制的字号/字重阶梯（层级不靠颜色，只有 H1 用强调色做锚点），" +
+                  "并让多行标题自动均衡断行、正文消除末行孤字。主题的三套配色下自动适配。"
+              )
+              .addToggle((toggle) =>
+                toggle
+                  .setValue(this.wt.settings.headingStyle)
+                  .onChange(async (value) => {
+                    this.wt.settings.headingStyle = value;
+                    await this.wt.saveSettings();
+                  })
+              );
 
           });
         },

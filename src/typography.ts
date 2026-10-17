@@ -4,6 +4,7 @@ export interface TypographySettings {
   paragraphSpacing: number;
   letterPaperMode: boolean;
   paragraphIndent: boolean;
+  headingStyle: boolean;
 }
 
 // 启动时主题要在首帧就生效，而插件数据要异步读取，因此把配色主题同步缓存到 localStorage：
@@ -40,6 +41,7 @@ export function injectTypography(settings: TypographySettings): void {
   });
   document.body.toggleClass("wt-letter-paper", settings.letterPaperMode);
   document.body.toggleClass("wt-indent", settings.paragraphIndent);
+  document.body.toggleClass("wt-heading-style", settings.headingStyle);
   // 配色主题：冷淡风格的令牌与覆盖全部写在 styles.css 的 body.wt-theme-cool 作用域下
   applyThemeTone(settings.themeTone);
 }
@@ -51,6 +53,7 @@ export function removeTypography(): void {
   });
   document.body.removeClass("wt-letter-paper");
   document.body.removeClass("wt-indent");
+  document.body.removeClass("wt-heading-style");
   document.body.removeClass("wt-theme-cool");
   document.body.removeClass("wt-theme-contrast");
 }

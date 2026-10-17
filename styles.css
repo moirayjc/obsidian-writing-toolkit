@@ -1334,6 +1334,141 @@ body:not(.wt-theme-contrast) .cm-editor .cm-line.HyperMD-codeblock,
 body:not(.wt-theme-contrast) .cm-editor .HyperMD-quote {
   background-color: color-mix(in srgb, var(--wt-ink) 5%, transparent);
 }
+
+/* ==========================================================================
+   标题样式（设置 → 写作 → 标题样式，或侧栏「写作」标签的开关）
+   开关方式：body.wt-heading-style（由 typography.ts 切换）
+
+   设计参照 Claude Design System：
+   - **层级只靠字号 / 字重 / 间距，不用颜色**。H2 往下全部墨色，只有 H1 用强调色
+     做视觉锚点（像书的章节题）。
+   - `text-wrap: balance` 让多行标题自动均衡字数，避免末行只剩一个词（Typographic Runts）；
+     正文用 `text-wrap: pretty` 消孤字。
+   - 颜色走 --wt-* 令牌，四套主题自动适配，不需要单独的深色档。
+   ========================================================================== */
+
+/* ── 阅读模式 ── */
+body.wt-heading-style .markdown-preview-view h1,
+body.wt-heading-style .markdown-rendered h1 {
+  font-size: var(--wt-h1-size);
+  font-weight: var(--wt-h1-weight);
+  color: var(--wt-accent);
+  line-height: 1.3;
+  margin-top: 1.4em;
+  padding-bottom: 0.25em;
+  border-bottom: 2px solid color-mix(in srgb, var(--wt-accent) 45%, transparent);
+  text-wrap: balance;
+}
+body.wt-heading-style .markdown-preview-view h2,
+body.wt-heading-style .markdown-rendered h2 {
+  font-size: var(--wt-h2-size);
+  font-weight: var(--wt-h2-weight);
+  color: var(--wt-ink);
+  line-height: 1.3;
+  margin-top: 1.2em;
+  text-wrap: balance;
+}
+body.wt-heading-style .markdown-preview-view h3,
+body.wt-heading-style .markdown-rendered h3 {
+  font-size: var(--wt-h3-size);
+  font-weight: var(--wt-h3-weight);
+  color: var(--wt-ink);
+  line-height: 1.35;
+  margin-top: 1.1em;
+  text-wrap: balance;
+}
+body.wt-heading-style .markdown-preview-view h4,
+body.wt-heading-style .markdown-rendered h4 {
+  font-size: var(--wt-h4-size);
+  font-weight: var(--wt-h4-weight);
+  color: var(--wt-ink-2);
+  line-height: 1.4;
+  margin-top: 1em;
+  text-wrap: balance;
+}
+body.wt-heading-style .markdown-preview-view h5,
+body.wt-heading-style .markdown-rendered h5 {
+  font-size: var(--wt-h5-size);
+  font-weight: var(--wt-h5-weight);
+  color: var(--wt-ink-2);
+  line-height: 1.4;
+  margin-top: 1em;
+  text-wrap: balance;
+}
+body.wt-heading-style .markdown-preview-view h6,
+body.wt-heading-style .markdown-rendered h6 {
+  font-size: var(--wt-h6-size);
+  font-weight: var(--wt-h6-weight);
+  color: var(--wt-ink-3);
+  line-height: 1.4;
+  margin-top: 1em;
+  letter-spacing: 0.02em;
+  text-wrap: balance;
+}
+
+/* ── 实时预览：字号要落在 .cm-line 上（行级），字重/颜色落在标题行 ──
+   `.cm-header-N` 那个 span 强制继承行字号：否则 em 会相对父级重复放大
+   （H1 会变成约 48px）。这是踩过的坑，别删。 */
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-1,
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-2,
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-3,
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-4,
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-5,
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-6,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-1,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-2,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-3,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-4,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-5,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-6 {
+  font-size: inherit;
+  line-height: 1.3;
+}
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-1 { font-size: var(--wt-h1-size); }
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-2 { font-size: var(--wt-h2-size); }
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-3 { font-size: var(--wt-h3-size); }
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-4 { font-size: var(--wt-h4-size); }
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-5 { font-size: var(--wt-h5-size); }
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-6 { font-size: var(--wt-h6-size); }
+
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-1,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-1 {
+  font-weight: var(--wt-h1-weight);
+  color: var(--wt-accent);
+}
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-2,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-2 {
+  font-weight: var(--wt-h2-weight);
+  color: var(--wt-ink);
+}
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-3,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-3 {
+  font-weight: var(--wt-h3-weight);
+  color: var(--wt-ink);
+}
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-4,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-4 {
+  font-weight: var(--wt-h4-weight);
+  color: var(--wt-ink-2);
+}
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-5,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-5 {
+  font-weight: var(--wt-h5-weight);
+  color: var(--wt-ink-2);
+}
+body.wt-heading-style .markdown-source-view .cm-line.HyperMD-header-6,
+body.wt-heading-style .markdown-source-view .cm-editor .cm-header-6 {
+  font-weight: var(--wt-h6-weight);
+  color: var(--wt-ink-3);
+  letter-spacing: 0.02em;
+}
+
+/* ── 正文消孤字（Claude 的 text-wrap: pretty）──
+   只作用于段落，且不动已有排版规则，安全。 */
+body.wt-heading-style .markdown-preview-view p,
+body.wt-heading-style .markdown-rendered p {
+  text-wrap: pretty;
+}
 .wt-pomo-section {
   margin-top: 10px;
   margin-bottom: 18px;
@@ -5353,6 +5488,24 @@ body {
   --wt-fs-26px: 26px;
   --wt-fs-28px: 28px;
   --wt-fs-30px: 30px;
+
+  /* ── 组件令牌：标题阶梯（"标题样式" 开关用）──────────────────────
+     参照 Claude Design System：**层级只靠字号 + 字重 + 间距，不用颜色**。
+     所以 H2 往下全部走墨色（--wt-ink / --wt-ink-2 / --wt-ink-3），
+     只有 H1 用强调色做视觉锚点——像书的章节题。
+     颜色用令牌而非字面量，四套主题（暖纸/冷淡/高对比 × 深浅）自动适配。 */
+  --wt-h1-size: 1.6em;
+  --wt-h2-size: 1.35em;
+  --wt-h3-size: 1.18em;
+  --wt-h4-size: 1.06em;
+  --wt-h5-size: 1em;
+  --wt-h6-size: 0.9em;
+  --wt-h1-weight: 700;
+  --wt-h2-weight: 650;
+  --wt-h3-weight: 600;
+  --wt-h4-weight: 600;
+  --wt-h5-weight: 600;
+  --wt-h6-weight: 600;
   /* ── 组件令牌：动效 ──────────────────────────────────────────────
      时长阶梯 + 缓动曲线。原来只有一条 cubic-bezier 硬编码重复 10 次。
      `--wt-ease-rise` 就是那一条（值一字未改，只是起了名字）。
