@@ -1,108 +1,127 @@
 # Writing Toolkit（写作工具箱）
 
-Writing Toolkit is an Obsidian plugin for writing long-form Chinese web fiction. It provides word counting (three modes), writing speed and daily goals, a Pomodoro timer, automatic draft snapshots with diff and restore, chapter outlines, margin-note comments for agent collaboration, one-click copying of clean chapter text, a project workbench, and writing aids such as focus and typewriter modes.
-
-> **Note:** The interface and default folder names are in Chinese. Settings and labels are not translated.
-
-为中文网络小说、长篇写作准备的 Obsidian 插件。
-
-## 功能
-
-- **字数统计**：番茄（含标点）、标准（汉字+字母+数字）、原生（分词）三种模式，自动跳过 YAML frontmatter。
-- **码字时速与每日目标**：编辑台左下角信息栏显示当前时速，状态栏显示今日进度。
-- **番茄钟**：专注 / 休息循环，可选自动快照。
-- **快照**：按时间间隔与空闲时长自动保存草稿快照，支持对比差异与恢复。
-- **章纲**：独立伴生文件存储章纲，不修改正文 YAML。
-- **工作台与首页**：按作品管理章节，支持章节连号自动前移。
-- **写作辅助**：沉浸模式、打字机模式、段落高亮、半角标点修正、回车硬换行。
-- **编辑工具条**：编辑器里选中文字浮出小工具条——加粗、斜体、下划线、删除线、高亮、字色；格式记号不计入字数统计。
-- **批注**：像稿子上的助手批注一样在文档上留批注——被批注的原文带淡标记，行尾跟一枚脚注序号；编辑器里不放任何浮层卡片，批注列表集中在工具箱侧栏的「批注」标签（计数徽标 + 待处理在前、已处理沉底），点正文标记会跳到对应卡片，阅读、编辑、删除、标记已处理都在侧栏完成，正文保持干净。批注存在库根 `.wt-comments/` 下镜像正文路径的伴随文件里（正文一个字不动），适合「Agent 写稿 → 你批注 → Agent 读批注改稿」的协作流程。
-- **一键复制正文**：编辑台章节列表搜索框右侧有个独立的复制按钮（和搜索框分开，不混在输入框里），点一下把当前章节的干净正文复制到剪贴板——批注标记只存在于编辑器渲染层，不会跟着复制出去，粘到别处就是纯净稿子。
-- **手机版**：Obsidian 手机端自动套用手机布局，状态栏与抽屉式面板。
-
-## 命令面板
-
-本插件的 Command + P 永远只有四个入口：**打开主页、打开工具箱、打开编辑台、打开设置**。
-其他功能不会注册成命令，而是放在对应页面、侧栏、右键菜单、设置页或编辑工具条里。
-
-## 安装
-
-1. 在 Obsidian 设置 → 第三方插件中关闭「安全模式」。
-2. 将 `main.js`、`manifest.json`、`styles.css` 放入 `<库>/.obsidian/plugins/writing-toolkit/`。
-3. 在第三方插件列表中启用「Writing Toolkit」。
-
-## 设置
-
-- **新作品位置**：「新建作品」时项目的创建目录，默认 `写作/新作品`。
-- **共用资料库位置**：工作台「资料库」页展示的目录，默认 `写作/资料库`。
-- **快照文件夹**：默认 `.wt-snapshots`（隐藏）。如需随网盘同步，可改为普通文件夹。
-- **不算章节的文件名**：正文目录里这些辅助文件（如 `Agent.md`）不会被当成章节，也不计入字数统计与章节列表。逗号分隔、忽略大小写，默认 `Agent, AGENTS, CLAUDE, README`。
-- **编辑工具条范围**：浮出工具条可在全库 / 全库排除正文（默认）/ 仅自己作品与共用资料库三档中切换，也可用总开关一键关闭。
-- **批注**：批注功能总开关；「批注按钮全库可用」决定批注按钮是否受上面的工具条范围限制。正文里只显示原文标记与行尾脚注序号，编辑器里不弹浮层（点标记跳到侧栏对应卡片）；批注的列表、编辑、删除、标记已处理都在工具箱侧栏的「批注」标签里。
-
-## 批注（与 Agent 协作）
-
-选中文字后，点浮出气泡上的批注按钮（或右键「添加批注」），在居中的输入框里写下内容。批注不会写进正文，而是存到库根 `.wt-comments/` 下镜像正文路径的伴随文件里：
-
-```
-正文草稿/第1章.md                       ← 正文，一个字不动
-.wt-comments/正文草稿/第1章.批注.md     ← 批注文件（与 Agent 的沟通渠道）
-```
-
-> 旧版放在正文同目录的 `第1章.批注.md` 会在插件启动时自动搬进 `.wt-comments/`，不用手动处理。
-
-批注文件里每条批注包含：状态（待处理 / 已处理）、原文引用、所在段落、现文、位置（第 N 段 · 约第 M 行）、创建时间、内容、回复。文件开头还写着给 Agent 的处理说明。在正文里，批注只是看得见的标记：
-
-- 有批注的原文带一层淡标记（已处理的是灰色虚线下划线），行尾跟着一枚**脚注序号**（如 `²`）；
-- **编辑器里不弹任何浮层**：跟随文字的卡片会随正文滚动而「跳」，看着累，所以正文里只有标记。点标记或脚注序号 = 跳到工具箱侧栏「批注」标签里对应的那张卡片，并闪一下帮你找到它；批注的内容、原文引用、Agent 的回复都在侧栏看；
-- 写批注、改内容都在**屏幕居中**的输入框里完成（位置固定、不跟随光标），⌘/Ctrl + Enter 保存。
-
-工具箱侧栏（pen-line 图标 / 命令「打开工具箱」）里还有「批注」标签：标签上带当篇文档的批注计数徽标（有待处理时走当前配色主题的强调色，全部处理完变灰），点开就是这篇文档的批注列表——点卡片的任意位置（引用、内容都可以）会跳到正文对应位置，卡片的操作（悬停显示）都在这里完成：
-
-- 待处理的批注按正文位置排在前面；标记已处理后自动沉到底部的「已处理 N 条」分组里（默认折叠，点分组标题展开 / 收起，点「重新打开」回到上面）；
-- 「编辑」弹出居中的输入框改内容（原文定位失败的批注也能这样改）、「删除」按钮会变成「确认」，再点一次才删除（3 秒内有效），删掉后 6 秒内可以在提示里点「撤销」找回；
-- 有已处理项时，列表顶部会出现「只看待处理」开关，专注改稿时可以只留待处理项。
-- Agent 的回复太长时默认折起，点「展开」看全文。
-
-正文里只有标记与脚注序号，编辑、删除、「标记已处理 / 重新打开」都集中在面板里。切换文档时列表与计数自动跟随。
-
-**和 Agent 的协作流程**
-
-1. 你读稿，选中不满意的地方，写批注（可以先写多条）。
-2. 在工具箱侧栏「批注」标签底部点「复制处理指令」，把现成指令粘给 Agent（指令里会写明待处理条数，避免 Agent 重复处理）。
-3. Agent 读 `.wt-comments/` 下对应路径的 `.批注.md` 文件：按「原文」定位、按「批注」修改正文，然后把每条的状态改成「已处理」、在「回复」里写它改了什么；如果改动了原文对应的文字，把改完后该处现在的文字照抄进「现文」（文件抬头里写着这条协议）。
-4. 你回到文档：改过的原文标记变成灰色，点开能看到 Agent 的回复；确认满意后，用面板里的「清除已处理」清理（会先弹确认，Agent 的回复会一起删掉）。
-
-**Agent 改稿后，批注怎么跟住原文**：位置按四层找——① Agent 写回的「现文」；② 原「原文」精确匹配，其次忽略空白差异；③ 用建批注时那一段里原文前后的文字夹出被改写的位置（段内残余）；④ 整段匹配 / 按头尾相似度找最像的段落（结合段落序号就近取舍）。靠后面三层找到的，界面会标出「已迁移」或一句定位说明，让你知道位置是推断的。四层都找不到时，面板里该条会标「锚点失效（原文已大改）」并出现「重新绑定」按钮：在正文里选中这条批注现在该对应的文字，再点一次「重新绑定」，批注就会重新挂上去。批注文件不会被当成章节，也不计入字数统计。
-
-## 开发
-
-```bash
-npm install
-npm run dev      # 监听构建
-npm run build    # 生产构建（类型检查后输出 main.js）
-```
-
-> **动手改代码之前，先读 [docs/插件设计文档.md](docs/插件设计文档.md)**：里面有模块地图、数据与存储模型、必须遵守的约定、以及一份「踩过的坑」清单（含已知 bug）。README 讲功能，那份文档讲代码为什么这么写、哪里不能碰。
-
-## 许可证
-
-[MIT](LICENSE)
+> **专为中文网络小说与长篇写作者打造的 Obsidian 沉浸式创作套件。**  
+> 拒绝臃肿弹窗与视觉干扰，极致尊重写作者的专注心流，保持正文 Markdown 源码百分之百纯净。
 
 ---
 
-## English summary
+## 🎯 核心设计哲学
 
-- **Word count**: three modes (Chinese-friendly "Tomato" mode counting all non-blank characters, a "Standard" mode, and a native word-based mode). YAML frontmatter is skipped.
-- **Writing speed and goals**: speed is based on words added today; progress is shown in the status bar.
-- **Pomodoro timer**: focus/break cycles with optional automatic snapshots.
-- **Snapshots**: automatic draft snapshots by interval and idle time, with diff view and restore.
-- **Outlines**: chapter outlines are stored in separate sidecar files, leaving the manuscript's YAML untouched.
-- **Workbench and home**: manage chapters by project; chapter numbering shifts forward automatically after a deletion.
-- **Non-chapter file exclusions**: helper files in draft folders (e.g. `Agent.md`) are never treated as chapters; comma-separated configurable list, default `Agent, AGENTS, CLAUDE, README`.
-- **Writing aids**: focus mode, typewriter mode, paragraph highlight, half-width punctuation fix, and hard line breaks on Enter.
-- **Editing toolbar**: a floating bubble appears when you select text in an editor (bold, italic, underline, strikethrough, highlight, font color); formatting marks are never counted in word statistics.
-- **Comments**: Margin-note style annotations for collaborating with an AI agent. Annotated text gets a soft highlight plus a superscript footnote number at the end of the line — clicking either reveals the matching card in the Toolkit sidebar and flashes it. Nothing floats over the editor (hover-anchored cards drift around as you scroll), so the manuscript stays clean; writing and editing happen in a screen-centred input dialog. A tab in the Toolkit sidebar lists the current document's comments with a count badge and one-click jumping: pending comments come first (ordered by position in the manuscript), resolved ones sink into a collapsed "已处理 N 条" group at the bottom, and every card offers hover actions to edit, delete (click 删除, then 确认 within 3 seconds; undoable for 6 seconds) and resolve/reopen; a "只看待处理" filter hides resolved items while you work. A "clear resolved" action asks for confirmation first. Comments live in a sidecar file under the vault-level `.wt-comments/` folder, mirroring the document path (e.g. `.wt-comments/Drafts/Chapter.批注.md`); the manuscript itself is never modified. The agent reads the sidecar, edits the manuscript, and writes replies, a resolved status, and the rewritten text ("现文") per comment. If the prose changes so much that a comment can no longer be anchored (five passes: present text → exact quote → whitespace-insensitive quote → in-paragraph residue → paragraph similarity), the panel marks it as orphaned and offers a "重新绑定" (re-bind) button: select the new spot in the document and click it again.
-- **Mobile**: uses a mobile layout with a status bar and drawer panels.
+1. **正文零污染**：快照、章纲、批注全部采用伴随文件或独立隐藏目录（`.wt-comments/`、`.wt-snapshots/`）隔离存储，正文不加任何脏标签，随时可直接交付出版或发布。
+2. **拒绝编辑器浮层**：正文内无任何跟随光标晃动的悬浮窗，所有交互操作均收拢于固定侧栏或屏幕居中模态框，视线不跳跃。
+3. **原生网文基因**：内建符合中文网文交稿习惯的标点字数统计、分卷目录管理与一键导出纯净稿能力。
 
-**Installation:** Turn off Restricted mode in Settings → Community plugins, then install and enable "Writing Toolkit".
+---
+
+## 🌟 核心功能特性
+
+### 1. 📊 写作大厅与数据看板 (Home & Stats)
+- **年度打卡热力图**：类 GitHub 风格的全年写作日历，实时统计打卡天数、连续天数与达标天数。
+- **三种专业字数统计**：
+  - **网文模式**（汉字+标点，贴合网络文学交稿与计费标准）；
+  - **标准模式**（汉字+字母+数字）；
+  - **原生模式**（分词统计）。
+  - *全模式均自动剥离 YAML Frontmatter 与排除辅助文档。*
+- **作品横向进度**：清晰汇总各长篇作品的历史字数、今日净增字数与写作时速。
+
+### 2. 🗂️ 小说编辑台 (Novel Workbench)
+- **单行极简顶栏**：集成作品切换与连载状态胶囊，最大化释放章节纵向视野。
+- **卷章分级管理**：卷标头自动汇总字数，章节定宽三段式对齐，智能侦测未达标草稿。
+- **智能连号维护**：章节重排或删除时，后续章节序号自动平滑前移。
+- **📋 一键复制纯净正文**：章节列表内建一键提取按钮，自动剥离所有编辑器渲染标记，一键粘入各大网文平台后台。
+
+### 3. ⏱️ 极简胶囊番茄钟 (Zen Capsule Pomodoro)
+- **横向单胶囊架构**：彻底重构原本臃肿的垂直大表盘，侧栏高度缩减 60%，所有工具箱选项首屏尽收眼底。
+- **内置环形操控**：左侧环心直接集成播放/暂停/跳过按键，居中展示大字号倒计时与底轨细进度条，右侧快速结束。
+- **主题双向适配**：无缝跟随 Obsidian 的浅色暖纸与暗色深邃模式，毫秒级状态同步。
+
+### 4. 🤖 Agent 协同批注系统 (AI Collaborative Annotations)
+专为「作者审阅 ➔ 批注指引 ➔ AI Agent 定位改稿 ➔ 作者验收」深度定制的现代写作协作协议：
+
+- **正文零污染存储**：批注文件隔离保存在 `.wt-comments/<作品路径>/<章节名>.批注.md`，正文 Markdown 源码一个字不动。
+- **视觉轻量化**：正文仅以极淡色块与行尾上标序号（如 `²`）呈现，点击直跳侧栏对应卡片，彻底消灭文字跟随浮层。
+- **侧栏聚合管理**：工具箱「批注」标签实时汇总当前篇目批注，支持待处理/已解决过滤、一键正文定位、防误触确认删除。
+- **四层自适应重锚点**：即使 AI Agent 大幅度重写了正文，系统仍能通过现文、上下文残余文本与相似度自动跟住批注锚点；原文大改时支持一键正文重新绑定。
+
+#### 典型协作流程：
+```text
+┌──────────────┐      选中文本添加批注      ┌──────────────────────┐
+│  作者阅读审稿  │ ───────────────────────> │ .wt-comments/伴随文件 │
+└──────────────┘                            └──────────────────────┘
+       ▲                                               │
+       │                                               ▼
+┌──────────────┐    读取批注/修改正文/回写说明     ┌──────────────────────┐
+│  作者查阅验收  │ <─────────────────────── │  AI Agent (CLI/API)  │
+└──────────────┘                            └──────────────────────┘
+```
+
+### 5. ✍️ 沉浸排版与安全快照 (Writing Aids & Safety)
+- **打字机模式**：支持自定义视线垂直偏移（如 60% 黄金黄金分割线）。
+- **视线聚焦**：当前段落高亮弱化背景、中文标点智能修正、回车硬换行。
+- **轻量浮动格式条**：选中文本浮出加粗/高亮/字色等轻量工具，排版标记不影响字数统计。
+- **自动快照机**：基于定时与空闲双触发自动保存草稿快照，提供版本可视化 Diff 差异比对与一键时光回溯。
+- **移动端深度适配**：手机端自动切换为底部抽屉与响应式状态栏。
+
+---
+
+## ⌨️ 命令入口 (Command Palette)
+
+本插件极度克制，全局仅占用 **4 个快捷命令**，拒绝污染 `Cmd / Ctrl + P` 列表：
+
+| 命令名称 | 功能说明 |
+| --- | --- |
+| `Writing Toolkit: 打开主页` | 打开全库作品大厅与数据看板 (`wt-home`) |
+| `Writing Toolkit: 打开编辑台` | 打开当前长篇分卷目录与章节管理 (`wt-wb`) |
+| `Writing Toolkit: 打开工具箱` | 打开右侧专注番茄钟、批注与排版侧栏 (`wt-sidebar`) |
+| `Writing Toolkit: 打开设置` | 进入插件偏好设置页 |
+
+---
+
+## ⚙️ 核心配置项
+
+- **新作品位置**：新建项目默认根目录（默认：`写作/新作品`）。
+- **共用资料库位置**：工作台资料库挂载目录（默认：`写作/资料库`）。
+- **快照保存路径**：默认 `.wt-snapshots`（隐藏），可改为普通路径以兼容坚果云等三方同步。
+- **非章节文件过滤**：正文目录下的辅助文档（默认：`Agent, AGENTS, CLAUDE, README`），自动排除在章节列表与字数统计之外。
+- **批注生效范围**：可配置全库启用、全库排除正文、或仅在指定作品目录中启用。
+
+---
+
+## 📦 安装与启用
+
+### 手动安装
+1. 下载 Release 中的产物包（`main.js`, `manifest.json`, `styles.css`）；
+2. 解压放入 Obsidian 库目录：`<Vault>/.obsidian/plugins/writing-toolkit/`；
+3. 打开 Obsidian 设置 ➔ **第三方插件** ➔ 重新加载并启用 **Writing Toolkit**。
+
+---
+
+## 🛠️ 本地开发
+
+```bash
+npm install
+npm run dev      # 监听模式构建
+npm run build    # 生产模式打包
+npm run check    # TypeScript 类型检查
+npm run verify   # 全量逻辑闸门测试
+```
+
+> ⚠️ 改动代码前，请务必参阅 [`docs/插件设计文档.md`](docs/插件设计文档.md)，内含架构红线约束、令牌系统规范与踩坑记录。
+
+---
+
+## 📄 开源许可证
+
+本项目基于 [MIT License](LICENSE) 开源。
+
+---
+
+## 🌐 English Summary
+
+**Writing Toolkit** is an Obsidian plugin tailored for writing long-form Chinese web fiction and novels.
+
+- **Dashboard & Stats**: GitHub-style annual writing calendar, daily streak, and 3 word count modes (Webnovel, Standard, Native).
+- **Novel Workbench**: Volume and chapter hierarchy, automatic chapter renumbering, clean copy button (strips annotations/markers for direct pasting to publisher portals).
+- **Zen Capsule Pomodoro**: Sleek horizontal pill-shaped timer taking minimal vertical space, integrated ring buttons, and full dark/light theme awareness.
+- **AI Agent Annotation System**: Annotations are stored separately in `.wt-comments/` to keep your markdown manuscript 100% clean. Zero popovers inside editor; full sidebar management; 4-tier anchor recovery after agent rewrites.
+- **Writing Aids & Snapshots**: Typewriter mode with customizable vertical position, paragraph highlighting, and automated draft snapshotting with visual diff & restore.
