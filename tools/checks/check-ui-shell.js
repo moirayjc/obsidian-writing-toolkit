@@ -133,6 +133,14 @@ function main() {
       /this\.uiShellContext = this\.createUiShellContext\(\)/.test(mainSource)
   );
 
+  // 5.1 工作台切标签后必须重新同步当前章高亮（曾因清理事件误删监听而错行）。
+  r.check(
+    "工作台监听 active-leaf-change 并同步当前章高亮",
+    /this\.app\.workspace\.on\("active-leaf-change",\s*\(\)\s*=>\s*this\.syncActive\(\)\)/.test(
+      workbench
+    ) && /private syncActive\(\): void\s*\{/.test(workbench)
+  );
+
   // 6. 手机抽屉迁移与打开路径不变（真机路由 Platform.isMobile / 布局 isMobileUI 不可互换）。
   r.check(
     "NavigationService 保留手机端左右抽屉打开路径",

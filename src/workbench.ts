@@ -296,6 +296,10 @@ export class WritingToolkitWorkbench extends ItemView {
     this.registerEvent(
       this.app.vault.on("modify", (file) => this.onFileModified(file))
     );
+    // 切换标签页 / 打开章节后，把「当前章」高亮跟着活动文件走。
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => this.syncActive())
+    );
     this.footTimer = window.setInterval(() => this.renderFoot(), 1000);
     this.render();
   }
