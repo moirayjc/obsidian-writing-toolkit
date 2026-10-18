@@ -308,7 +308,7 @@ export class CommentPanelBody {
     });
     setIcon(
       head.createSpan({ cls: "wt-comments-group-chevron" }),
-      "chevron-down"
+      "wt-chevron-down"
     );
     head.createSpan({
       cls: "wt-comments-group-title",

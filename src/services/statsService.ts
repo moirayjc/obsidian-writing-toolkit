@@ -11,24 +11,19 @@ import type { WordCountMode } from "../wordcount";
 
 export interface StatusBarState {
   showSpeed: boolean;
-  /** 今日净增（可正可负）：留着做参考与产品进度 */
+  /** 今日净增（可正可负）：状态栏、今日目标与热力图显示的都是它 */
   dailyTotal: number;
-  /** 今日毛新增（只累加变多的部分，不会为负）：状态栏显示的就是它 */
-  dailyGross: number;
   dailyGoal: number;
   wordCountMode: WordCountMode;
 }
 
 export interface StatsServiceHost {
   dailyHistory(): Record<string, number>;
-  dailyGrossHistory(): Record<string, number>;
   projectHistory(): Record<string, Record<string, number>>;
-  projectGrossHistory(): Record<string, Record<string, number>>;
   projectDurationHistory(): Record<string, Record<string, number>>;
   dailyFileDeltas(): Record<string, Record<string, number>>;
   todayTotals(): {
     total: number;
-    gross: number;
     durationSeconds: number;
   };
   todayKey(): string;
@@ -55,7 +50,6 @@ export class StatsService {
     const settings = this.host.getSettings();
     return {
       dailyTotal: totals.total,
-      dailyGross: totals.gross,
       dailyGoal: settings.dailyGoal,
       wordCountMode: settings.wordCountMode,
       showSpeed: settings.showSpeed,
@@ -91,23 +85,14 @@ export class StatsService {
     return this.host.getSpeed();
   }
 
-  /** 热力图 / 今日目标显示：毛新增优先，缺失的日期回落到净增。 */
+  /** 热力图 / 今日目标显示：每日净增字数（可正可负，删除会抵减）。 */
   dailyForDisplay(): Record<string, number> {
-    const out: Record<string, number> = { ...this.host.dailyHistory() };
-    for (const [day, gross] of Object.entries(this.host.dailyGrossHistory())) {
-      out[day] = gross;
-    }
-    return out;
+    return { ...this.host.dailyHistory() };
   }
 
   /** 同上，但限定某个作品。 */
   projectForDisplay(key: string): Record<string, number> {
-    const out: Record<string, number> = {
-      ...(this.host.projectHistory()[key] || {}),
-    };
-    const gross = this.host.projectGrossHistory()[key] || {};
-    for (const [day, value] of Object.entries(gross)) out[day] = value;
-    return out;
+    return { ...(this.host.projectHistory()[key] || {}) };
   }
 
   /**
@@ -161,7 +146,7 @@ export class StatsService {
     });
     const net = entries.reduce((sum, [, value]) => sum + value, 0);
     new Notice(
-      `今日新增 ${formatNumber(this.host.todayTotals().gross)} 字 · 净增 ${formatNumber(net)} 字\n` +
+      `今日净增 ${formatNumber(net)} 字（新增为正，删除为负）\n` +
         lines.join("\n") +
         (entries.length > 8 ? `\n…另有 ${entries.length - 8} 个文件` : ""),
       12000

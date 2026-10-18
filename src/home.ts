@@ -48,10 +48,10 @@ export type HomePage = "desk" | "library" | "stats" | "docs";
 export type LibraryView = "grid" | "list";
 
 const PAGES: Array<{ key: HomePage; label: string; icon: string }> = [
-  { key: "desk", label: "书桌", icon: "feather" },
-  { key: "library", label: "书架", icon: "library" },
-  { key: "stats", label: "数据统计", icon: "bar-chart-2" },
-  { key: "docs", label: "资料库", icon: "book-open" },
+  { key: "desk", label: "书桌", icon: "wt-desk" },
+  { key: "library", label: "书架", icon: "wt-shelf" },
+  { key: "stats", label: "数据统计", icon: "wt-stats" },
+  { key: "docs", label: "资料库", icon: "wt-archive" },
 ];
 
 /** 书架折叠分组（存档 / 已隐藏）的展开状态：会话内保留 */
@@ -253,7 +253,7 @@ export class WritingToolkitHome extends ItemView {
   }
 
   getIcon(): string {
-    return "layout-dashboard";
+    return "wt-home";
   }
 
   async onOpen(): Promise<void> {
@@ -441,7 +441,7 @@ export class WritingToolkitHome extends ItemView {
     onInput: (value: string) => void
   ): void {
     const wrap = parent.createDiv({ cls: "wt-home-search" });
-    setIcon(wrap.createSpan({ cls: "wt-home-search-icon" }), "search");
+    setIcon(wrap.createSpan({ cls: "wt-home-search-icon" }), "wt-search");
     const input = wrap.createEl("input", {
       attr: { type: "text", placeholder },
     });
@@ -454,7 +454,7 @@ export class WritingToolkitHome extends ItemView {
   private today(): { date: Date; words: number; goal: number } {
     return {
       date: new Date(),
-      words: Math.max(0, this.host.stats.gross()),
+      words: this.host.stats.total(),
       goal: Math.max(1, this.host.settings.dailyGoal),
     };
   }
@@ -463,17 +463,18 @@ export class WritingToolkitHome extends ItemView {
     const el = this.railTodayEl;
     if (!el) return;
     const { words, goal } = this.today();
+    const positive = Math.max(0, words);
     el.empty();
     el.toggleClass("is-done", words >= goal);
     const top = el.createDiv({ cls: "wt-rail-today-top" });
     top.createSpan({ text: "今日" });
     top.createSpan({
       cls: "wt-rail-today-pct",
-      text: `${Math.min(999, Math.floor((words / goal) * 100))}%`,
+      text: `${Math.min(999, Math.floor((positive / goal) * 100))}%`,
     });
     el.createDiv({ cls: "wt-rail-today-num", text: fmt(words) });
     const bar = el.createDiv({ cls: "wt-rail-today-bar" });
-    bar.createDiv().style.width = `${Math.min(100, (words / goal) * 100)}%`;
+    bar.createDiv().style.width = `${Math.min(100, (positive / goal) * 100)}%`;
     el.createDiv({ cls: "wt-rail-today-goal", text: `目标 ${fmt(goal)} 字` });
   }
 
@@ -621,20 +622,20 @@ export class WritingToolkitHome extends ItemView {
     menu.addItem((item) =>
       item
         .setTitle("从仓库选择封面图片…")
-        .setIcon("image")
+        .setIcon("wt-image")
         .onClick(() => this.pickCoverFromVault(project))
     );
     menu.addItem((item) =>
       item
         .setTitle("从电脑导入封面图片…")
-        .setIcon("upload")
+        .setIcon("wt-upload")
         .onClick(() => this.importCover(project))
     );
     if (this.host.prefs.getProjectCover(project.root)) {
       menu.addItem((item) =>
         item
           .setTitle("恢复默认封面")
-          .setIcon("rotate-ccw")
+          .setIcon("wt-reset")
           .onClick(() => this.host.prefs.setProjectCover(project.root, null))
       );
     }
@@ -752,11 +753,11 @@ export class WritingToolkitHome extends ItemView {
         text: "去书架挑一本，或者新开一本。选好之后，它会一直摆在这张书桌上。",
       });
       const actions = body.createDiv({ cls: "wt-desk-actions" });
-      this.button(actions, "去书架挑一本", "library", "is-primary").addEventListener(
+      this.button(actions, "去书架挑一本", "wt-shelf", "is-primary").addEventListener(
         "click",
         () => this.switchPage("library")
       );
-      this.button(actions, "新建作品", "plus").addEventListener("click", () =>
+      this.button(actions, "新建作品", "wt-plus").addEventListener("click", () =>
         this.host.nav.openNewProjectDialog()
       );
       return;
@@ -821,7 +822,7 @@ export class WritingToolkitHome extends ItemView {
 
     const actions = body.createDiv({ cls: "wt-desk-actions" });
     if (last) {
-      this.button(actions, "接着写", "pen-line", "is-primary").addEventListener(
+      this.button(actions, "接着写", "wt-write", "is-primary").addEventListener(
         "click",
         () => {
           this.makeCurrent(project, false);
@@ -877,10 +878,10 @@ export class WritingToolkitHome extends ItemView {
       r.createSpan({ cls: "wt-today-k", text: label });
       return r.createSpan({ cls: "wt-today-v" });
     };
-    const streakEl = row("flame", "连续写作");
-    const pomoEl = row("timer", "番茄");
-    const timeEl = row("clock", "写作时长");
-    const speedEl = this.host.settings.showSpeed ? row("gauge", "平均时速") : null;
+    const streakEl = row("wt-streak", "连续写作");
+    const pomoEl = row("wt-pomodoro", "番茄");
+    const timeEl = row("wt-clock", "写作时长");
+    const speedEl = this.host.settings.showSpeed ? row("wt-speed", "平均时速") : null;
 
     const detail = card.createEl("button", {
       cls: "wt-link",
@@ -891,7 +892,7 @@ export class WritingToolkitHome extends ItemView {
 
     const update = (): void => {
       const { date, words, goal } = this.today();
-      const ratio = Math.min(1, words / goal);
+      const ratio = Math.min(1, Math.max(0, words / goal));
       // 先画空，下一帧再拉到目标位置，换页时弧线会有一段生长动画
       window.requestAnimationFrame(() =>
         arc.setAttr("stroke-dashoffset", String(C * (1 - ratio)))
@@ -1035,8 +1036,8 @@ export class WritingToolkitHome extends ItemView {
     // 网格 / 列表 切换
     const toggle = toolbar.createDiv({ cls: "wt-seg", attr: { role: "group" } });
     const modes: Array<{ key: LibraryView; icon: string; label: string }> = [
-      { key: "grid", icon: "layout-grid", label: "封面网格" },
-      { key: "list", icon: "list", label: "列表" },
+      { key: "grid", icon: "wt-grid", label: "封面网格" },
+      { key: "list", icon: "wt-list", label: "列表" },
     ];
     for (const mode of modes) {
       const btn = toggle.createEl("button", {
@@ -1051,7 +1052,7 @@ export class WritingToolkitHome extends ItemView {
       });
     }
 
-    const newBtn = this.button(toolbar, "新建作品", "plus", "is-primary");
+    const newBtn = this.button(toolbar, "新建作品", "wt-plus", "is-primary");
     newBtn.addEventListener("click", () => this.host.nav.openNewProjectDialog());
 
     const listEl = this.block(
@@ -1186,7 +1187,7 @@ export class WritingToolkitHome extends ItemView {
       attr: { type: "button", "aria-expanded": String(open) },
     });
     const chevron = head.createSpan({ cls: "wt-lib-group-chevron" });
-    setIcon(chevron, open ? "chevron-down" : "chevron-right");
+    setIcon(chevron, open ? "wt-chevron-down" : "wt-chevron-right");
     head.createSpan({ cls: "wt-lib-group-label", text: label });
     head.createSpan({ cls: "wt-lib-group-desc", text: desc });
     head.addEventListener("click", onToggle);
@@ -1211,7 +1212,7 @@ export class WritingToolkitHome extends ItemView {
     menu.addItem((item) =>
       item
         .setTitle("切到这本去写")
-        .setIcon("pen-line")
+        .setIcon("wt-write")
         .onClick(() => this.activateBook(project, rerender))
     );
     const last = lastEditedChapter(project);
@@ -1219,7 +1220,7 @@ export class WritingToolkitHome extends ItemView {
       menu.addItem((item) =>
         item
           .setTitle(`接着写：${chapterLabel(last)}`)
-          .setIcon("file-text")
+          .setIcon("wt-doc")
           .onClick(() => {
             this.makeCurrent(project, false);
             this.openForWriting(last.file);
@@ -1233,7 +1234,7 @@ export class WritingToolkitHome extends ItemView {
     menu.addItem((item) =>
       item
         .setTitle(inHidden ? "取消隐藏" : "隐藏此作品")
-        .setIcon(inHidden ? "eye" : "eye-off")
+        .setIcon(inHidden ? "wt-eye" : "wt-eye-off")
         .onClick(() => {
           this.host.prefs.setProjectHidden(project.root, !inHidden);
           rerender();
@@ -1242,7 +1243,7 @@ export class WritingToolkitHome extends ItemView {
     menu.addItem((item) =>
       item
         .setTitle("在系统文件管理器中显示")
-        .setIcon("folder-open")
+        .setIcon("wt-folder")
         .onClick(() => this.host.actions.revealPathInSystem(project.root))
     );
     showMenuAt(menu, pt);
@@ -1275,7 +1276,7 @@ export class WritingToolkitHome extends ItemView {
         title: inHidden ? "取消隐藏，放回正常列表" : "隐藏此作品，收进「已隐藏」",
       },
     });
-    setIcon(eye, inHidden ? "eye" : "eye-off");
+    setIcon(eye, inHidden ? "wt-eye" : "wt-eye-off");
     eye.addEventListener("click", (e) => {
       e.stopPropagation();
       this.host.prefs.setProjectHidden(project.root, !inHidden);
@@ -1379,7 +1380,7 @@ export class WritingToolkitHome extends ItemView {
     // 行尾：平时显示 ›，悬停时原位换成隐藏 / 取消隐藏按钮
     const end = row.createDiv({ cls: "wt-lib-end" });
     const chev = end.createSpan({ cls: "wt-lib-chev" });
-    setIcon(chev, "chevron-right");
+    setIcon(chev, "wt-chevron-right");
     const eye = end.createEl("button", {
       cls: "wt-lib-eye",
       attr: {
@@ -1390,7 +1391,7 @@ export class WritingToolkitHome extends ItemView {
           : "隐藏此作品，收进「已隐藏」",
       },
     });
-    setIcon(eye, inHidden ? "eye" : "eye-off");
+    setIcon(eye, inHidden ? "wt-eye" : "wt-eye-off");
     eye.addEventListener("click", (e) => {
       e.stopPropagation();
       this.host.prefs.setProjectHidden(project.root, !inHidden);
@@ -1588,7 +1589,7 @@ export class WritingToolkitHome extends ItemView {
       cls: "wt-fold-head",
       attr: { type: "button", "aria-expanded": String(statsSettingsOpen) },
     });
-    setIcon(foldHead.createSpan({ cls: "wt-fold-icon" }), "settings-2");
+    setIcon(foldHead.createSpan({ cls: "wt-fold-icon" }), "wt-settings");
     foldHead.createSpan({ cls: "wt-fold-label", text: "统计设置" });
     const foldDesc = foldHead.createSpan({
       cls: "wt-fold-desc",
@@ -1601,7 +1602,7 @@ export class WritingToolkitHome extends ItemView {
     };
     setIcon(
       foldHead.createSpan({ cls: "wt-fold-chevron" }),
-      statsSettingsOpen ? "chevron-up" : "chevron-down"
+      statsSettingsOpen ? "wt-chevron-up" : "wt-chevron-down"
     );
     foldHead.addEventListener("click", () => {
       statsSettingsOpen = !statsSettingsOpen;
@@ -1666,7 +1667,7 @@ export class WritingToolkitHome extends ItemView {
 
     new Setting(card)
       .setName("显示码字时速")
-      .setDesc("状态栏里显示当前时速")
+      .setDesc("在编辑台左下角信息栏显示当前时速")
       .addToggle((toggle) =>
         toggle.setValue(this.host.settings.showSpeed).onChange(async (value) => {
           this.host.settings.showSpeed = value;
@@ -1801,7 +1802,7 @@ export class WritingToolkitHome extends ItemView {
 
   private renderDocRow(parent: HTMLElement, file: TFile): void {
     const row = parent.createDiv({ cls: "wt-doc-row" });
-    setIcon(row.createSpan({ cls: "wt-doc-icon" }), "file-text");
+    setIcon(row.createSpan({ cls: "wt-doc-icon" }), "wt-doc");
     const { tag, name } = parseResourceName(file.basename);
     const title = row.createSpan({ cls: "wt-doc-name", text: name });
     title.setAttr("title", file.path);
@@ -1823,16 +1824,16 @@ export class WritingToolkitHome extends ItemView {
     bindContextMenu(row, (pt) => {
       const menu = new Menu();
       menu.addItem((item) =>
-        item.setTitle("打开").setIcon("file-text").onClick(() => open(false))
+        item.setTitle("打开").setIcon("wt-doc").onClick(() => open(false))
       );
       menu.addItem((item) =>
-        item.setTitle("在新标签页打开").setIcon("plus").onClick(() => open(true))
+        item.setTitle("在新标签页打开").setIcon("wt-plus").onClick(() => open(true))
       );
       menu.addSeparator();
       menu.addItem((item) =>
         item
           .setTitle("在系统文件管理器中显示")
-          .setIcon("folder-open")
+          .setIcon("wt-folder")
           .onClick(() => this.host.actions.revealPathInSystem(file.path))
       );
       showMenuAt(menu, pt);

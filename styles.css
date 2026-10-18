@@ -1669,156 +1669,265 @@ body.wt-heading-style .markdown-preview-view p,
 body.wt-heading-style .markdown-rendered p {
   text-wrap: pretty;
 }
+/* ── 番茄钟胶囊（唯一形态：旧版「展开成大环形卡片」已按设计稿删掉）──
+   左＝环形进度（环心＝主操作按钮）· 中＝倒计时 + 细进度条 · 右＝结束圆按钮。
+
+   比例全部量自设计稿（参考卡片 294.1 × 94.2）：
+     卡高 = 32.0% 卡宽 · 环外径 = 81.0% 卡高 · 环描边 = 外径的 6.3%
+     倒计时 cap 高 = 31.8% 卡高（字号 ≈ 卡宽 14.2%，笔画/字高 0.128 → Medium 500）
+     细条 宽 = 62.3% 卡高、高 = 5.2% 卡高，与时间同轴居中并挂在基线下方
+     圆按钮 Ø = 43.6% 卡高
+     内边距 左/上/下 = 9.4% 卡高（环与胶囊左端帽同心）· 右 = 23.7% 卡高——左右刻意不对称
+   除内边距外尺寸都随卡宽等比缩放：cqw 的基准是**卡片的内容盒**，
+   下面的百分比 = 设计稿数值 ÷ 设计稿内容盒宽（294.1 − 8.9 − 22.3 = 262.9）。
+   clamp 只为兜住极窄/极宽侧栏，正常侧栏宽度下不生效。 */
 .wt-pomo-section {
   margin-top: 10px;
   margin-bottom: 18px;
 }
 .wt-pomo-card {
+  /* 自建容器，子元素的 cqw 才算得对。卡片自己的 padding 用固定 px：
+     元素自己声明的 cqw 会去解析祖先容器（或视口），不能拿来做自己的内边距。 */
+  container-type: inline-size;
+  box-sizing: border-box;
   position: relative;
-  padding: 14px 14px 16px;
-  border-radius: var(--wt-radius-12px);
-  background: color-mix(in srgb, var(--background-secondary) 65%, transparent);
-  border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
-  box-shadow: var(--wt-shadow-card);
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  flex-direction: row;
+  align-items: center;
+  /* 内边距是固定 px（见下），值照设计稿的内边距减去 1px 描边：
+     左/上/下 8.5 + 1 = 9.5（设计稿 9.4）· 右 22.5 + 1 = 23.5（设计稿 23.6） */
+  padding: 8.5px 22.5px 8.5px 8.5px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-card-bg);
+  /* 设计稿的卡片几乎与页面同色，形状主要靠一圈比底色亮一档的细描边撑起来 */
+  border: 1px solid color-mix(in srgb, var(--wt-ink) 12%, transparent);
+  box-shadow: var(--wt-shadow-card);
+  color: var(--wt-ink);
   transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 .wt-pomo-card:hover {
-  border-color: color-mix(in srgb, var(--background-modifier-border) 95%, transparent);
+  border-color: color-mix(in srgb, var(--wt-ink) 18%, transparent);
   box-shadow: var(--wt-shadow-card-hover);
 }
-.wt-pomo-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.wt-pomo-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border-radius: var(--wt-radius-pill);
-  background: color-mix(in srgb, var(--background-primary) 80%, transparent);
-  border: 0.5px solid color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
-  font-size: var(--wt-fs-11px);
-  font-weight: 500;
-  color: var(--text-muted);
-  line-height: 1;
-}
-.wt-pomo-status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--wt-radius-circle);
-  background: var(--text-faint);
-  transition: background-color 0.3s ease, box-shadow 0.3s ease;
-}
-.wt-pomo-card.is-focus .wt-pomo-status-dot {
-  background: var(--interactive-accent);
-  box-shadow: 0 0 6px var(--interactive-accent);
-  animation: wt-pomo-pulse 2s infinite ease-in-out;
-}
-.wt-pomo-card.is-focus.is-paused .wt-pomo-status-dot {
-  background: var(--color-orange, #f59e0b);
-  box-shadow: none;
-  animation: none;
-}
-.wt-pomo-card.is-break .wt-pomo-status-dot {
-  background: var(--color-green, #10b981);
-  box-shadow: 0 0 6px var(--color-green, #10b981);
-  animation: wt-pomo-pulse 2.5s infinite ease-in-out;
-}
-.wt-pomo-card.is-long-break .wt-pomo-status-dot {
-  background: var(--color-blue, #3b82f6);
-  box-shadow: 0 0 6px var(--color-blue, #3b82f6);
-}
-
-@keyframes wt-pomo-pulse {
-  0% { transform: scale(0.9); opacity: 0.8; }
-  50% { transform: scale(1.25); opacity: 1; }
-  100% { transform: scale(0.9); opacity: 0.8; }
-}
-.wt-pomo-today-stat {
-  font-size: var(--wt-fs-11px);
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
+/* 环：viewBox 100×100、r=46.85、描边 6.3 → 外径正好 100，于是盒子尺寸 = 环外径。
+   29.2cqw 是照预览器实测反推的：设计稿 环外径 = 0.811 × 卡高，而 cqw 基准是内容盒
+   （310.8 − 32 padding − 2 border = 276.8），0.811 × 卡高 ÷ 内容盒 ≈ 29.2%。 */
 .wt-pomo-ring-wrap {
   position: relative;
-  width: 130px;
-  height: 130px;
-  margin: 2px auto 0;
+  flex: none;
+  width: clamp(44px, 29.2cqw, 85px);
+  height: clamp(44px, 29.2cqw, 85px);
 }
 .wt-pomo-ring-svg {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
   overflow: visible;
-  transform: rotate(-90deg);
+  transform: rotate(-90deg); /* 弧从 12 点起、顺时针走 */
 }
 .wt-pomo-ring-bg {
-  stroke: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
-  stroke-width: 6;
+  stroke: var(--wt-rule, var(--background-modifier-border));
+  stroke-width: 6.3; /* viewBox 单位：6.3 ÷ 100 = 外径的 6.3%，与设计稿一致 */
   fill: none;
 }
 .wt-pomo-ring-progress {
-  stroke: var(--interactive-accent);
-  stroke-width: 6.5;
-  stroke-linecap: round;
+  stroke: var(--wt-accent, var(--interactive-accent));
+  stroke-width: 6.3;
+  stroke-linecap: round; /* 设计稿里弧的两端是圆头 */
   fill: none;
-  transition: stroke-dashoffset 0.6s var(--wt-ease-pulse), stroke 0.3s ease;
+  transition: stroke-dashoffset 700ms var(--wt-ease-rise), stroke 300ms ease;
 }
-.wt-pomo-card.is-idle .wt-pomo-ring-progress {
-  stroke: color-mix(in srgb, var(--interactive-accent) 22%, transparent);
-}
-.wt-pomo-card.is-focus .wt-pomo-ring-progress {
-  stroke: var(--interactive-accent);
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--interactive-accent) 45%, transparent));
-}
-.wt-pomo-card.is-break .wt-pomo-ring-progress {
-  stroke: var(--color-green, #10b981);
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-green, #10b981) 45%, transparent));
-}
+/* 空闲态同样用强调色（剩余 100% = 整圈有色）。设计稿里没开始计时时环就是有颜色的，
+   灰掉会让这枚胶囊看着像没做完——用户真机反馈过「没有颜色」。
+   休息 / 暂停只换色调，不改结构。 */
+.wt-pomo-card.is-break .wt-pomo-ring-progress,
 .wt-pomo-card.is-long-break .wt-pomo-ring-progress {
-  stroke: var(--color-blue, #3b82f6);
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-blue, #3b82f6) 45%, transparent));
+  stroke: var(--wt-jade, var(--wt-accent, var(--interactive-accent)));
 }
 .wt-pomo-card.is-paused .wt-pomo-ring-progress {
-  stroke: var(--color-orange, #f59e0b);
-  filter: none;
+  stroke: var(--wt-amber, var(--wt-accent, var(--interactive-accent)));
 }
+/* 环心是绝对定位的覆盖层：只有按钮吃指针事件，免得圆环挡住卡片其它交互。 */
 .wt-pomo-ring-center {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   pointer-events: none;
   user-select: none;
 }
-.wt-pomo-time {
-  font-size: var(--wt-fs-24px);
-  font-weight: 700;
-  line-height: 1;
-  color: var(--text-normal);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
+
+/* 环心：主操作按钮（▶ 开始 / ⏸ 暂停 / ▶ 继续 / ⏭ 跳过休息）
+
+   ⚠️ 这两颗按钮的选择器**必须带 `.wt-pomo-card` 前缀**，不能只写 `.wt-pomo-ring-btn`。
+   宿主 Obsidian 的 app.css 里有：
+     button { border-radius: var(--button-radius); corner-shape: …; padding: …; height: … }
+     button:not(.clickable-icon) { background-color: var(--interactive-normal); box-shadow: var(--input-shadow) }
+   后者权重 (0,1,1) 压过裸类选择器 (0,1,0)——只写类名的话，真机上环心会多出一块
+   灰底、圆角从 50% 变成宿主那档圆角（就是「环心有个灰方块」那个反馈的成因）。
+   加父级前缀后是 (0,2,1)，同时把宿主会碰的属性逐条清掉。 */
+.wt-pomo-card button.wt-pomo-ring-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(28px, 18cqw, 52px);
+  height: clamp(28px, 18cqw, 52px);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--wt-radius-circle);
+  corner-shape: round; /* 宿主给 button 设了 corner-shape，不清掉 50% 不是正圆 */
+  background: transparent;
+  box-shadow: none;
+  color: var(--wt-ink);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color var(--wt-dur-fast) var(--wt-ease-rise);
 }
-.wt-pomo-subtitle {
-  margin-top: 5px;
-  font-size: var(--wt-fs-11px);
-  line-height: 1.2;
-  color: var(--text-muted);
+.wt-pomo-card button.wt-pomo-ring-btn:hover {
+  background: var(--wt-wash);
+}
+.wt-pomo-card button.wt-pomo-ring-btn:active {
+  transform: scale(0.94);
+}
+.wt-pomo-card button.wt-pomo-ring-btn:focus-visible {
+  outline: 1px solid var(--wt-accent);
+  outline-offset: 1px;
+}
+/* 设计稿里环心是**实心**三角 / 实心双竖杠，不是线框图标：
+   三角外接 15×18 = 环外径的 19.6% × 23.6% → lucide 图标尺寸取环外径的 29.7%。
+   同样要压过宿主的 `svg.svg-icon`（0,1,1）。 */
+.wt-pomo-card button.wt-pomo-ring-btn svg {
+  width: clamp(14px, 8.6cqw, 25px);
+  height: clamp(14px, 8.6cqw, 25px);
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+/* 倒计时 + 细进度条：时间在卡内垂直居中，细条挂在它下面且**不参与居中**，
+   这样时间才会像设计稿那样略高于卡片中线（约 2px）。 */
+.wt-pomo-compact {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  margin-left: clamp(10px, 7.2cqw, 24px);
+  margin-right: clamp(12px, 8.6cqw, 28px);
+}
+.wt-pomo-time {
+  color: var(--wt-ink);
+  /* ⚠️ 这里**不能**用 var(--wt-num)：那个令牌在本文件末尾（约 6000 行）被定义成
+     "Iowan Old Style", "Palatino", "Georgia", … 衬线栈，会覆盖前面两处 "SF Pro Text"，
+     倒计时会渲染成衬线数字（用户真机反馈过）。设计稿是几何无衬线数字，这里显式给栈。 */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: clamp(23px, 15.7cqw, 47px);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-    .theme-dark .wt-wb,
-    .theme-dark .wt-sidebar,
-    .theme-dark .wt-settings-page) {
+/* 窄侧栏降级：容器查询以**卡片内容盒宽**为准。240px 侧栏下卡片只有 172px（内容盒 139px），
+   照完整比例排会把「环 → 数字 → 按钮」压到只剩约 2px 余量（DOM 盒级出现过 0.7px² 重叠）。
+   内容盒 < 220px 时收紧倒计时两侧间距并允许字号再降一档；正常侧栏（卡片 310.8px →
+   内容盒 277.8px）不命中，比例与设计稿保持一致。 */
+@container (max-width: 220px) {
+  .wt-pomo-ring-wrap {
+    /* 44px 的下限是按「环盒子 = 环外径、卡片高度由环撑开」定的；窄档把它降到 40，
+       让环回到 29.2cqw 的比例（240 档内容盒 139 → 40.6px），卡片也跟着矮 3px。 */
+    width: clamp(40px, 29.2cqw, 85px);
+    height: clamp(40px, 29.2cqw, 85px);
+  }
+  .wt-pomo-compact {
+    margin-left: 6px;
+    margin-right: 8px;
+  }
+  .wt-pomo-time {
+    font-size: clamp(20px, 14.8cqw, 47px);
+    letter-spacing: -0.02em;
+  }
+}
+.wt-pomo-bar {
+  position: absolute;
+  top: calc(100% + clamp(5px, 2.6cqw, 9px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: clamp(36px, 22.2cqw, 66px);
+  max-width: 100%;
+  height: clamp(3px, 1.87cqw, 5.5px);
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-rule);
+  overflow: hidden;
+}
+.wt-pomo-bar-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--wt-accent, var(--interactive-accent));
+  transition: width 700ms var(--wt-ease-rise), background-color 300ms ease;
+}
+/* 空闲态**不清空颜色**：设计稿里没开始时环和细条也是有颜色的（剩余 100% 就是整圈），
+   灰掉会让这枚胶囊看着像没做完——用户真机反馈过「没有颜色」。
+   休息/暂停只换色调（jade / amber），结构不变。 */
+.wt-pomo-card.is-break .wt-pomo-bar-fill,
+.wt-pomo-card.is-long-break .wt-pomo-bar-fill {
+  background: var(--wt-jade, var(--wt-accent, var(--interactive-accent)));
+}
+.wt-pomo-card.is-paused .wt-pomo-bar-fill {
+  background: var(--wt-amber, var(--wt-accent, var(--interactive-accent)));
+}
+/* 右侧圆按钮：结束当前番茄（空闲时无事可结束 → 隐藏） */
+.wt-pomo-actions {
+  display: none;
+  flex: none;
+  align-items: center;
+}
+.wt-pomo-card:not(.is-idle) .wt-pomo-actions {
+  display: flex;
+}
+/* 同样带 .wt-pomo-card 前缀压过宿主的 button 默认样式（理由见上面环心按钮那段） */
+.wt-pomo-card button.wt-pomo-round-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: clamp(30px, 15.6cqw, 46px);
+  height: clamp(30px, 15.6cqw, 46px);
+  margin: 0;
+  padding: 0;
+  border: 0; /* 设计稿里这枚圆没有描边 */
+  border-radius: var(--wt-radius-circle);
+  corner-shape: round;
+  background: var(--wt-rule);
+  box-shadow: none;
+  color: var(--wt-ink);
+  cursor: pointer;
+  transition: background-color var(--wt-dur-fast) var(--wt-ease-rise),
+    color var(--wt-dur-fast) var(--wt-ease-rise);
+}
+.wt-pomo-card button.wt-pomo-round-btn:hover {
+  background: var(--wt-rule-strong);
+}
+.wt-pomo-card button.wt-pomo-round-btn:active {
+  transform: scale(0.94);
+}
+.wt-pomo-card button.wt-pomo-round-btn:focus-visible {
+  outline: 1px solid var(--wt-accent);
+  outline-offset: 1px;
+}
+/* 图标按按钮直径的 40%（设计稿竖杠高 ≈ 直径的 32%，实心方块略胖一档） */
+.wt-pomo-card button.wt-pomo-round-btn svg {
+  width: 40%;
+  height: 40%;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+:is(.theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page) {
   --wt-paper: #1d1a17;
   --wt-paper-2: #24201c;
   --wt-card-bg: #27231f;
@@ -3992,22 +4101,6 @@ body.wt-heading-style .markdown-rendered p {
   font-variant-numeric: tabular-nums;
 }
 
-/* 卡内小节标题：打字机 / 排版 */
-.wt-tb-sub {
-  margin: 0;
-  padding: 13px 0 1px;
-  border-top: 0.5px dashed var(--wt-rule);
-  font-family: var(--wt-serif);
-  font-size: var(--wt-fs-12px);
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: var(--wt-ink-3);
-}
-
-.wt-tb-sub.is-first {
-  padding-top: 1px;
-  border-top: 0;
-}
 .wt-sidebar .setting-item {
   display: flex;
   align-items: center;
@@ -4016,12 +4109,16 @@ body.wt-heading-style .markdown-rendered p {
   background: transparent;
   border: 0;
 }
-.wt-sidebar .wt-tb-card > .setting-item {
+/* 卡内分隔线只画在「模块与模块之间」：直接挂在卡上的每一行，
+   以及每个小组（.wt-tb-group）的首行。组内的后续行不画线。 */
+.wt-sidebar .wt-tb-card > .setting-item,
+.wt-sidebar .wt-tb-card > .wt-tb-group > .setting-item:first-child {
   border-top: 0.5px dashed var(--wt-rule);
 }
 
+/* 卡里第一个块（一行或一个小组）不画顶线 */
 .wt-sidebar .wt-tb-card > .setting-item:first-child,
-.wt-sidebar .wt-tb-card > .wt-tb-sub + .setting-item {
+.wt-sidebar .wt-tb-card > .wt-tb-group:first-child > .setting-item:first-child {
   border-top: 0;
 }
 .wt-sidebar .setting-item:hover {
@@ -4179,160 +4276,15 @@ body.wt-heading-style .markdown-rendered p {
   text-align: right;
   white-space: nowrap;
 }
-.wt-sidebar .wt-pomo-section {
-  margin: 0;
-}
+/* 侧栏里的番茄钟胶囊：底色/描边/阴影照设计稿（卡片几乎与页面同色，靠一圈细描边撑形状）。
+   比例尺寸统一在 .wt-pomo-card 里，这里不再覆盖任何尺寸，避免两处各写一套数字。 */
 .wt-sidebar .wt-pomo-card {
   margin: 0 0 13px;
-  padding: 13px 14px 12px;
-  border: 0.5px solid var(--wt-rule);
-  border-radius: var(--wt-radius-12px);
-  background: var(--wt-card-bg);
   box-shadow: var(--wt-shadow);
-  gap: 10px;
 }
 .wt-sidebar .wt-pomo-card:hover {
-  border-color: var(--wt-rule);
+  border-color: color-mix(in srgb, var(--wt-ink) 18%, transparent);
   box-shadow: var(--wt-shadow);
-}
-.wt-sidebar .wt-pomo-status-dot {
-  width: 6px;
-  height: 6px;
-  background: var(--wt-ink-3);
-  box-shadow: none;
-}
-.wt-sidebar .wt-pomo-card.is-focus .wt-pomo-status-dot {
-  background: var(--wt-accent);
-  box-shadow: none;
-  animation: wt-tb-breathe 2.4s ease-in-out infinite;
-}
-
-.wt-sidebar .wt-pomo-card.is-break .wt-pomo-status-dot,
-.wt-sidebar .wt-pomo-card.is-long-break .wt-pomo-status-dot {
-  background: var(--wt-jade);
-  box-shadow: none;
-  animation: none;
-}
-.wt-sidebar .wt-pomo-card.is-paused .wt-pomo-status-dot {
-  background: var(--wt-amber);
-  box-shadow: none;
-  animation: none;
-}
-
-@keyframes wt-tb-breathe {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-.wt-sidebar .wt-pomo-ring-wrap {
-  width: 126px;
-  height: 126px;
-  margin: 2px auto 0;
-}
-.wt-sidebar .wt-pomo-ring-bg {
-  stroke: var(--wt-wash);
-  stroke-width: 8;
-}
-.wt-sidebar .wt-pomo-ring-progress {
-  stroke: var(--wt-accent);
-  stroke-width: 8;
-  stroke-linecap: round;
-  filter: none;
-  transition: stroke-dashoffset 700ms var(--wt-ease-rise), stroke 300ms ease;
-}
-.wt-sidebar .wt-pomo-card.is-idle .wt-pomo-ring-progress {
-  stroke: var(--wt-rule);
-  filter: none;
-}
-.wt-sidebar .wt-pomo-card.is-focus .wt-pomo-ring-progress {
-  stroke: var(--wt-accent);
-  filter: none;
-}
-
-.wt-sidebar .wt-pomo-card.is-break .wt-pomo-ring-progress,
-.wt-sidebar .wt-pomo-card.is-long-break .wt-pomo-ring-progress {
-  stroke: var(--wt-jade);
-  filter: none;
-}
-.wt-sidebar .wt-pomo-card.is-paused .wt-pomo-ring-progress {
-  stroke: var(--wt-amber);
-  filter: none;
-}
-.wt-sidebar .wt-pomo-time {
-  color: var(--wt-ink);
-  font-family: var(--wt-num);
-  font-size: var(--wt-fs-26px);
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -0.01em;
-}
-.wt-sidebar .wt-pomo-state {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 96px;
-  margin-top: 5px;
-}
-.wt-sidebar .wt-pomo-subtitle {
-  margin-top: 0;
-  overflow: hidden;
-  color: var(--wt-ink-3);
-  font-size: var(--wt-fs-12px);
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wt-sidebar .wt-pomo-actions {
-  gap: 8px;
-  margin-top: 0;
-}
-.wt-sidebar .wt-pomo-btn {
-  height: 30px;
-  padding: 0 14px;
-  border-radius: var(--wt-radius-8px);
-  background: transparent;
-  box-shadow: none;
-  font-size: var(--wt-fs-13px);
-}
-.wt-sidebar .wt-pomo-start-full {
-  width: 100%;
-  height: 34px;
-  padding: 0 16px;
-  font-size: var(--wt-fs-13px);
-  border-radius: var(--wt-radius-8px);
-}
-.wt-sidebar .wt-pomo-btn-primary {
-  border: 0.5px solid var(--wt-accent);
-  background: var(--wt-accent);
-  color: var(--wt-accent-ink);
-  font-weight: 600;
-  box-shadow: none;
-}
-.wt-sidebar .wt-pomo-btn-primary:hover {
-  background: color-mix(in srgb, var(--wt-accent) 88%, #000);
-  filter: none;
-}
-.wt-sidebar .wt-pomo-btn-secondary {
-  border: 0.5px solid var(--wt-rule-strong);
-  background: var(--wt-card-bg);
-  color: var(--wt-ink);
-}
-.wt-sidebar .wt-pomo-btn-secondary:hover {
-  background: var(--wt-wash);
-}
-.wt-sidebar .wt-pomo-btn-danger {
-  border: 0.5px solid var(--wt-rule-strong);
-  background: var(--wt-card-bg);
-  color: var(--wt-ink-2);
-}
-.wt-sidebar .wt-pomo-btn-danger:hover {
-  border-color: var(--wt-accent);
-  background: var(--wt-card-bg);
-  color: var(--wt-accent);
 }
 .wt-sidebar .wt-snap-toolbar {
   gap: 8px;
@@ -5190,8 +5142,8 @@ body.wt-mobile .wt-wb .wt-wb-head {
 }
 body.wt-mobile .wt-wb .wt-wb-book {
   max-width: 60%;
-  font-size: var(--wt-fs-18px);
-  line-height: 26px;
+  font-size: var(--wt-fs-16px);
+  line-height: 23px;
 }
 body.wt-mobile .wt-wb .wt-wb-seg-row {
   gap: 10px;
@@ -5205,6 +5157,22 @@ body.wt-mobile .wt-wb .wt-wb-searchbar {
 body.wt-mobile .wt-wb .wt-wb-search {
   height: 40px;
   font-size: var(--wt-fs-15px);
+}
+body.wt-mobile .wt-wb .wt-wb-search-wrap {
+  height: 40px;
+  flex: 1;
+}
+body.wt-mobile .wt-wb .wt-wb-search-replace {
+  margin-top: 2px;
+}
+body.wt-mobile .wt-wb .wt-wb-replace {
+  height: 40px;
+  font-size: var(--wt-fs-15px);
+}
+body.wt-mobile .wt-wb .wt-wb-replace-btn {
+  height: 40px;
+  padding: 0 12px;
+  font-size: var(--wt-fs-14px);
 }
 body.wt-mobile .wt-wb .wt-wb-body {
   padding: 6px 10px 96px;
@@ -5227,15 +5195,6 @@ body.wt-mobile .wt-wb .wt-wb-res-title {
 body.wt-mobile .wt-wb .wt-wb-ch-num {
   width: 28px;
   font-size: var(--wt-fs-13px);
-}
-body.wt-mobile .wt-wb .wt-wb-ch-outline {
-  width: 32px;
-  height: 32px;
-  opacity: 1;
-}
-body.wt-mobile .wt-wb .wt-wb-ch-outline svg {
-  width: 16px;
-  height: 16px;
 }
 body.wt-mobile .wt-wb .wt-wb-volume-head {
   padding: 12px 6px 8px;
@@ -5309,6 +5268,15 @@ body.wt-mobile .wt-outline-preview-start {
 
 body.wt-mobile .wt-tb-card {
   padding: 15px 15px 13px;
+}
+/* 胶囊：手机端抽屉更窄，内边距收紧（尺寸本身会随卡宽缩），
+   圆按钮留出最小点击区——拇指够得着比严格等比更重要。 */
+body.wt-mobile .wt-pomo-card {
+  padding: 7px 14px 7px 7px;
+}
+body.wt-mobile .wt-pomo-card button.wt-pomo-round-btn {
+  min-width: 40px;
+  min-height: 40px;
 }
 
 /* ---- 手机端常驻状态条：屏幕底部一枚轻量药丸（进度 · 番茄 · 时速） ----
@@ -6427,32 +6395,10 @@ body.is-phone .wt-comment-btn {
 .wt-np .wt-np-preview-row {
   margin-top: 6px;
 }
-.wt-pomo-btn-icon svg {
-  width: 13px;
-  height: 13px;
-}
-.wt-pomo-btn-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-}
 .wt-pomo-btn:active {
   transform: scale(0.97);
 }
 :is(.theme-dark .wt-home, .theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page)  { --wt-paper: #1d1a17; --wt-paper-2: #24201c; --wt-card-bg: #27231f; --wt-ink: #ece4d6; --wt-ink-2: #b3a895; --wt-ink-3: #85796a; --wt-rule: rgba(236, 220, 190, 0.1); --wt-rule-strong: rgba(236, 220, 190, 0.18); --wt-wash: rgba(236, 220, 190, 0.05); --wt-accent: #e07a5f; --wt-accent-soft: rgba(224, 122, 95, 0.14); --wt-accent-ink: #1d1a17; --wt-jade: #8bb89a; --wt-amber: #d9a65a; --wt-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 22px -10px rgba(0, 0, 0, 0.55); }
-@keyframes wt-drawer-down {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 body.wt-status-only-immersive:not(.wt-immersive) .wt-status-bar {
   display: none !important;
 }
@@ -6489,53 +6435,6 @@ body.wt-indent .cm-editor .cm-line:not([class*="HyperMD-header-"]):not([class*="
   min-width: 0;
 }
 
-.wt-pomo-actions {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 2px;
-}
-
-.wt-pomo-start-full {
-  width: 100%;
-  padding: 8px 16px;
-  font-size: var(--wt-fs-13px);
-  border-radius: var(--wt-radius-9px);
-}
-
-.wt-pomo-btn-primary {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  font-weight: 600;
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
-}
-
-.wt-pomo-btn-primary:hover {
-  background: var(--interactive-accent-hover, var(--interactive-accent));
-  filter: brightness(1.06);
-}
-
-.wt-pomo-btn-secondary {
-  flex: 1;
-  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
-  color: var(--text-accent);
-  border: 0.5px solid color-mix(in srgb, var(--interactive-accent) 25%, transparent);
-}
-
-.wt-pomo-btn-secondary:hover {
-  background: color-mix(in srgb, var(--interactive-accent) 22%, transparent);
-}
-
-.wt-pomo-btn-danger {
-  background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
-  color: var(--color-red, #ef4444);
-  border: 0.5px solid color-mix(in srgb, var(--color-red, #ef4444) 20%, transparent);
-}
-
-.wt-pomo-btn-danger:hover {
-  background: color-mix(in srgb, var(--color-red, #ef4444) 22%, transparent);
-}
 
 .wt-settings-tabs {
   display: flex;
@@ -6665,29 +6564,81 @@ body.wt-theme-contrast .wt-wb .wt-wb-head {
   min-width: 0;
 }
 
-/* 书名：轻量可点击切换按钮，只带极小下拉箭头，不加冗余前缀图标 */
+/* 书名右侧：连载状态 + 搜索 / 复制 */
+.wt-wb .wt-wb-head-right {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wt-wb .wt-wb-head-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--wt-radius-5px);
+  background: transparent;
+  color: var(--wt-ink-3);
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color var(--wt-dur-snap) ease, color var(--wt-dur-snap) ease;
+}
+
+.wt-wb .wt-wb-head-tool:hover {
+  background: var(--wt-wash);
+  color: var(--wt-ink);
+}
+
+.wt-wb .wt-wb-head-tool.is-active {
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
+}
+
+.wt-wb .wt-wb-head-tool svg {
+  width: 15px;
+  height: 15px;
+}
+
+body.wt-mobile .wt-wb .wt-wb-head-tool {
+  width: 32px;
+  height: 32px;
+}
+
+body.wt-mobile .wt-wb .wt-wb-head-tool svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 书名 + 状态点：书名放大、悬停出一条墨线，状态点跟在书名后 */
+.wt-wb .wt-wb-book-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .wt-wb .wt-wb-book {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 72%;
+  max-width: calc(100% - 21px);
   height: auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
+  padding: 2px 6px 2px 5px;
   margin-left: -6px;
   border: 0.5px solid transparent;
   border-radius: var(--wt-radius-6px);
   background: transparent;
   color: var(--wt-ink);
-  cursor: pointer;
+  cursor: default;
   text-align: left;
   transition: background-color var(--wt-dur-snap) ease, border-color var(--wt-dur-snap) ease;
-}
-
-.wt-wb .wt-wb-book:hover {
-  background: var(--wt-wash);
-  border-color: var(--wt-rule);
 }
 
 .wt-wb .wt-wb-book-name {
@@ -6695,116 +6646,67 @@ body.wt-theme-contrast .wt-wb .wt-wb-head {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-bottom: 2px;
+  border-bottom: 3px double var(--wt-ink-2);
   font-family: var(--wt-serif);
   font-size: var(--wt-fs-16px);
   font-weight: 700;
-  line-height: 22px;
-  letter-spacing: 0.04em;
+  line-height: 21px;
+  letter-spacing: 0.1em;
   color: var(--wt-ink);
+  transition: border-color var(--wt-dur-base) var(--wt-ease-rise);
 }
 
-.wt-wb .wt-wb-book-chevron {
+.wt-wb .wt-wb-book:hover .wt-wb-book-name {
+  border-bottom-color: var(--wt-accent);
+}
+
+/* 状态点：颜色表示连载状态，点击弹出菜单 */
+.wt-wb .wt-wb-book-status {
   flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
   display: inline-flex;
   align-items: center;
-  color: var(--wt-ink-3);
-  opacity: 0.7;
-  transition: opacity var(--wt-dur-snap) ease, color var(--wt-dur-snap) ease;
-}
-
-.wt-wb .wt-wb-book-chevron svg {
-  width: 11px;
-  height: 11px;
-}
-
-.wt-wb .wt-wb-book:hover .wt-wb-book-chevron {
-  color: var(--wt-ink);
-  opacity: 1;
-}
-
-/* 连载状态胶囊：保留语义色与轻边框，紧凑高度 */
-.wt-wb .wt-wb-status {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 21px;
-  padding: 0 7px;
-  border: 0.5px solid var(--wt-rule);
-  border-radius: var(--wt-radius-pill);
-  background: var(--wt-card-bg);
-  color: var(--wt-ink-2);
-  font-size: var(--wt-fs-11px);
-  font-weight: 500;
-  line-height: 1;
+  justify-content: center;
   cursor: pointer;
-  transition: color var(--wt-dur-snap) ease, border-color var(--wt-dur-snap) ease, background-color var(--wt-dur-snap) ease;
+  box-shadow: none;
 }
 
-.wt-wb .wt-wb-status:hover {
-  color: var(--wt-ink);
-  border-color: var(--wt-rule-strong);
-}
-
-.wt-wb .wt-wb-status-dot {
-  flex: none;
-  width: 5.5px;
-  height: 5.5px;
+.wt-wb .wt-wb-book-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
   border-radius: var(--wt-radius-circle);
   background: var(--wt-ink-3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wt-paper-2) 65%, var(--wt-paper));
+  transition: transform var(--wt-dur-snap) ease, background-color var(--wt-dur-snap) ease, box-shadow var(--wt-dur-snap) ease;
 }
 
-.wt-wb .wt-wb-status.is-ongoing {
-  background: var(--wt-accent-soft);
-  border-color: color-mix(in srgb, var(--wt-accent) 26%, transparent);
-  color: var(--wt-accent);
+.wt-wb .wt-wb-book-status:hover::before {
+  transform: scale(1.3);
 }
 
-.wt-wb .wt-wb-status.is-ongoing .wt-wb-status-dot {
+.wt-wb .wt-wb-book-status.is-ongoing::before {
   background: var(--wt-accent);
 }
 
-.wt-wb .wt-wb-status.is-completed {
-  background: color-mix(in srgb, var(--wt-jade) 13%, transparent);
-  border-color: color-mix(in srgb, var(--wt-jade) 28%, transparent);
-  color: var(--wt-jade);
-}
-
-.wt-wb .wt-wb-status.is-completed .wt-wb-status-dot {
+.wt-wb .wt-wb-book-status.is-completed::before {
   background: var(--wt-jade);
 }
 
-.wt-wb .wt-wb-status.is-hiatus {
-  background: color-mix(in srgb, var(--wt-amber) 14%, transparent);
-  border-color: color-mix(in srgb, var(--wt-amber) 30%, transparent);
-  color: var(--wt-amber);
-}
-
-.wt-wb .wt-wb-status.is-hiatus .wt-wb-status-dot {
+.wt-wb .wt-wb-book-status.is-hiatus::before {
   background: var(--wt-amber);
 }
 
-.wt-wb .wt-wb-status.is-unset {
-  border-style: dashed;
+.wt-wb .wt-wb-book-status.is-unset::before {
   background: transparent;
-  color: var(--wt-ink-3);
-}
-
-.wt-wb .wt-wb-status.is-unset .wt-wb-status-dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--wt-ink-3);
-}
-
-.wt-wb .wt-wb-status-chevron {
-  display: flex;
-  align-items: center;
-  color: currentColor;
-  opacity: 0.7;
-}
-
-.wt-wb .wt-wb-status-chevron svg {
-  width: 10px;
-  height: 10px;
+  box-shadow:
+    inset 0 0 0 1px var(--wt-ink-3),
+    0 0 0 2px color-mix(in srgb, var(--wt-paper-2) 65%, var(--wt-paper));
 }
 
 /* 全书字数 · 卷数 · 最近更新（单行省略，不撑宽侧栏） */
@@ -6939,14 +6841,29 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   border-color: var(--wt-rule-strong);
 }
 
-/* ---------- ② 搜索栏（内嵌清空与复制，不额外占宽） ---------- */
+/* ---------- ② 搜索 / 替换面板（默认收起成标题栏按钮） ---------- */
 
 .wt-wb .wt-wb-searchbar {
   flex: none;
-  padding: 8px 14px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px 6px;
+}
+
+.wt-wb .wt-wb-searchbar.is-collapsed {
+  display: none;
+}
+
+.wt-wb .wt-wb-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .wt-wb .wt-wb-search-wrap {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -7022,35 +6939,123 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   display: none;
 }
 
-.wt-wb .wt-wb-search-copy {
+/* 替换行：输入 + 替换当前 + 全部替换 */
+.wt-wb .wt-wb-search-replace {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wt-wb .wt-wb-replace {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 0.5px solid var(--wt-rule);
+  border-radius: var(--wt-radius-7px);
+  background: color-mix(in srgb, var(--wt-card-bg) 75%, var(--wt-wash));
+  color: var(--wt-ink);
+  font-size: var(--wt-fs-13px);
+  box-shadow: none;
+  outline: none;
+}
+
+.wt-wb .wt-wb-replace:focus {
+  border-color: var(--wt-accent);
+  background: var(--wt-card-bg);
+  box-shadow: 0 0 0 2px var(--wt-accent-soft);
+}
+
+.wt-wb .wt-wb-replace::placeholder {
+  color: var(--wt-ink-3);
+}
+
+.wt-wb .wt-wb-replace-btn {
   flex: none;
+  height: 28px;
+  padding: 0 9px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-7px);
+  background: var(--wt-card-bg);
+  color: var(--wt-ink-2);
+  font-size: var(--wt-fs-12px);
+  white-space: nowrap;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.wt-wb .wt-wb-replace-btn:hover {
+  border-color: var(--wt-rule-strong);
+  color: var(--wt-ink);
+  background: var(--wt-wash);
+}
+
+.wt-wb .wt-wb-replace-btn.is-all {
+  border-color: color-mix(in srgb, var(--wt-accent) 32%, transparent);
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
+  font-weight: 600;
+}
+
+/* 全书搜索：命中计数 + 上一处 / 下一处 */
+.wt-wb .wt-wb-search-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 6px 5px;
+  color: var(--wt-ink-3);
+  font-size: var(--wt-fs-11px);
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--wt-num);
+}
+
+.wt-wb .wt-wb-search-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.wt-wb .wt-wb-search-nav-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
-  border: none;
+  border: 0.5px solid var(--wt-rule);
   border-radius: var(--wt-radius-5px);
-  background: transparent;
-  color: var(--wt-ink-3);
+  background: var(--wt-card-bg);
+  color: var(--wt-ink-2);
+  box-shadow: none;
   cursor: pointer;
-  transition: background-color var(--wt-dur-snap) ease, color var(--wt-dur-snap) ease;
 }
 
-.wt-wb .wt-wb-search-copy:hover {
+.wt-wb .wt-wb-search-nav-btn:hover {
+  border-color: var(--wt-rule-strong);
   color: var(--wt-accent);
-  background: var(--wt-accent-soft);
 }
 
-.wt-wb .wt-wb-search-copy.is-copied {
-  color: var(--wt-jade);
-  background: color-mix(in srgb, var(--wt-jade) 14%, transparent);
+.wt-wb .wt-wb-search-nav-btn svg {
+  width: 12px;
+  height: 12px;
 }
 
-.wt-wb .wt-wb-search-copy svg {
-  width: 13.5px;
-  height: 13.5px;
+/* 当前命中所在的章节 / 资料行 */
+.wt-wb .wt-wb-ch.is-search-current,
+.wt-wb .wt-wb-res.is-search-current {
+  background: color-mix(in srgb, var(--wt-accent) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wt-accent) 24%, transparent);
+}
+
+body.wt-mobile .wt-wb .wt-wb-search-summary {
+  font-size: var(--wt-fs-12px);
+}
+
+body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
+  width: 28px;
+  height: 28px;
 }
 
 /* 正在编辑另一本书时的提示条 */
@@ -7390,9 +7395,16 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current {
 }
 
 /* 章节标题 */
-.wt-wb .wt-wb-ch-title {
+.wt-wb .wt-wb-ch-titlewrap {
   order: 3;
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.wt-wb .wt-wb-ch-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7401,6 +7413,31 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current {
   font-size: var(--wt-fs-14px);
   line-height: 20px;
   color: var(--wt-ink);
+}
+
+.wt-wb .wt-wb-ch-snippet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--wt-fs-11px);
+  line-height: 15px;
+  color: var(--wt-ink-3);
+}
+
+.wt-wb .wt-wb-ch-hits {
+  order: 4;
+  flex: none;
+  align-self: center;
+  padding: 0 4px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
+  font-size: var(--wt-fs-10px);
+  font-weight: 600;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--wt-num);
+  white-space: nowrap;
 }
 
 .wt-wb .wt-wb-ch-title.is-untitled,
@@ -7418,51 +7455,6 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title,
 body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
   color: var(--wt-ink);
   font-weight: 700;
-}
-
-/* 章纲入口：已写或展开时常驻，未写时悬停浮现 */
-.wt-wb .wt-wb-ch-outline {
-  order: 4;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: var(--wt-radius-5px);
-  background: transparent;
-  color: var(--wt-ink-3);
-  opacity: 0;
-  cursor: pointer;
-  transition: opacity var(--wt-dur-snap) ease, color var(--wt-dur-snap) ease, background-color var(--wt-dur-snap) ease;
-}
-
-.wt-wb .wt-wb-ch-outline svg {
-  width: 12px;
-  height: 12px;
-}
-
-.wt-wb .wt-wb-ch-outline.is-on,
-.wt-wb .wt-wb-ch-outline.is-open {
-  opacity: 1;
-  color: var(--wt-accent);
-}
-
-.wt-wb .wt-wb-ch-outline.is-open {
-  background: var(--wt-accent-soft);
-}
-
-.wt-wb .wt-wb-ch:hover .wt-wb-ch-outline,
-.wt-wb .wt-wb-ch-outline:focus,
-.wt-wb .wt-wb-ch-outline:hover {
-  opacity: 1;
-}
-
-.wt-wb .wt-wb-ch-outline:hover {
-  background: var(--wt-card-bg);
-  color: var(--wt-accent);
 }
 
 /* 字数标签 */
@@ -7484,8 +7476,15 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
 }
 
 /* 设定资料行：标题在前，轻胶囊标签与字数在后 */
-.wt-wb .wt-wb-res-title {
+.wt-wb .wt-wb-res-titlewrap {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.wt-wb .wt-wb-res-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7494,6 +7493,30 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
   font-size: var(--wt-fs-14px);
   line-height: 20px;
   color: var(--wt-ink);
+}
+
+.wt-wb .wt-wb-res-snippet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--wt-fs-11px);
+  line-height: 15px;
+  color: var(--wt-ink-3);
+}
+
+.wt-wb .wt-wb-res-hits {
+  flex: none;
+  align-self: center;
+  padding: 0 4px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
+  font-size: var(--wt-fs-10px);
+  font-weight: 600;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--wt-num);
+  white-space: nowrap;
 }
 
 .wt-wb .wt-wb-res.is-current .wt-wb-res-title {
@@ -7537,87 +7560,6 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current .wt-wb-res-title {
 
 .wt-wb .wt-wb-res-words.is-empty {
   opacity: 0.65;
-}
-
-/* ---------- 章纲就地编辑框（轻量内嵌卡片，底栏含收起按钮） ---------- */
-
-.wt-wb .wt-wb-outline-box {
-  margin: 2px 6px 10px 24px;
-  border: 0.5px solid var(--wt-rule);
-  border-left: 2.5px solid var(--wt-accent);
-  border-radius: var(--wt-radius-none) var(--wt-radius-8px) var(--wt-radius-8px) var(--wt-radius-none);
-  background: var(--wt-card-bg);
-  overflow: hidden;
-  animation: wt-drawer-down 160ms ease-out;
-}
-
-.wt-wb .wt-wb-outline-input {
-  display: block;
-  width: 100%;
-  min-height: 100px;
-  max-height: 280px;
-  resize: vertical;
-  padding: 9px 11px;
-  border: none;
-  border-radius: var(--wt-radius-none);
-  background: transparent;
-  box-shadow: none;
-  color: var(--wt-ink);
-  font-family: var(--font-text);
-  font-size: var(--wt-fs-13px);
-  line-height: 1.75;
-}
-
-.wt-wb .wt-wb-outline-input:focus {
-  outline: none;
-  box-shadow: none;
-}
-
-.wt-wb .wt-wb-outline-input::placeholder {
-  color: var(--wt-ink-3);
-}
-
-.wt-wb .wt-wb-outline-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 4px 10px 5px;
-  border-top: 0.5px solid var(--wt-rule);
-  background: color-mix(in srgb, var(--wt-paper-2) 40%, var(--wt-card-bg));
-  font-size: var(--wt-fs-11px);
-  color: var(--wt-ink-3);
-  font-variant-numeric: tabular-nums;
-}
-
-.wt-wb .wt-wb-outline-foot-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.wt-wb .wt-wb-outline-state {
-  color: var(--wt-ink-3);
-}
-
-.wt-wb .wt-wb-outline-state.is-dirty {
-  color: var(--wt-amber);
-}
-
-.wt-wb .wt-wb-outline-close {
-  height: auto;
-  padding: 0 4px;
-  border: none;
-  border-radius: var(--wt-radius-4px);
-  background: transparent;
-  color: var(--wt-ink-2);
-  font-size: var(--wt-fs-11px);
-  cursor: pointer;
-}
-
-.wt-wb .wt-wb-outline-close:hover {
-  background: var(--wt-wash);
-  color: var(--wt-accent);
 }
 
 /* ---------- ④ 底部今日状态行（紧凑进度细条 + 可点击文字项） ---------- */
@@ -7688,16 +7630,6 @@ body.wt-theme-contrast .wt-wb .wt-wb-foot {
   margin: 0 6px;
   color: var(--wt-ink-3);
   opacity: 0.6;
-}
-
-body.wt-mobile .wt-wb .wt-wb-search-copy {
-  width: 34px;
-  height: 34px;
-}
-
-body.wt-mobile .wt-wb .wt-wb-search-copy svg {
-  width: 18px;
-  height: 18px;
 }
 
 body.wt-mobile .wt-wb .wt-wb-vol-add {

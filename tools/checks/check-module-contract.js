@@ -43,8 +43,8 @@ const SNAPSHOT_SETTING_KEYS = [
 ];
 
 const DATA_KEYS = [
-  "settings", "dailyHistory", "dailyGrossHistory", "dailyDurationHistory",
-  "projectHistory", "projectGrossHistory", "projectDurationHistory",
+  "settings", "dailyHistory", "dailyDurationHistory",
+  "projectHistory", "projectDurationHistory",
   "dailyPomodoroHistory", "dailyFileDeltas", "workbenchProject",
   "workbenchMode", "workbenchStatus", "hiddenProjects", "homePage",
   "projectCovers", "libraryView", "fileBaselines", "baselinesAt",

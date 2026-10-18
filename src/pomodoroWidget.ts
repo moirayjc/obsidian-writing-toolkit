@@ -4,10 +4,12 @@ import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 /**
  * 番茄钟展示组件只依赖窄操作端口，不 import main.ts 或功能模块实现。
  * 端口由工具箱的 UI Shell 上下文注入。
+ *
+ * 形态：**只有这一枚胶囊**（旧版「展开成环形大卡片」已按设计稿删掉，不再有两种状态）。
+ * 左＝环形进度（环心是主操作按钮）· 中＝倒计时 + 细进度条 · 右＝结束当前番茄的圆按钮。
  */
 export interface PomodoroWidgetHost {
   getPomodoroState?(): PomodoroState | null;
-  getTodayPomodoroSummary?(): { count: number; words: number } | null;
   startPomodoro?(): void;
   stopPomodoro?(): void;
   togglePomodoroPause?(): void;
@@ -21,24 +23,25 @@ function formatDuration(ms: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function formatNumber(n: number): string {
-  return n.toLocaleString("en-US");
-}
-
-const CIRCLE_RADIUS = 54;
-const CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS; // ~339.292
+/**
+ * 环形进度的几何：viewBox 100×100、半径 46.85、描边 6.3（写在 CSS 里）
+ * → 环的外径正好 100，等于整个盒子。
+ * 这样 CSS 里环的宽度就等于环的外径，内边距/边距可以照设计稿直接写，
+ * 不必再按 viewBox 折算（旧版 130/54 就得每次乘 130/62 才不跑偏）。
+ * 描边 ÷ 外径 = 6.3% 是照设计稿量的（外径 76.4、描边 4.85）。
+ */
+const CIRCLE_RADIUS = 46.85;
+const CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS; // ≈ 294.37
 
 export class PomodoroWidget {
   private readonly containerEl: HTMLElement;
   private readonly host: PomodoroWidgetHost;
 
   private cardEl!: HTMLElement;
-  private statusDotEl!: HTMLElement;
-  private statusTextEl!: HTMLElement;
-  private todayStatEl!: HTMLElement;
   private progressCircle!: SVGCircleElement;
+  private ringBtnEl!: HTMLButtonElement;
   private timeEl!: HTMLElement;
-  private actionsEl!: HTMLElement;
+  private fillEl!: HTMLElement;
 
   private lastPhase: PomodoroPhase | null = null;
   private lastPaused: boolean | null = null;
@@ -56,33 +59,28 @@ export class PomodoroWidget {
   private render(): void {
     this.cardEl = this.containerEl.createDiv({ cls: "wt-pomo-card" });
 
-    // 1. 卡头：标题 + 今日番茄小结（与主页卡片标题同一套）
-    const headEl = this.cardEl.createDiv({ cls: "wt-tb-card-title" });
-    headEl.createSpan({ text: "专注" });
-    this.todayStatEl = headEl.createSpan({ cls: "wt-tb-card-aside" });
-
-    // 2. 环形进度圈与正中倒计时
+    // 1. 环形进度（环心是主操作按钮，随状态在开始/暂停/继续/跳过之间切换）
     const ringWrap = this.cardEl.createDiv({ cls: "wt-pomo-ring-wrap" });
 
     // 原生 SVG 环
     // 用 Obsidian 的全局 createSvg()（不自动 append，只建元素）；官方审查 prefer-create-el 要求
     const svg = createSvg("svg");
     svg.setAttribute("class", "wt-pomo-ring-svg");
-    svg.setAttribute("viewBox", "0 0 130 130");
+    svg.setAttribute("viewBox", "0 0 100 100");
 
     // 背景底环
     const bgCircle = createSvg("circle");
     bgCircle.setAttribute("class", "wt-pomo-ring-bg");
-    bgCircle.setAttribute("cx", "65");
-    bgCircle.setAttribute("cy", "65");
+    bgCircle.setAttribute("cx", "50");
+    bgCircle.setAttribute("cy", "50");
     bgCircle.setAttribute("r", String(CIRCLE_RADIUS));
     svg.appendChild(bgCircle);
 
-    // 进度环
+    // 进度环：从 12 点起顺时针，长度 = 剩余占比
     this.progressCircle = createSvg("circle");
     this.progressCircle.setAttribute("class", "wt-pomo-ring-progress");
-    this.progressCircle.setAttribute("cx", "65");
-    this.progressCircle.setAttribute("cy", "65");
+    this.progressCircle.setAttribute("cx", "50");
+    this.progressCircle.setAttribute("cy", "50");
     this.progressCircle.setAttribute("r", String(CIRCLE_RADIUS));
     this.progressCircle.setAttribute("stroke-dasharray", String(CIRCUMFERENCE));
     this.progressCircle.setAttribute("stroke-dashoffset", "0");
@@ -90,18 +88,48 @@ export class PomodoroWidget {
 
     ringWrap.appendChild(svg);
 
-    // 环中央：大倒计时 + 状态（色点 + 文字）
     const centerEl = ringWrap.createDiv({ cls: "wt-pomo-ring-center" });
-    this.timeEl = centerEl.createDiv({ cls: "wt-pomo-time", text: "25:00" });
-    const stateEl = centerEl.createDiv({ cls: "wt-pomo-state" });
-    this.statusDotEl = stateEl.createSpan({ cls: "wt-pomo-status-dot" });
-    this.statusTextEl = stateEl.createSpan({ cls: "wt-pomo-subtitle", text: "空闲" });
+    this.ringBtnEl = centerEl.createEl("button", {
+      cls: "wt-pomo-ring-btn",
+      attr: { type: "button", "aria-label": "开始专注" },
+    });
+    this.ringBtnEl.addEventListener("click", () => {
+      this.handleRingAction();
+    });
 
-    // 3. 操作按钮区
-    this.actionsEl = this.cardEl.createDiv({ cls: "wt-pomo-actions" });
+    // 2. 胶囊主体：大倒计时 + 细进度条（与环同向，显示剩余占比）
+    const compactEl = this.cardEl.createDiv({ cls: "wt-pomo-compact" });
+    this.timeEl = compactEl.createDiv({ cls: "wt-pomo-time", text: "25:00" });
+    const barEl = compactEl.createDiv({ cls: "wt-pomo-bar" });
+    this.fillEl = barEl.createDiv({ cls: "wt-pomo-bar-fill" });
+
+    // 3. 右侧圆按钮：结束当前番茄（空闲时由 CSS 隐藏）
+    const actionsEl = this.cardEl.createDiv({ cls: "wt-pomo-actions" });
+    const stopBtn = actionsEl.createEl("button", {
+      cls: "wt-pomo-round-btn",
+      attr: { type: "button", "aria-label": "结束专注" },
+    });
+    setIcon(stopBtn, "wt-stop");
+    stopBtn.addEventListener("click", () => {
+      this.host.stopPomodoro?.();
+    });
 
     // 初始渲染当前状态
     this.update();
+  }
+
+  /** 环心按钮：空闲开始、专注暂停/继续、休息跳过。 */
+  private handleRingAction(): void {
+    const phase = this.host.getPomodoroState?.()?.phase ?? "idle";
+    if (phase === "focus") {
+      this.host.togglePomodoroPause?.();
+      return;
+    }
+    if (phase === "break" || phase === "longBreak") {
+      this.host.skipPomodoroBreak?.();
+      return;
+    }
+    this.host.startPomodoro?.();
   }
 
   update(state?: PomodoroState): void {
@@ -113,111 +141,51 @@ export class PomodoroWidget {
       paused: false,
     };
 
-    // 1. 进度圈更新
+    // 1. 进度圈：长度 = 剩余占比（空闲时整圈都是底轨色）
     const total = s.totalMs > 0 ? s.totalMs : 25 * 60000;
     const progress = Math.max(0, Math.min(1, s.remainingMs / total));
-
-    // 计算 dashoffset（从完全充满到耗尽）
-    let offset: number;
-    if (s.phase === "idle") {
-      offset = 0;
-    } else {
-      offset = CIRCUMFERENCE * (1 - progress);
-    }
+    const offset = s.phase === "idle" ? 0 : CIRCUMFERENCE * (1 - progress);
     this.progressCircle.style.strokeDashoffset = String(offset);
 
-    // 2. 状态标签与色彩更新
+    // 2. 状态类（颜色全在 CSS 里按 is-* 走主题令牌）
     this.cardEl.removeClass("is-focus", "is-break", "is-long-break", "is-idle", "is-paused");
     this.cardEl.addClass(`is-${s.phase === "longBreak" ? "long-break" : s.phase}`);
     if (s.paused) this.cardEl.addClass("is-paused");
 
-    // 状态文字：环内只留状态本身，字数并进同一行
-    let statusText = "空闲";
+    // 3. 文案与细条：时间、剩余占比
+    const remainingText = formatDuration(s.remainingMs);
+    this.timeEl.setText(remainingText);
+    this.fillEl.style.width = `${Math.round(progress * 100)}%`;
 
-    if (s.phase === "focus") {
-      statusText = s.paused
-        ? "已暂停"
-        : s.words > 0
-          ? `专注中 · +${formatNumber(s.words)}`
-          : "专注中";
-    } else if (s.phase === "break") {
-      statusText = s.paused ? "休息暂停" : "休息中";
-    } else if (s.phase === "longBreak") {
-      statusText = s.paused ? "休息暂停" : "深度休息";
-    }
+    // 4. 无障碍：旧版的「专注中 · 已暂停」文字没了，状态改由胶囊整体播报
+    let label = "番茄钟空闲";
+    if (s.phase === "focus") label = s.paused ? "专注已暂停" : "专注中";
+    else if (s.phase === "break") label = s.paused ? "休息暂停" : "休息中";
+    else if (s.phase === "longBreak") label = s.paused ? "休息暂停" : "深度休息";
+    this.cardEl.setAttr("role", "group");
+    this.cardEl.setAttr("aria-label", `${label}，剩余 ${remainingText}`);
 
-    this.statusTextEl.setText(statusText);
-    this.timeEl.setText(formatDuration(s.remainingMs));
-
-    // 3. 今日番茄汇总统计（卡头右侧）
-    const summary = this.host.getTodayPomodoroSummary?.() ?? null;
-    if (summary && summary.count > 0) {
-      this.todayStatEl.setText(`今日 ${summary.count} 个 · ${formatNumber(summary.words)} 字`);
-    } else {
-      this.todayStatEl.setText("今日 0 个");
-    }
-
-    // 4. 按钮状态切换（若状态或暂停有变化，或按钮区尚未挂载）
-    if (this.lastPhase !== s.phase || this.lastPaused !== s.paused || this.actionsEl.children.length === 0) {
+    // 5. 环心按钮的图标与语义（只在状态真的变了时重建，避免每帧动 DOM）
+    if (this.lastPhase !== s.phase || this.lastPaused !== s.paused) {
       this.lastPhase = s.phase;
       this.lastPaused = s.paused;
-      this.renderActions(s);
+      this.renderRingAction(s);
     }
   }
 
-  private renderActions(state: PomodoroState): void {
-    this.actionsEl.empty();
-
-    if (state.phase === "idle") {
-      const startBtn = this.actionsEl.createEl("button", {
-        cls: "wt-pomo-btn wt-pomo-btn-primary wt-pomo-start-full",
-      });
-      const iconSpan = startBtn.createSpan({ cls: "wt-pomo-btn-icon" });
-      setIcon(iconSpan, "play");
-      startBtn.createSpan({ text: "开始专注" });
-      startBtn.addEventListener("click", () => {
-        this.host.startPomodoro?.();
-      });
-    } else if (state.phase === "focus") {
-      const pauseBtn = this.actionsEl.createEl("button", {
-        cls: "wt-pomo-btn wt-pomo-btn-secondary",
-      });
-      const pauseIcon = pauseBtn.createSpan({ cls: "wt-pomo-btn-icon" });
-      setIcon(pauseIcon, state.paused ? "play" : "pause");
-      pauseBtn.createSpan({ text: state.paused ? "继续" : "暂停" });
-      pauseBtn.addEventListener("click", () => {
-        this.host.togglePomodoroPause?.();
-      });
-
-      const stopBtn = this.actionsEl.createEl("button", {
-        cls: "wt-pomo-btn wt-pomo-btn-danger",
-      });
-      const stopIcon = stopBtn.createSpan({ cls: "wt-pomo-btn-icon" });
-      setIcon(stopIcon, "square");
-      stopBtn.createSpan({ text: "结束" });
-      stopBtn.addEventListener("click", () => {
-        this.host.stopPomodoro?.();
-      });
-    } else {
-      const skipBtn = this.actionsEl.createEl("button", {
-        cls: "wt-pomo-btn wt-pomo-btn-secondary",
-      });
-      const skipIcon = skipBtn.createSpan({ cls: "wt-pomo-btn-icon" });
-      setIcon(skipIcon, "skip-forward");
-      skipBtn.createSpan({ text: "跳过休息" });
-      skipBtn.addEventListener("click", () => {
-        this.host.skipPomodoroBreak?.();
-      });
-
-      const stopBtn = this.actionsEl.createEl("button", {
-        cls: "wt-pomo-btn wt-pomo-btn-danger",
-      });
-      const stopIcon = stopBtn.createSpan({ cls: "wt-pomo-btn-icon" });
-      setIcon(stopIcon, "square");
-      stopBtn.createSpan({ text: "结束" });
-      stopBtn.addEventListener("click", () => {
-        this.host.stopPomodoro?.();
-      });
+  /** 环心图标：开始▶ / 暂停⏸ / 继续▶ / 休息跳过⏭ —— 图标语义必须与动作一致。 */
+  private renderRingAction(state: PomodoroState): void {
+    let icon = "wt-play";
+    let label = "开始专注";
+    if (state.phase === "focus") {
+      icon = state.paused ? "wt-play" : "wt-pause";
+      label = state.paused ? "继续专注" : "暂停专注";
+    } else if (state.phase === "break" || state.phase === "longBreak") {
+      icon = "wt-skip";
+      label = "跳过休息";
     }
+    this.ringBtnEl.empty();
+    setIcon(this.ringBtnEl, icon);
+    this.ringBtnEl.setAttr("aria-label", label);
   }
 }

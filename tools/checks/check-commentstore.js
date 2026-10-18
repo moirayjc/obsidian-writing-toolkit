@@ -24,6 +24,15 @@ function makeVault() {
     async read(file) { return files.get(file.path); },
     async create(p, text) { files.set(p, text); },
     async modify(file, text) { files.set(file.path, text); },
+    async rename(file, target) {
+      const text = files.get(file.path);
+      files.delete(file.path);
+      file.path = target;
+      files.set(target, text);
+    },
+    getFiles() {
+      return [...files.keys()].map((p) => new TFile(p));
+    },
   };
   /**
    * CommentStore 读的是 `app.fileManager.trashFile`（删批注走它，
@@ -49,7 +58,7 @@ const SAMPLE = [
 ].join("\n");
 
 const DOC = "正文/第1章.md";
-const SIDECAR = "正文/第1章.批注.md";
+const SIDECAR = ".wt-comments/正文/第1章.批注.md";
 
 async function main() {
   // 直接编译模块（esbuild 会把 comments/diagnostics 一并打进来），只桩掉 obsidian。
@@ -137,7 +146,7 @@ async function main() {
     vault.files.set(SIDECAR, SAMPLE);
     const store = new CommentStore(app);
     await store.load(DOC);
-    const affected = store.handleRenamed(SIDECAR, "正文/第2章.批注.md");
+    const affected = store.handleRenamed(SIDECAR, ".wt-comments/正文/第2章.批注.md");
     r.check("handleRenamed 返回受影响的文档路径", affected.length >= 1, JSON.stringify(affected));
     r.check("缓存已失效", store.getCached(DOC) === undefined);
   }
@@ -145,7 +154,7 @@ async function main() {
   // 7) 目录改名/删除：整段缓存一起失效
   {
     const { vault, app } = makeVault();
-    const second = "正文/第2章.批注.md";
+    const second = ".wt-comments/正文/第2章.批注.md";
     vault.files.set(SIDECAR, SAMPLE);
     vault.files.set(second, SAMPLE.replace("第1章", "第2章"));
     const store = new CommentStore(app);
@@ -279,6 +288,119 @@ async function main() {
         cached.length === 1 &&
         cached[0].id === 9
     );
+  }
+
+  // 11) 旧版同目录批注：读取时自动迁到 .wt-comments/
+  {
+    const { vault, app } = makeVault();
+    const doc = "正文/旧章.md";
+    const legacy = "正文/旧章.批注.md";
+    const target = ".wt-comments/正文/旧章.批注.md";
+    vault.files.set(legacy, SAMPLE);
+    const store = new CommentStore(app);
+    const items = await store.load(doc);
+    r.check(
+      "旧版同目录批注读取时自动迁移",
+      items.length === 1 && vault.files.has(target) && !vault.files.has(legacy)
+    );
+  }
+
+  // 12) 启动时批量迁移旧版批注
+  {
+    const { vault, app } = makeVault();
+    const legacyA = "正文/甲章.批注.md";
+    const legacyB = "正文/乙章.批注.md";
+    vault.files.set(legacyA, SAMPLE);
+    vault.files.set(legacyB, SAMPLE.replace("第1章", "第2章"));
+    const store = new CommentStore(app);
+    const moved = await store.migrateLegacySidecars();
+    r.check(
+      "启动迁移把旧批注搬进 .wt-comments/",
+      moved === 2 &&
+        vault.files.has(".wt-comments/正文/甲章.批注.md") &&
+        vault.files.has(".wt-comments/正文/乙章.批注.md") &&
+        !vault.files.has(legacyA) &&
+        !vault.files.has(legacyB)
+    );
+  }
+
+  // 13) 正文目录改名：镜像目录一起搬
+  {
+    const { app } = makeVault();
+    const disk = new Map([
+      [".wt-comments/正文/第1章.批注.md", SAMPLE],
+      [".wt-comments/正文/第2章.批注.md", SAMPLE],
+    ]);
+    app.vault.adapter = {
+      async exists(p) {
+        return disk.has(p) || [...disk.keys()].some((k) => k.startsWith(p + "/"));
+      },
+      async mkdir() {},
+      async read(p) { return disk.get(p); },
+      async write(p, text) { disk.set(p, text); },
+      async remove(p) { disk.delete(p); },
+      async rename(from, to) {
+        const text = disk.get(from);
+        disk.delete(from);
+        disk.set(to, text);
+      },
+      async list(folder) {
+        const prefix = folder + "/";
+        const keys = [...disk.keys()].filter((k) => k.startsWith(prefix));
+        return {
+          files: keys.filter((k) => !k.slice(prefix.length).includes("/")),
+          folders: [...new Set(keys.filter((k) => k.slice(prefix.length).includes("/"))
+            .map((k) => prefix + k.slice(prefix.length).split("/")[0]))],
+        };
+      },
+    };
+    const store = new CommentStore(app);
+    const moved = await store.migrateFolderPrefix("正文", "改名正文");
+    r.check(
+      "正文目录改名同步搬 .wt-comments 镜像",
+      moved === 2 &&
+        disk.has(".wt-comments/改名正文/第1章.批注.md") &&
+        disk.has(".wt-comments/改名正文/第2章.批注.md") &&
+        !disk.has(".wt-comments/正文/第1章.批注.md")
+    );
+  }
+
+  // 14) 新布局：隐藏目录走 adapter 写入与读回
+  {
+    const { app } = makeVault();
+    const disk = new Map();
+    app.vault.adapter = {
+      async exists(p) {
+        return disk.has(p) || [...disk.keys()].some((k) => k.startsWith(p + "/"));
+      },
+      async mkdir() {},
+      async read(p) { return disk.get(p); },
+      async write(p, text) { disk.set(p, text); },
+      async remove(p) { disk.delete(p); },
+      async rename(from, to) {
+        const text = disk.get(from);
+        disk.delete(from);
+        disk.set(to, text);
+      },
+      async list(folder) {
+        const prefix = folder + "/";
+        const keys = [...disk.keys()].filter((k) => k.startsWith(prefix));
+        return {
+          files: keys.filter((k) => !k.slice(prefix.length).includes("/")),
+          folders: [...new Set(keys.filter((k) => k.slice(prefix.length).includes("/"))
+            .map((k) => prefix + k.slice(prefix.length).split("/")[0]))],
+        };
+      },
+    };
+    const store = new CommentStore(app);
+    await store.save(DOC, [{
+      id: 1, status: "pending", quote: "原文", paragraph: "", paragraphHint: 0,
+      lineHint: 1, createdAt: "2026-10-18 10:00", content: "内容", reply: "", current: "",
+    }]);
+    const target = ".wt-comments/正文/第1章.批注.md";
+    r.check("新批注写入 .wt-comments 走 adapter", disk.has(target));
+    store.invalidate(DOC);
+    r.check("从隐藏目录读回批注", (await store.load(DOC)).length === 1);
   }
 
   // 顺手确认编译出来的是真实现（防止抽样到空模块）

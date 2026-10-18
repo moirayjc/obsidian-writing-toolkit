@@ -104,7 +104,7 @@ export class SnapshotOperationPanel implements SnapshotPanelHandle {
     const saveBtn = toolbar.createEl("button", {
       cls: "wt-snap-btn wt-snap-primary wt-snap-save",
     });
-    setIcon(saveBtn, "save");
+    setIcon(saveBtn, "wt-save");
     saveBtn.createSpan({ text: "保存快照" });
     saveBtn.addEventListener("click", () => {
       void this.operations.saveSnapshotNow().then(() => this.refresh());
@@ -121,7 +121,7 @@ export class SnapshotOperationPanel implements SnapshotPanelHandle {
     if (!path) {
       const empty = el.createDiv({ cls: "wt-snap-empty" });
       const iconEl = empty.createDiv({ cls: "wt-snap-empty-icon" });
-      setIcon(iconEl, "history");
+      setIcon(iconEl, "wt-history");
       empty.createDiv({
         text: "打开一个笔记后，可在此保存、对比、恢复和复制草稿快照。",
       });
@@ -143,7 +143,7 @@ export class SnapshotOperationPanel implements SnapshotPanelHandle {
     if (entries.length === 0) {
       const empty = list.createDiv({ cls: "wt-snap-empty" });
       const iconEl = empty.createDiv({ cls: "wt-snap-empty-icon" });
-      setIcon(iconEl, "history");
+      setIcon(iconEl, "wt-history");
       empty.createDiv({
         text: "当前文件还没有快照。写作会话结束、连续写作超过设定时间，或点击「保存快照」都会自动生成。",
       });
@@ -166,7 +166,7 @@ export class SnapshotOperationPanel implements SnapshotPanelHandle {
         this.rowRefs.push({ deltaEl, count: entry.wordCount });
         // 行尾淡色箭头：提示整行可点击进入对比
         const openEl = row.createDiv({ cls: "wt-snap-open" });
-        setIcon(openEl, "chevron-right");
+        setIcon(openEl, "wt-chevron-right");
         // 点击整行 → 直接进入对比界面（编辑/恢复都在那里完成）
         row.addEventListener("click", () => {
           showSnapshotDiff(
@@ -191,7 +191,7 @@ export class SnapshotOperationPanel implements SnapshotPanelHandle {
     const openBtn = footer.createEl("button", {
       cls: "wt-snap-btn wt-snap-folder-btn",
     });
-    setIcon(openBtn, "folder-open");
+    setIcon(openBtn, "wt-folder");
     openBtn.createSpan({ text: "打开文件夹" });
     openBtn.addEventListener("click", () =>
       void this.operations.openSnapshotFolder()

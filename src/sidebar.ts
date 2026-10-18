@@ -47,7 +47,7 @@ export class WritingToolkitSidebar extends ItemView {
   }
 
   getIcon(): string {
-    return "pen-line";
+    return "wt-toolbox";
   }
 
   async onOpen(): Promise<void> {
@@ -127,12 +127,12 @@ export class WritingToolkitSidebar extends ItemView {
     return card;
   }
 
-  /** 卡内小节标题（打字机 / 排版）。first 为 true 时不画顶部分隔线。 */
-  private sub(parent: HTMLElement, title: string, first = false): void {
-    parent.createDiv({
-      cls: first ? "wt-tb-sub is-first" : "wt-tb-sub",
-      text: title,
-    });
+  /**
+   * 卡内一组「同一个模块」的行。
+   * 组内不画分隔线，组与组之间才画——没有小标题也能看出模块边界。
+   */
+  private group(parent: HTMLElement): HTMLElement {
+    return parent.createDiv({ cls: "wt-tb-group" });
   }
 
   /** 卡内一行开关：名称靠左、开关靠右，行与行之间由 CSS 画虚线。 */
@@ -193,7 +193,7 @@ export class WritingToolkitSidebar extends ItemView {
           cls: "wt-combo-arrow",
           attr: { type: "button" },
         });
-        setIcon(arrow, "chevron-down");
+        setIcon(arrow, "wt-chevron-down");
         arrow.addEventListener("mousedown", (e) => e.preventDefault());
         arrow.addEventListener("click", () => {
           if (menu.hasClass("is-open")) {
@@ -340,11 +340,14 @@ export class WritingToolkitSidebar extends ItemView {
           // 这里不重复放一份）。
           this.pomodoroWidget = new PomodoroWidget(section, this.host.caps.pomodoro);
 
-          // 书写：打字机与排版
-          const writeCard = this.card(section, "书写");
-          this.sub(writeCard, "打字机", true);
+          // 打字机与排版合成一张无标题卡，卡内按「模块」分成两个小组：
+          // 打字机（模式 / 光标位置）、排版（行高 / 段间距 / 段首缩进）。
+          // 组内不画分隔线、组与组之间才画——不再写「书写 / 打字机 / 排版」
+          // 三行小标题，模块边界仍然看得出来。
+          const writeCard = this.card(section, "");
+          const typewriterGroup = this.group(writeCard);
           this.toggleRow(
-            writeCard,
+            typewriterGroup,
             "打字机模式",
             this.host.settings.typewriterMode,
             async (value) => {
@@ -355,7 +358,7 @@ export class WritingToolkitSidebar extends ItemView {
           );
 
           this.comboSetting(
-            writeCard,
+            typewriterGroup,
             "光标位置",
             Math.round(this.host.settings.typewriterOffset * 100),
             20,
@@ -369,9 +372,9 @@ export class WritingToolkitSidebar extends ItemView {
             "%"
           );
 
-          this.sub(writeCard, "排版");
+          const typeGroup = this.group(writeCard);
           this.comboSetting(
-            writeCard,
+            typeGroup,
             "行高",
             this.host.settings.lineHeight,
             1.2,
@@ -384,7 +387,7 @@ export class WritingToolkitSidebar extends ItemView {
           );
 
           this.comboSetting(
-            writeCard,
+            typeGroup,
             "段间距",
             this.host.settings.paragraphSpacing,
             0,
@@ -397,7 +400,7 @@ export class WritingToolkitSidebar extends ItemView {
           );
 
           this.toggleRow(
-            writeCard,
+            typeGroup,
             "段首缩进",
             this.host.settings.paragraphIndent,
             async (value) => {
@@ -406,8 +409,8 @@ export class WritingToolkitSidebar extends ItemView {
             }
           );
 
-          // 沉浸与辅助
-          const focusCard = this.card(section, "沉浸与辅助");
+          // 沉浸与辅助：同样不写卡头，一列开关靠虚线分隔
+          const focusCard = this.card(section, "");
           this.toggleRow(
             focusCard,
             "沉浸模式",

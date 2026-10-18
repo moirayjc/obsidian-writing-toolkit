@@ -24,7 +24,6 @@ export interface CachedFileStat {
   mtime: number;
   size: number;
   words: number;
-  outline: boolean;
 }
 
 /** 供主页 / 编辑台共享的只读字数缓存。 */

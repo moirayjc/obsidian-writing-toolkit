@@ -9,15 +9,15 @@ Writing Toolkit is an Obsidian plugin for writing long-form Chinese web fiction.
 ## 功能
 
 - **字数统计**：番茄（含标点）、标准（汉字+字母+数字）、原生（分词）三种模式，自动跳过 YAML frontmatter。
-- **码字时速与每日目标**：按今日新增字数计算速度，状态栏显示进度。
+- **码字时速与每日目标**：编辑台左下角信息栏显示当前时速，状态栏显示今日进度。
 - **番茄钟**：专注 / 休息循环，可选自动快照。
 - **快照**：按时间间隔与空闲时长自动保存草稿快照，支持对比差异与恢复。
 - **章纲**：独立伴生文件存储章纲，不修改正文 YAML。
 - **工作台与首页**：按作品管理章节，支持章节连号自动前移。
 - **写作辅助**：沉浸模式、打字机模式、段落高亮、半角标点修正、回车硬换行。
 - **编辑工具条**：编辑器里选中文字浮出小工具条——加粗、斜体、下划线、删除线、高亮、字色；格式记号不计入字数统计。
-- **批注**：像稿子上的助手批注一样在文档上留批注——被批注的原文带淡标记，行尾跟一枚脚注序号；编辑器里不放任何浮层卡片，批注列表集中在工具箱侧栏的「批注」标签（计数徽标 + 待处理在前、已处理沉底），点正文标记会跳到对应卡片，阅读、编辑、删除、标记已处理都在侧栏完成，正文保持干净。批注存在同目录的伴随文件里（正文一个字不动），适合「Agent 写稿 → 你批注 → Agent 读批注改稿」的协作流程。
-- **一键复制正文**：编辑台章节列表搜索框右侧有个复制图标，点一下把当前章节的干净正文复制到剪贴板——批注标记只存在于编辑器渲染层，不会跟着复制出去，粘到别处就是纯净稿子。
+- **批注**：像稿子上的助手批注一样在文档上留批注——被批注的原文带淡标记，行尾跟一枚脚注序号；编辑器里不放任何浮层卡片，批注列表集中在工具箱侧栏的「批注」标签（计数徽标 + 待处理在前、已处理沉底），点正文标记会跳到对应卡片，阅读、编辑、删除、标记已处理都在侧栏完成，正文保持干净。批注存在库根 `.wt-comments/` 下镜像正文路径的伴随文件里（正文一个字不动），适合「Agent 写稿 → 你批注 → Agent 读批注改稿」的协作流程。
+- **一键复制正文**：编辑台章节列表搜索框右侧有个独立的复制按钮（和搜索框分开，不混在输入框里），点一下把当前章节的干净正文复制到剪贴板——批注标记只存在于编辑器渲染层，不会跟着复制出去，粘到别处就是纯净稿子。
 - **手机版**：Obsidian 手机端自动套用手机布局，状态栏与抽屉式面板。
 
 ## 命令面板
@@ -42,12 +42,14 @@ Writing Toolkit is an Obsidian plugin for writing long-form Chinese web fiction.
 
 ## 批注（与 Agent 协作）
 
-选中文字后，点浮出气泡上的批注按钮（或右键「添加批注」），在居中的输入框里写下内容。批注不会写进正文，而是存到同目录的伴随文件里：
+选中文字后，点浮出气泡上的批注按钮（或右键「添加批注」），在居中的输入框里写下内容。批注不会写进正文，而是存到库根 `.wt-comments/` 下镜像正文路径的伴随文件里：
 
 ```
-正文草稿/第1章.md          ← 正文，一个字不动
-正文草稿/第1章.批注.md     ← 批注文件（与 Agent 的沟通渠道）
+正文草稿/第1章.md                       ← 正文，一个字不动
+.wt-comments/正文草稿/第1章.批注.md     ← 批注文件（与 Agent 的沟通渠道）
 ```
+
+> 旧版放在正文同目录的 `第1章.批注.md` 会在插件启动时自动搬进 `.wt-comments/`，不用手动处理。
 
 批注文件里每条批注包含：状态（待处理 / 已处理）、原文引用、所在段落、现文、位置（第 N 段 · 约第 M 行）、创建时间、内容、回复。文件开头还写着给 Agent 的处理说明。在正文里，批注只是看得见的标记：
 
@@ -68,7 +70,7 @@ Writing Toolkit is an Obsidian plugin for writing long-form Chinese web fiction.
 
 1. 你读稿，选中不满意的地方，写批注（可以先写多条）。
 2. 在工具箱侧栏「批注」标签底部点「复制处理指令」，把现成指令粘给 Agent（指令里会写明待处理条数，避免 Agent 重复处理）。
-3. Agent 读同目录的 `.批注.md` 文件：按「原文」定位、按「批注」修改正文，然后把每条的状态改成「已处理」、在「回复」里写它改了什么；如果改动了原文对应的文字，把改完后该处现在的文字照抄进「现文」（文件抬头里写着这条协议）。
+3. Agent 读 `.wt-comments/` 下对应路径的 `.批注.md` 文件：按「原文」定位、按「批注」修改正文，然后把每条的状态改成「已处理」、在「回复」里写它改了什么；如果改动了原文对应的文字，把改完后该处现在的文字照抄进「现文」（文件抬头里写着这条协议）。
 4. 你回到文档：改过的原文标记变成灰色，点开能看到 Agent 的回复；确认满意后，用面板里的「清除已处理」清理（会先弹确认，Agent 的回复会一起删掉）。
 
 **Agent 改稿后，批注怎么跟住原文**：位置按四层找——① Agent 写回的「现文」；② 原「原文」精确匹配，其次忽略空白差异；③ 用建批注时那一段里原文前后的文字夹出被改写的位置（段内残余）；④ 整段匹配 / 按头尾相似度找最像的段落（结合段落序号就近取舍）。靠后面三层找到的，界面会标出「已迁移」或一句定位说明，让你知道位置是推断的。四层都找不到时，面板里该条会标「锚点失效（原文已大改）」并出现「重新绑定」按钮：在正文里选中这条批注现在该对应的文字，再点一次「重新绑定」，批注就会重新挂上去。批注文件不会被当成章节，也不计入字数统计。
@@ -100,7 +102,7 @@ npm run build    # 生产构建（类型检查后输出 main.js）
 - **Non-chapter file exclusions**: helper files in draft folders (e.g. `Agent.md`) are never treated as chapters; comma-separated configurable list, default `Agent, AGENTS, CLAUDE, README`.
 - **Writing aids**: focus mode, typewriter mode, paragraph highlight, half-width punctuation fix, and hard line breaks on Enter.
 - **Editing toolbar**: a floating bubble appears when you select text in an editor (bold, italic, underline, strikethrough, highlight, font color); formatting marks are never counted in word statistics.
-- **Comments**: Margin-note style annotations for collaborating with an AI agent. Annotated text gets a soft highlight plus a superscript footnote number at the end of the line — clicking either reveals the matching card in the Toolkit sidebar and flashes it. Nothing floats over the editor (hover-anchored cards drift around as you scroll), so the manuscript stays clean; writing and editing happen in a screen-centred input dialog. A tab in the Toolkit sidebar lists the current document's comments with a count badge and one-click jumping: pending comments come first (ordered by position in the manuscript), resolved ones sink into a collapsed "已处理 N 条" group at the bottom, and every card offers hover actions to edit, delete (click 删除, then 确认 within 3 seconds; undoable for 6 seconds) and resolve/reopen; a "只看待处理" filter hides resolved items while you work. A "clear resolved" action asks for confirmation first. Comments live in a sidecar file (`Chapter.批注.md`) next to the document; the manuscript itself is never modified. The agent reads the sidecar, edits the manuscript, and writes replies, a resolved status, and the rewritten text ("现文") per comment. If the prose changes so much that a comment can no longer be anchored (five passes: present text → exact quote → whitespace-insensitive quote → in-paragraph residue → paragraph similarity), the panel marks it as orphaned and offers a "重新绑定" (re-bind) button: select the new spot in the document and click it again.
+- **Comments**: Margin-note style annotations for collaborating with an AI agent. Annotated text gets a soft highlight plus a superscript footnote number at the end of the line — clicking either reveals the matching card in the Toolkit sidebar and flashes it. Nothing floats over the editor (hover-anchored cards drift around as you scroll), so the manuscript stays clean; writing and editing happen in a screen-centred input dialog. A tab in the Toolkit sidebar lists the current document's comments with a count badge and one-click jumping: pending comments come first (ordered by position in the manuscript), resolved ones sink into a collapsed "已处理 N 条" group at the bottom, and every card offers hover actions to edit, delete (click 删除, then 确认 within 3 seconds; undoable for 6 seconds) and resolve/reopen; a "只看待处理" filter hides resolved items while you work. A "clear resolved" action asks for confirmation first. Comments live in a sidecar file under the vault-level `.wt-comments/` folder, mirroring the document path (e.g. `.wt-comments/Drafts/Chapter.批注.md`); the manuscript itself is never modified. The agent reads the sidecar, edits the manuscript, and writes replies, a resolved status, and the rewritten text ("现文") per comment. If the prose changes so much that a comment can no longer be anchored (five passes: present text → exact quote → whitespace-insensitive quote → in-paragraph residue → paragraph similarity), the panel marks it as orphaned and offers a "重新绑定" (re-bind) button: select the new spot in the document and click it again.
 - **Mobile**: uses a mobile layout with a status bar and drawer panels.
 
 **Installation:** Turn off Restricted mode in Settings → Community plugins, then install and enable "Writing Toolkit".

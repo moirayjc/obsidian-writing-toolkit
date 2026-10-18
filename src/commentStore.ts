@@ -1,14 +1,20 @@
 /**
- * 批注存储：批注文件（`文档名.批注.md`）的读写与缓存。
+ * 批注存储：批注文件（`.wt-comments/<正文相对路径>.批注.md`）的读写与缓存。
  *
  * 缓存按「源文档路径」维度；批注文件被 Agent 或用户从外部改写时，
  * 由 main 里注册的 vault 事件调用 handleModified / handleDeleted 让缓存失效。
+ *
+ * 旧版把批注放在正文同目录；首次读取（或启动时统一迁移）会把旧文件搬到
+ * `.wt-comments/` 的镜像位置。迁移失败时退回旧路径继续读写，绝不丢批注。
  */
-import { App, TFile } from "obsidian";
+import { App, DataAdapter, TFile } from "obsidian";
 import {
+  COMMENTS_FOLDER,
   WtComment,
   docPathForSidecar,
+  isLegacySidecarPath,
   isSidecarPath,
+  legacySidecarPathFor,
   parseCommentFile,
   serializeCommentFile,
   sidecarPathFor,
@@ -20,6 +26,12 @@ import {
   commentSidecarDeleted,
   commentWrote,
 } from "./diagnostics";
+
+/** 文件路径的父目录；根目录文件返回空字符串。 */
+function parentFolder(path: string): string {
+  const i = path.lastIndexOf("/");
+  return i > 0 ? path.slice(0, i) : "";
+}
 
 export class CommentStore {
   private cache = new Map<string, WtComment[]>();
@@ -63,17 +75,14 @@ export class CommentStore {
     gen: number
   ): Promise<WtComment[]> {
     const t0 = performance.now();
-    const file = this.app.vault.getAbstractFileByPath(sidecarPathFor(docPath));
-    let comments: WtComment[] = [];
-    if (file instanceof TFile) {
-      const text = await this.app.vault.read(file);
-      comments = parseCommentFile(text);
-    }
+    const sidecar = await this.resolveSidecarPath(docPath);
+    const text = await this.readText(sidecar);
+    const comments = text === null ? [] : parseCommentFile(text);
     // 等待期间批注被改写/保存过（代数变了）：不要用旧结果覆盖缓存
     if ((this.generation.get(docPath) ?? 0) === gen) {
       this.cache.set(docPath, comments);
     }
-    commentLoaded(docPath, comments.length, performance.now() - t0, file instanceof TFile);
+    commentLoaded(docPath, comments.length, performance.now() - t0, text !== null);
     return comments;
   }
 
@@ -106,18 +115,20 @@ export class CommentStore {
 
   /** 把批注列表写回批注文件；列表为空时删除批注文件。 */
   async save(docPath: string, comments: readonly WtComment[]): Promise<void> {
-    const sidecar = sidecarPathFor(docPath);
     const t0 = performance.now();
     this.inflight.delete(docPath);
     const startedAt = (this.generation.get(docPath) ?? 0) + 1;
     this.generation.set(docPath, startedAt);
-    const file = this.app.vault.getAbstractFileByPath(sidecar);
     try {
+      const sidecar = await this.resolveSidecarPath(docPath);
       if (comments.length === 0) {
-        if (file instanceof TFile) {
-          // 用 FileManager.trashFile 而不是 Vault.delete：前者尊重用户「删除到回收站」的设置
-          await this.app.fileManager.trashFile(file);
-          commentSidecarDeleted(docPath);
+        // 新、旧两个位置都清掉，避免迁移失败留下的旧文件把批注“复活”。
+        for (const path of new Set([sidecar, legacySidecarPathFor(docPath)])) {
+          if (await this.exists(path)) {
+            // 用 FileManager.trashFile 而不是 Vault.delete：前者尊重用户「删除到回收站」的设置
+            await this.trashPath(path);
+            commentSidecarDeleted(docPath);
+          }
         }
         if ((this.generation.get(docPath) ?? 0) === startedAt) {
           // 写盘期间启动的读取拿到的是旧内容，提升代数让它们不能回写缓存。
@@ -127,11 +138,7 @@ export class CommentStore {
         return;
       }
       const text = serializeCommentFile(docPath, comments);
-      if (file instanceof TFile) {
-        await this.app.vault.modify(file, text);
-      } else {
-        await this.app.vault.create(sidecar, text);
-      }
+      await this.writeText(sidecar, text);
       // 写盘期间若收到外部 modify 或另一次写入，代数会变化；
       // 此时不能拿本次结果覆盖更新的缓存。
       if ((this.generation.get(docPath) ?? 0) === startedAt) {
@@ -175,5 +182,201 @@ export class CommentStore {
     if (isSidecarPath(newPath)) docs.add(docPathForSidecar(newPath));
     for (const d of docs) this.invalidate(d);
     return [...docs];
+  }
+
+  /**
+   * 启动时一次性把库里的旧版同目录批注文件搬进 `.wt-comments/`。
+   * 只做 rename，不改文件内容；失败的那一个保持原样，下次读取时再试。
+   */
+  async migrateLegacySidecars(): Promise<number> {
+    const files = this.app.vault.getFiles?.() ?? [];
+    let moved = 0;
+    for (const file of files) {
+      if (!isLegacySidecarPath(file.path)) continue;
+      const docPath = docPathForSidecar(file.path);
+      const target = sidecarPathFor(docPath);
+      if (await this.exists(target)) continue;
+      try {
+        await this.renamePath(file.path, target);
+        this.invalidate(docPath);
+        moved++;
+      } catch (error) {
+        commentError("CommentStore.migrateLegacySidecars", error);
+      }
+    }
+    return moved;
+  }
+
+  /**
+   * 正文所在目录改名时，同步搬 `.wt-comments/` 下镜像的那一段。
+   * 旧版同目录批注会随文件夹一起被 Obsidian 搬走，稍后读取时再单独迁移。
+   */
+  async migrateFolderPrefix(oldFolder: string, newFolder: string): Promise<number> {
+    const adapter = this.app.vault.adapter;
+    if (!adapter) return 0;
+    const from = `${COMMENTS_FOLDER}/${oldFolder}`;
+    const to = `${COMMENTS_FOLDER}/${newFolder}`;
+    const files = await this.listFilesDeep(adapter, from);
+    let moved = 0;
+    for (const full of files) {
+      const rel = full.slice(from.length + 1);
+      const target = `${to}/${rel}`;
+      if (await this.exists(target)) continue;
+      try {
+        await this.ensureFolder(parentFolder(target));
+        await adapter.rename(full, target);
+        moved++;
+      } catch (error) {
+        commentError("CommentStore.migrateFolderPrefix", error);
+      }
+    }
+    return moved;
+  }
+
+  /* ---------- 路径与读写 ---------- */
+
+  /**
+   * 新布局的目标路径；若目标不存在而旧版同目录文件存在，则就地迁移。
+   * 迁移失败时退回旧路径——这一轮继续读写旧文件，数据不丢。
+   */
+  private async resolveSidecarPath(docPath: string): Promise<string> {
+    const target = sidecarPathFor(docPath);
+    if (await this.exists(target)) return target;
+    const legacy = legacySidecarPathFor(docPath);
+    if (legacy === target || !(await this.exists(legacy))) return target;
+    try {
+      await this.renamePath(legacy, target);
+      return target;
+    } catch (error) {
+      commentError("CommentStore.migrateLegacySidecar", error);
+      return legacy;
+    }
+  }
+
+  private fileAt(path: string): TFile | null {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    return file instanceof TFile ? file : null;
+  }
+
+  private async exists(path: string): Promise<boolean> {
+    if (this.fileAt(path)) return true;
+    const adapter = this.app.vault.adapter;
+    if (!adapter) return false;
+    try {
+      return await adapter.exists(path);
+    } catch {
+      return false;
+    }
+  }
+
+  private async readText(path: string): Promise<string | null> {
+    const file = this.fileAt(path);
+    if (file) return this.app.vault.read(file);
+    const adapter = this.app.vault.adapter;
+    if (!adapter) return null;
+    if (!(await adapter.exists(path))) return null;
+    return adapter.read(path);
+  }
+
+  private async writeText(path: string, text: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    // .wt-comments 是隐藏目录：按 Obsidian 文档走 Adapter，别指望 Vault 索引。
+    if (path.startsWith(`${COMMENTS_FOLDER}/`) && adapter) {
+      await this.ensureFolder(parentFolder(path));
+      await adapter.write(path, text);
+      return;
+    }
+    const file = this.fileAt(path);
+    if (file) {
+      await this.app.vault.modify(file, text);
+      return;
+    }
+    if (adapter && (await adapter.exists(path))) {
+      await adapter.write(path, text);
+      return;
+    }
+    await this.ensureFolder(parentFolder(path));
+    try {
+      await this.app.vault.create(path, text);
+    } catch (error) {
+      // 并发创建或未进索引的隐藏文件：能写到磁盘就算成功
+      if (adapter && (await adapter.exists(path))) {
+        await adapter.write(path, text);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async trashPath(path: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (path.startsWith(`${COMMENTS_FOLDER}/`) && adapter) {
+      if (await adapter.exists(path)) await adapter.remove(path);
+      return;
+    }
+    const file = this.fileAt(path);
+    if (file) {
+      await this.app.fileManager.trashFile(file);
+      return;
+    }
+    if (adapter && (await adapter.exists(path))) await adapter.remove(path);
+  }
+
+  private async renamePath(from: string, to: string): Promise<void> {
+    await this.ensureFolder(parentFolder(to));
+    const file = this.fileAt(from);
+    if (file) {
+      try {
+        await this.app.vault.rename(file, to);
+        return;
+      } catch (error) {
+        // 隐藏目录未进索引等情况下，退回 adapter 的原子 rename
+        const adapter = this.app.vault.adapter;
+        if (!adapter) throw error;
+        await adapter.rename(from, to);
+        return;
+      }
+    }
+    const adapter = this.app.vault.adapter;
+    if (!adapter) throw new Error(`找不到批注文件：${from}`);
+    await adapter.rename(from, to);
+  }
+
+  private async ensureFolder(folder: string): Promise<void> {
+    if (!folder) return;
+    const adapter = this.app.vault.adapter;
+    if (!adapter) return;
+    let current = "";
+    for (const part of folder.split("/").filter(Boolean)) {
+      current = current ? `${current}/${part}` : part;
+      try {
+        if (!(await adapter.exists(current))) await adapter.mkdir(current);
+      } catch {
+        /* 已存在或并发创建，忽略 */
+      }
+    }
+  }
+
+  private async listFilesDeep(
+    adapter: DataAdapter,
+    folder: string
+  ): Promise<string[]> {
+    const out: string[] = [];
+    let listed: { files: string[]; folders: string[] };
+    try {
+      listed = await adapter.list(folder);
+    } catch {
+      return out;
+    }
+    // 不同平台/版本的 adapter.list 可能返回完整路径或裸文件名，两种都兜住。
+    const join = (child: string): string =>
+      child === folder || child.startsWith(`${folder}/`)
+        ? child
+        : `${folder}/${child}`;
+    out.push(...listed.files.map(join));
+    for (const child of listed.folders) {
+      out.push(...(await this.listFilesDeep(adapter, join(child))));
+    }
+    return out;
   }
 }

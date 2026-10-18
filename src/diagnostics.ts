@@ -376,7 +376,6 @@ export function buildStatsDiagReport(ctx: {
   dailyGoal: number;
   todayStr: string;
   dailyTotal: number;
-  dailyGross: number;
   dailyDurationSeconds: number;
   fileBaselineCount: number;
   baselinesAt: number;
@@ -399,8 +398,7 @@ export function buildStatsDiagReport(ctx: {
   push("");
   push("## 今日");
   push(`- 日期键：${ctx.todayStr}`);
-  push(`- 净增 dailyTotal：${ctx.dailyTotal}`);
-  push(`- 毛新增 dailyGross：${ctx.dailyGross}（今日目标与热力图用的是这个）`);
+  push(`- 净增 dailyTotal：${ctx.dailyTotal}（今日目标与热力图用的就是这个）`);
   push(`- 有效写作时长：${Math.round(ctx.dailyDurationSeconds / 60)} 分钟`);
 
   push("");

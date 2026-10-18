@@ -39,7 +39,6 @@ export type UiShellServices = Pick<
 /** 统计读模型：数字由 main.ts 维护，Shell 只读、不自己重算。 */
 export interface UiShellStats {
   total(): number;
-  gross(): number;
   durationSeconds(): number;
   getTodayDurationSeconds(): number;
   getTodayPomodoroSummary(): { count: number; words: number } | null;

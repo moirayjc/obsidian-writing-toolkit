@@ -1,5 +1,5 @@
 import { App, DataAdapter, TFile } from "obsidian";
-import { isCommentSidecarName } from "./comments";
+import { COMMENTS_FOLDER, isCommentSidecarName } from "./comments";
 
 /**
  * 章纲相关的纯文本与存储工具
@@ -173,7 +173,7 @@ export function isDraftPath(
 ): boolean {
   if (!path || !path.endsWith(".md")) return false;
   // 排除系统目录及内部目录
-  const excluded = [snapshotFolder, OUTLINES_FOLDER, ".wt-snapshots", ".wt-outlines", configDir];
+  const excluded = [snapshotFolder, OUTLINES_FOLDER, COMMENTS_FOLDER, ".wt-snapshots", ".wt-outlines", ".wt-comments", configDir];
   for (const ex of excluded) {
     if (ex) {
       const f = ex.replace(/^\/+|\/+$/g, "");

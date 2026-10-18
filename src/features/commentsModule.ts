@@ -16,6 +16,7 @@ import {
   docPathForSidecar,
   formatTimestamp,
   isSidecarPath,
+  legacySidecarPathFor,
   locateAll,
   nextCommentId,
   paragraphAt,
@@ -63,6 +64,10 @@ export interface CommentStoreAdapter {
   handleModified(path: string): string | null;
   handleDeleted(path: string): string | null;
   handleRenamed(oldPath: string, newPath: string): string[];
+  /** 启动时把旧版同目录批注收进 `.wt-comments/`（可选，测试桩可省略）。 */
+  migrateLegacySidecars?(): Promise<number>;
+  /** 正文目录改名时同步搬镜像目录（可选，测试桩可省略）。 */
+  migrateFolderPrefix?(oldFolder: string, newFolder: string): Promise<number>;
 }
 
 export interface CommentsChange {
@@ -571,7 +576,7 @@ export function createCommentsModule(
       view.state.doc.toString(),
       selection.from
     );
-    const sidecarName = sidecarPathFor(path).split("/").pop() ?? "";
+    const sidecarPath = sidecarPathFor(path);
     let createdId: number | null = null;
     const created = await mutateComments(path, (list) => {
       const id = nextCommentId(list);
@@ -605,7 +610,7 @@ export function createCommentsModule(
             comment.id === id ? { ...comment, content } : comment
           )
         );
-        new Notice(`批注已保存到「${sidecarName}」`);
+        new Notice(`批注已保存到「${sidecarPath}」`);
       },
       () => {
         if (!acceptingCalls) return;
@@ -695,21 +700,77 @@ export function createCommentsModule(
       });
   }
 
+  async function pathExists(path: string): Promise<boolean> {
+    const runtime = requireRuntime();
+    if (runtime.app.vault.getAbstractFileByPath(path)) return true;
+    const adapter = runtime.app.vault.adapter;
+    if (!adapter) return false;
+    return adapter.exists(path);
+  }
+
+  async function ensureParentFolder(path: string): Promise<void> {
+    const runtime = requireRuntime();
+    const dir = path.includes("/")
+      ? path.slice(0, path.lastIndexOf("/"))
+      : "";
+    if (!dir) return;
+    const adapter = runtime.app.vault.adapter;
+    if (!adapter) return;
+    let current = "";
+    for (const part of dir.split("/").filter(Boolean)) {
+      current = current ? `${current}/${part}` : part;
+      try {
+        if (!(await adapter.exists(current))) await adapter.mkdir(current);
+      } catch {
+        /* 已存在或并发创建，忽略 */
+      }
+    }
+  }
+
+  async function renameSidecar(from: string, to: string): Promise<void> {
+    const runtime = requireRuntime();
+    await ensureParentFolder(to);
+    const file = runtime.app.vault.getAbstractFileByPath(from);
+    if (file instanceof TFile) {
+      await runtime.app.vault.rename(file, to);
+      return;
+    }
+    const adapter = runtime.app.vault.adapter;
+    if (!adapter) throw new Error(`找不到批注文件：${from}`);
+    await adapter.rename(from, to);
+  }
+
   async function migrateCommentSidecar(
     oldPath: string,
     newPath: string
   ): Promise<void> {
     const runtime = requireRuntime();
     if (!oldPath || !newPath || oldPath === newPath) return;
-    const oldSidecarPath = sidecarPathFor(oldPath);
     const newSidecarPath = sidecarPathFor(newPath);
-    const oldSidecar =
-      runtime.app.vault.getAbstractFileByPath(oldSidecarPath);
-    if (!(oldSidecar instanceof TFile)) return;
-    if (runtime.app.vault.getAbstractFileByPath(newSidecarPath)) return;
-    await runtime.app.vault.rename(oldSidecar, newSidecarPath);
-    runtime.store.invalidate(oldPath);
-    runtime.store.invalidate(newPath);
+    if (await pathExists(newSidecarPath)) return;
+    // 新布局优先；旧版同目录文件作为兜底，顺便完成迁移。
+    for (const candidate of [
+      sidecarPathFor(oldPath),
+      legacySidecarPathFor(oldPath),
+    ]) {
+      if (!(await pathExists(candidate))) continue;
+      await renameSidecar(candidate, newSidecarPath);
+      runtime.store.invalidate(oldPath);
+      runtime.store.invalidate(newPath);
+      return;
+    }
+  }
+
+  async function migrateCommentFolder(
+    oldFolder: string,
+    newFolder: string
+  ): Promise<void> {
+    const runtime = requireRuntime();
+    if (!oldFolder || !newFolder || oldFolder === newFolder) return;
+    const migrate = runtime.store.migrateFolderPrefix;
+    if (typeof migrate === "function") {
+      await migrate.call(runtime.store, oldFolder, newFolder);
+    }
   }
 
   function handleSidecarChanged(path: string): void {
@@ -736,6 +797,10 @@ export function createCommentsModule(
       onCommentsChanged(docPath);
     }
     if (file instanceof TFolder) {
+      // 批注文件现在镜像在 .wt-comments/ 下，目录改名要同步搬这一段。
+      await enqueueMutation(() =>
+        migrateCommentFolder(oldPath, file.path)
+      );
       runtime.store.invalidatePrefix(oldPath);
       refreshPanels();
       notifyChanged(activeCommentDocPath());
@@ -801,6 +866,22 @@ export function createCommentsModule(
       services = context.services;
       events = context.events;
       store = createStore(context.app);
+      // 旧版把批注放在正文同目录；启动时一次性收进 .wt-comments/。
+      const migrateLegacy = store.migrateLegacySidecars;
+      if (typeof migrateLegacy === "function") {
+        void migrateLegacy
+          .call(store)
+          .then((moved) => {
+            if (moved > 0) {
+              new Notice(
+                `写作工具箱：已把 ${moved} 个批注文件移到 .wt-comments/`
+              );
+            }
+          })
+          .catch((error) => {
+            console.error("[Writing Toolkit:comments] 迁移批注文件失败", error);
+          });
+      }
       active = true;
       acceptingCalls = true;
       disposed = false;
@@ -956,7 +1037,7 @@ export function createCommentsModule(
         menu.addItem((item) =>
           item
             .setTitle("添加批注")
-            .setIcon("message-square")
+            .setIcon("wt-comment")
             .onClick(() => {
               if (acceptingCalls) void addCommentForView(view);
             })
@@ -978,6 +1059,28 @@ export function createCommentsModule(
       context.events.onVault("delete", (file) => {
         handleVaultDelete(file);
       });
+
+      // .wt-comments 是隐藏目录，Obsidian 的 Vault 事件看不到它；回到窗口时
+      // 主动重读一次当前文档的批注，保证 Agent 在外部改完文件后能及时看到。
+      if (
+        typeof context.events.onDom === "function" &&
+        typeof window !== "undefined"
+      ) {
+        context.events.onDom(window, "focus", () => {
+          if (!active) return;
+          const docPath = activeCommentDocPath();
+          if (!docPath) return;
+          void localStore
+            .reload(docPath)
+            .then(() => {
+              if (!active) return;
+              onCommentsChanged(docPath);
+            })
+            .catch((error) => {
+              console.error("[Writing Toolkit:comments] 重读批注文件失败", error);
+            });
+        });
+      }
 
       context.registrations.registerEditorExtension(
         buildExtensions({

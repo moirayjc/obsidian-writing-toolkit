@@ -2,8 +2,9 @@
  * 批注：数据模型、批注文件（`文档名.批注.md`）的解析与序列化、原文定位。
  *
  * 设计背景：Maureen 的创作流程是「Agent 写稿 → 她在文档上批注 → Agent
- * 读批注改稿」。批注存放在源文档同目录的伴随文件 `文档名.批注.md` 里，
- * 正文一个字都不动。
+ * 读批注改稿」。批注存放在库根 `.wt-comments/` 下的独立伴随文件里（镜像
+ * 正文的相对路径），正文一个字都不动。旧版同目录 `文档名.批注.md` 会自动
+ * 迁移过来，读取时仍兼容旧位置。
  *
  * 定位（Agent 改稿后「原文」往往已经不在了）按四层来：
  *   1. 现文——Agent 改完写回的当前文字（协议见文件抬头，最可靠）；
@@ -70,6 +71,9 @@ export const LOCATE_VIA_LABELS: Record<LocateVia, string> = {
 
 /* ---------- 伴随文件路径 ---------- */
 
+/** 独立批注目录（镜像正文路径，和 `.wt-outlines` / `.wt-snapshots` 同级）。 */
+export const COMMENTS_FOLDER = ".wt-comments";
+
 /** 批注伴随文件名后缀（正则）：`xxx.批注.md`，也匹配不带 .md 的 basename */
 const SIDECAR_RE = /\.批注(\.md)?$/i;
 
@@ -81,15 +85,29 @@ export function isCommentSidecarName(name: string): boolean {
   return SIDECAR_RE.test(name.trim());
 }
 
-/** 源文档路径 → 批注文件路径（已传入批注文件的路径则原样返回）。 */
+/** 源文档路径 → 新目录下的批注文件路径（已传入批注文件的路径则原样返回）。 */
 export function sidecarPathFor(docPath: string): string {
+  if (isSidecarPath(docPath)) return docPath;
+  return `${COMMENTS_FOLDER}/${docPath.replace(/\.md$/i, ".批注.md")}`;
+}
+
+/** 旧版同目录批注文件路径（只用于迁移与兼容读取）。 */
+export function legacySidecarPathFor(docPath: string): string {
   if (isSidecarPath(docPath)) return docPath;
   return docPath.replace(/\.md$/i, ".批注.md");
 }
 
-/** 批注文件路径 → 源文档路径。 */
+/** 是否是旧版「正文同目录」的批注文件。 */
+export function isLegacySidecarPath(path: string): boolean {
+  return isSidecarPath(path) && !path.startsWith(`${COMMENTS_FOLDER}/`);
+}
+
+/** 批注文件路径 → 源文档路径。新旧两种布局都认。 */
 export function docPathForSidecar(sidecarPath: string): string {
-  return sidecarPath.replace(/\.批注\.md$/i, ".md");
+  const rel = sidecarPath.startsWith(`${COMMENTS_FOLDER}/`)
+    ? sidecarPath.slice(COMMENTS_FOLDER.length + 1)
+    : sidecarPath;
+  return rel.replace(/\.批注\.md$/i, ".md");
 }
 
 /* ---------- 小工具 ---------- */
@@ -749,14 +767,13 @@ export function buildAgentPrompt(
 ): string {
   const base = docBaseName(docPath);
   const sidecar = sidecarPathFor(docPath);
-  const sidecarName = docBaseName(sidecar);
   const scope = counts
     ? `（目前待处理 ${counts.pending} 条；已处理 ${counts.resolved} 条不用重复处理）`
     : "";
   return [
     `请处理《${base}》里的批注${scope}。`,
     ``,
-    `打开同目录的「${sidecarName}」，里面每条批注都有「原文 / 段落 / 状态 / 回复」几项。请逐条来：`,
+    `打开「${sidecar}」，里面每条批注都有「原文 / 段落 / 状态 / 回复」几项。请逐条来：`,
     `1. 对照每条批注的「原文」，在《${base}》里找到对应位置，按「批注」的要求修改；`,
     `2. 改完后，把该条批注的「状态」改为「已处理」，并在「回复」里写明你做了什么改动；`,
     `3. 如果你改写了「原文」对应的文字，请把改完后该处现在的文字照抄进「现文」（新增一行：- 现文：……）。这样作者回到正文时，批注能跟到新的位置上；`,

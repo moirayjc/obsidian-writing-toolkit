@@ -69,10 +69,14 @@ function createFixture() {
   addFolder("随笔");
   addFolder("作品乙");
   addFolder("作品乙/第1卷 第一卷");
+  addFolder(".wt-comments");
+  addFolder(".wt-comments/作品甲");
+  addFolder(".wt-comments/作品甲/正文草稿");
 
   addFile("作品甲/正文草稿/第1章 开端.md");
   addFile("作品甲/正文草稿/第2章-发展.md");
   addFile("作品甲/正文草稿/第1章 开端.批注.md");
+  addFile(".wt-comments/作品甲/正文草稿/第1章 开端.批注.md");
   addFile("作品甲/正文草稿/AGENTS.md");
   addFile("作品甲/人物档案/主角.md");
   addFile("作品甲/自定义快照/正文草稿/第99章 旧稿.md");
@@ -148,6 +152,10 @@ async function main() {
   r.check(
     "批注伴随文件不算正文",
     !service.isDailyCountFile("作品甲/正文草稿/第1章 开端.批注.md")
+  );
+  r.check(
+    ".wt-comments 镜像目录不算正文",
+    !service.isDailyCountFile(".wt-comments/作品甲/正文草稿/第1章 开端.批注.md")
   );
   r.check(
     "辅助文件不算正文",

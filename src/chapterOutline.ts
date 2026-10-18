@@ -447,7 +447,7 @@ export class ChapterOutlinePanel implements ChapterOutlinePanelHandle {
       cls: "wt-outline-tb-btn",
       attr: { type: "button", title: "在大窗口浮窗中编辑章纲" },
     });
-    setIcon(expandBtn, "maximize-2");
+    setIcon(expandBtn, "wt-expand");
     this.keepEditingFocus(expandBtn);
     expandBtn.addEventListener("click", () => void this.openEditorModal());
   }
@@ -538,7 +538,7 @@ export class ChapterOutlinePanel implements ChapterOutlinePanelHandle {
     if (!this.rawText.trim()) {
       const empty = preview.createDiv({ cls: "wt-outline-preview-empty" });
       const icon = empty.createDiv({ cls: "wt-outline-empty-icon" });
-      setIcon(icon, "pencil");
+      setIcon(icon, "wt-pencil");
       empty.createDiv({
         text: "这一章还没有章纲。写下剧情梗概、场景要点或备忘，阅读时会自动渲染 Markdown。",
       });
@@ -630,7 +630,7 @@ export class ChapterOutlinePanel implements ChapterOutlinePanelHandle {
     const btn = this.modeBtn;
     if (!btn) return;
     const editing = this.mode === "edit";
-    setIcon(btn, editing ? "check" : "pencil");
+    setIcon(btn, editing ? "wt-check" : "wt-pencil");
     const label = editing ? "完成编辑，回到渲染后的章纲" : "编辑本章章纲";
     btn.setAttr("title", label);
     btn.setAttr("aria-label", label);
@@ -683,7 +683,7 @@ export class ChapterOutlinePanel implements ChapterOutlinePanelHandle {
   private renderEmpty(text: string): void {
     const empty = this.el.createDiv({ cls: "wt-outline-empty" });
     const icon = empty.createDiv({ cls: "wt-outline-empty-icon" });
-    setIcon(icon, "file-text");
+    setIcon(icon, "wt-doc");
     empty.createDiv({ text });
   }
 }

@@ -156,7 +156,7 @@ export class WritingCalendar {
     const header = contentEl.createDiv({ cls: "wt-calendar-header" });
     const navGroup = header.createDiv({ cls: "wt-calendar-nav-group" });
     const previous = navGroup.createEl("button", { cls: "wt-calendar-nav" });
-    setIcon(previous, "chevron-left");
+    setIcon(previous, "wt-chevron-left");
     previous.setAttr("aria-label", "上一年");
     previous.onclick = () => {
       this.year = year - 1;
@@ -164,7 +164,7 @@ export class WritingCalendar {
     };
     navGroup.createEl("h2", { text: `${year}年` });
     const next = navGroup.createEl("button", { cls: "wt-calendar-nav" });
-    setIcon(next, "chevron-right");
+    setIcon(next, "wt-chevron-right");
     next.setAttr("aria-label", "下一年");
     const canGoNext = year < currentYear;
     next.disabled = !canGoNext;
@@ -236,7 +236,9 @@ export class WritingCalendar {
       ? duration > 0 ? `${key}：${formatDuration(duration)}` : `${key}：未写作`
       : count > 0
         ? `${key}：${formatNumber(count)} 字${count >= goal ? "（已达标）" : `（目标 ${formatNumber(goal)} 字）`}`
-        : `${key}：未写作`;
+        : count < 0
+          ? `${key}：净减 ${formatNumber(-count)} 字`
+          : `${key}：未写作`;
     cell.setAttr("title", title);
     cell.setAttr("aria-label", title);
   }

@@ -88,6 +88,7 @@ import { DefaultWordCountService } from "./services/wordCountService";
 import { WritingStatusBar } from "./statusbar";
 import type { WordCountMode } from "./wordcount";
 import { formatToolbarDiag } from "./formatToolbar";
+import { registerWtIcons } from "./icons";
 import {
   buildStatsDiagReport,
   recordStatusRefresh,
@@ -150,13 +151,9 @@ interface DailyPomodoro {
 export default class WritingToolkitPlugin extends Plugin {
   settings!: WritingToolkitSettings;
   dailyHistory: DailyHistory = {};
-  /** 每日毛新增（不会为负）：今日目标、热力图用它，避免"重写一天显示 0 或负数" */
-  dailyGrossHistory: DailyHistory = {};
   dailyDurationHistory: DailyHistory = {};
   /** 各作品（按正文草稿的上一级目录）的每日净增字数 */
   projectHistory: Record<string, DailyHistory> = {};
-  /** 各作品的每日毛新增字数 */
-  projectGrossHistory: Record<string, DailyHistory> = {};
   /** 各作品的每日有效写作时长 */
   projectDurationHistory: Record<string, DailyHistory> = {};
   /** 每日完成的番茄数与本番茄累计字数 */
@@ -179,8 +176,6 @@ export default class WritingToolkitPlugin extends Plugin {
   private lastDraftKeywords: string | null = null;
   private lastChapterExcludeNames: string | null = null;
   dailyTotal: number = 0;
-  /** 今日毛新增（只累加变多的部分） */
-  dailyGross: number = 0;
   dailyDurationSeconds = 0;
   private lastDurationTotal = 0;
   private knownProjects = new Set<string>();
@@ -285,7 +280,6 @@ export default class WritingToolkitPlugin extends Plugin {
       settings: this.host.services.settings.get(),
       stats: {
         total: () => this.dailyTotal,
-        gross: () => this.dailyGross,
         durationSeconds: () => this.dailyDurationSeconds,
         getTodayDurationSeconds: () => this.stats.getTodayDurationSeconds(),
         getTodayPomodoroSummary: () => this.stats.getTodayPomodoroSummary(),
@@ -356,6 +350,8 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   async onload() {
+    // 自定义图标先注册，后面所有 setIcon / ribbon / 视图图标才认 wt-* 名字。
+    registerWtIcons();
     this.host = this.createHost();
     this.eventScope = this.host.services.events.createScope(
       "writing-toolkit:main"
@@ -377,14 +373,11 @@ export default class WritingToolkitPlugin extends Plugin {
     });
     this.stats = new StatsService({
       dailyHistory: () => this.dailyHistory,
-      dailyGrossHistory: () => this.dailyGrossHistory,
       projectHistory: () => this.projectHistory,
-      projectGrossHistory: () => this.projectGrossHistory,
       projectDurationHistory: () => this.projectDurationHistory,
       dailyFileDeltas: () => this.dailyFileDeltas,
       todayTotals: () => ({
         total: this.dailyTotal,
-        gross: this.dailyGross,
         durationSeconds: this.dailyDurationSeconds,
       }),
       todayKey: () => this.todayStr,
@@ -404,6 +397,7 @@ export default class WritingToolkitPlugin extends Plugin {
     this.eventScope.onLayoutReady(() => {
       if (Platform.isMobile) this.migrateMobileViewsToDrawers();
     });
+    this.registerStartupReconcile();
 
     this.settingTab = new WritingToolkitSettingTab(this.app, this);
     this.host.addSettingTab(this.settingTab);
@@ -609,15 +603,15 @@ export default class WritingToolkitPlugin extends Plugin {
     callback: () => this.openSettings(),
   });
 
-  this.host.addRibbonIcon("pen-line", "打开工具箱", () => {
+  this.host.addRibbonIcon("wt-toolbox", "打开工具箱", () => {
     void this.openSidebar();
   });
 
-  this.host.addRibbonIcon("library-big", "打开编辑台", () => {
+  this.host.addRibbonIcon("wt-editor", "打开编辑台", () => {
     void this.openWorkbench();
   });
 
-  this.host.addRibbonIcon("layout-dashboard", "打开主页", () => {
+  this.host.addRibbonIcon("wt-home", "打开主页", () => {
     void this.openHome();
   });
   }
@@ -855,7 +849,7 @@ export default class WritingToolkitPlugin extends Plugin {
     return this.stats.getTodayPomodoroSummary();
   }
 
-  /** 手机端常驻状态条：复用状态栏里已经算好的码字时速。 */
+  /** 手机端常驻状态条：复用 WritingStatusBar 里已经算好的码字时速。 */
   statusBarSpeed(): number {
     return this.stats.statusBarSpeed();
   }
@@ -1212,22 +1206,48 @@ export default class WritingToolkitPlugin extends Plugin {
     if (!this.statusBar.hasCurrentFile()) {
       this.statusBar.onFileChange(file.path, text);
     }
-    // 全新文件的第一笔内容（粘贴整章、AI 通过编辑器写入）整份算新增
+    // 全新文件的第一笔内容（粘贴整章、AI 通过编辑器写入）整份算新增。
+    // 今天新建的文件即使走程序化写入也要跟踪，否则只记删除、不记新增，
+    // 会出现「今天才建的第 2 章，今日净增却是负数」的假数据。
+    const dailyFile = this.isDailyCountFile(file.path);
+    const programmaticNewFile =
+      isProgrammatic &&
+      dailyFile &&
+      this.isCreatedToday(file);
     const freshFile =
       !isProgrammatic &&
       !this.statusBar.hasBaseline(file.path) &&
       this.isFreshlyCreated(file);
-    const delta = isProgrammatic
-      ? (this.statusBar.rebaseCurrentDocument(text), 0)
-      : this.statusBar.onEditorChange(text, freshFile);
+    let delta: number;
+    if (isProgrammatic) {
+      if (programmaticNewFile) {
+        const target = this.countWords(text);
+        const already =
+          this.dailyFileDeltas[this.todayStr]?.[file.path] ?? 0;
+        delta = target - already;
+      } else {
+        delta = 0;
+      }
+      this.statusBar.rebaseCurrentDocument(text);
+    } else {
+      delta = this.statusBar.onEditorChange(
+        text,
+        freshFile,
+        !isExternalSync && dailyFile
+      );
+    }
     this.statusBar.setSelectionText(this.getActiveEditorSelection());
 
-    if (this.isDailyCountFile(file.path)) {
-      if (isProgrammatic) {
+    if (dailyFile) {
+      if (isProgrammatic && !programmaticNewFile) {
         this.lastWritingActivityAt = 0;
         this.activePomodoro()?.rebaseBaseCount();
       } else {
-        this.applyDailyStats(file, delta, !isExternalSync);
+        this.applyDailyStats(
+          file,
+          delta,
+          !isExternalSync && !isProgrammatic
+        );
       }
     } else {
       statsDiag.skippedNotChapter++;
@@ -1354,15 +1374,6 @@ export default class WritingToolkitPlugin extends Plugin {
       const fileDay = this.dailyFileDeltas[this.todayStr]
         ?? (this.dailyFileDeltas[this.todayStr] = {});
       fileDay[file.path] = (fileDay[file.path] || 0) + delta;
-
-      // 毛新增：只累加变多的部分，重写一天也不会显示 0 或负数
-      if (delta > 0) {
-        this.dailyGross += delta;
-        this.dailyGrossHistory[this.todayStr] = this.dailyGross;
-        const projectGross = this.projectGrossHistory[project]
-          ?? (this.projectGrossHistory[project] = {});
-        projectGross[this.todayStr] = (projectGross[this.todayStr] || 0) + delta;
-      }
     }
     this.dailyDurationHistory[this.todayStr] = this.dailyDurationSeconds;
     const durationInc = this.dailyDurationSeconds - this.lastDurationTotal;
@@ -1392,6 +1403,16 @@ export default class WritingToolkitPlugin extends Plugin {
   /** 文件是否是在上次建立基线档案之后才出现的（= 新写的章节）。 */
   private isFreshlyCreated(file: TFile): boolean {
     return this.baselinesAt > 0 && file.stat.ctime > this.baselinesAt;
+  }
+
+  /** 文件是否创建于今天（按本地日期）。 */
+  private isCreatedToday(file: TFile): boolean {
+    const d = new Date(file.stat.ctime);
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(d.getDate()).padStart(2, "0")}`;
+    return day === this.todayStr;
   }
 
   /** 快照文件夹（规范化路径，去首尾斜杠）。 */
@@ -1516,7 +1537,7 @@ export default class WritingToolkitPlugin extends Plugin {
   /**
    * 复制某篇文档的干净正文（编辑台章节列表里的复制按钮调用）。
    *
-   * 批注内容在同目录的 `.批注.md` 中，正文里的标记只是编辑器装饰，
+   * 批注内容在 `.wt-comments/` 的伴随文件里，正文里的标记只是编辑器装饰，
    * 因此文件文本本身就是干净正文；文档开着时优先读编辑器实时内容。
    */
   async copyCleanChapter(path: string): Promise<void> {
@@ -1726,7 +1747,6 @@ export default class WritingToolkitPlugin extends Plugin {
       dailyGoal: this.settings.dailyGoal,
       todayStr: this.todayStr,
       dailyTotal: this.dailyTotal,
-      dailyGross: this.dailyGross,
       dailyDurationSeconds: this.dailyDurationSeconds,
       fileBaselineCount: Object.keys(this.fileBaselines).length,
       baselinesAt: this.baselinesAt,
@@ -1771,9 +1791,7 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   /**
-   * 热力图 / 今日目标显示用的每日数字。
-   * 新数据用「毛新增」（只累加变多的部分，不会为负）；毛新增还没有记录的
-   * 历史日期回落到净增，免得老数据凭空消失。
+   * 热力图 / 今日目标显示用的每日数字（净增口径：新增为正、删除为负）。
    */
   dailyForDisplay(): Record<string, number> {
     return this.stats.dailyForDisplay();
@@ -1975,11 +1993,6 @@ export default class WritingToolkitPlugin extends Plugin {
     if (today === this.activeDay) return;
     this.activeDay = today;
     this.dailyTotal = this.dailyHistory[today] || 0;
-    this.dailyGross = this.dailyGrossHistory[today] || 0;
-    // 给今天落一个 0：热力图优先用毛新增，别让"今天"回落到历史上那条净增值
-    if (this.dailyGrossHistory[today] === undefined) {
-      this.dailyGrossHistory[today] = 0;
-    }
     this.dailyDurationSeconds = this.dailyDurationHistory[today] || 0;
     this.lastDurationTotal = this.dailyDurationSeconds;
     this.lastWritingActivityAt = 0;
@@ -2010,6 +2023,60 @@ export default class WritingToolkitPlugin extends Plugin {
     for (let i = 0; i < excess; i++) delete this.dailyFileDeltas[days[i]];
   }
 
+  /**
+   * 今天新建的文件，今日贡献不应小于 0（当天起点是 0）。
+   * 旧逻辑对「程序化写入的新文件」只记删除不记新增，会留下负数；
+   * 启动时按当前字数校正这类明细，避免今日净增被幽灵负数拖垮。
+   */
+  /** 布局就绪后再校正今天新建文件的负数明细（文件树/作品索引此时才完整）。 */
+  private registerStartupReconcile(): void {
+    this.eventScope.onLayoutReady(() => {
+      void this.reconcileTodayNewFileDeltas();
+    });
+  }
+
+  private async reconcileTodayNewFileDeltas(): Promise<void> {
+    const today = this.todayStr;
+    const fileDay = this.dailyFileDeltas[today];
+    if (!fileDay) return;
+    let changed = false;
+    for (const path of Object.keys(fileDay)) {
+      const oldDelta = fileDay[path];
+      if (oldDelta >= 0) continue;
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      if (!this.isCreatedToday(file)) continue;
+      let text: string;
+      try {
+        text = await this.app.vault.cachedRead(file);
+      } catch {
+        continue;
+      }
+      const words = this.countWords(text);
+      if (words === oldDelta) continue;
+      const diff = words - oldDelta;
+      fileDay[path] = words;
+      // 基线也跟到当前字数，后续删改才不会再从 0 起算。
+      this.fileBaselines[path] = words;
+      this.statusBar?.loadBaselines({ [path]: words });
+      this.dailyTotal += diff;
+      this.dailyHistory[today] = this.dailyTotal;
+      const project = this.getProjectForPath(path) ?? "未分组";
+      const projectDay =
+        this.projectHistory[project] ??
+        (this.projectHistory[project] = {});
+      projectDay[today] = (projectDay[today] || 0) + diff;
+      changed = true;
+    }
+    if (changed) {
+      this.scheduleDailySave();
+      void this.savePluginData();
+      this.stats.publish();
+      this.refreshWorkbench();
+      this.refreshHome();
+    }
+  }
+
   private async loadPluginData() {
     const loaded: unknown = await this.host.services.persistence.load();
     /** 只认对象；其余（null/字符串等）一律当作没有数据（与旧版 if (data) 等价）。 */
@@ -2024,10 +2091,8 @@ export default class WritingToolkitPlugin extends Plugin {
       // 老格式（顶层扁平设置）与新格式共用同名字段；旧版设置由 SettingsService
       // 统一迁移。老格式如有历史数据则保留，不主动清空。
         this.dailyHistory = asRecord<DailyHistory>(data.dailyHistory) ?? {};
-        this.dailyGrossHistory = asRecord<DailyHistory>(data.dailyGrossHistory) ?? {};
         this.dailyDurationHistory = asRecord<DailyHistory>(data.dailyDurationHistory) ?? {};
         this.projectHistory = asRecord<Record<string, DailyHistory>>(data.projectHistory) ?? {};
-        this.projectGrossHistory = asRecord<Record<string, DailyHistory>>(data.projectGrossHistory) ?? {};
         this.projectDurationHistory = asRecord<Record<string, DailyHistory>>(data.projectDurationHistory) ?? {};
         this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
         this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
@@ -2042,11 +2107,6 @@ export default class WritingToolkitPlugin extends Plugin {
       this.dailyPomodoroHistory = {};
     }
     this.dailyTotal = this.dailyHistory[this.todayStr] || 0;
-    this.dailyGross = this.dailyGrossHistory[this.todayStr] || 0;
-    // 今天必须有毛新增记录（哪怕还是 0），否则热力图会回落到净增，把历史脏数又显示出来
-    if (this.dailyGrossHistory[this.todayStr] === undefined) {
-      this.dailyGrossHistory[this.todayStr] = 0;
-    }
     this.dailyDurationSeconds = this.dailyDurationHistory[this.todayStr] || 0;
     this.lastDurationTotal = this.dailyDurationSeconds;
     this.activeDay = this.todayStr;
@@ -2089,16 +2149,6 @@ export default class WritingToolkitPlugin extends Plugin {
     }
   }
 
-  /** 设置页的“立即保存快照”按钮入口 */
-  saveSnapshotNow(): Promise<void> {
-    return this.snapshotModule.operations.saveSnapshotNow();
-  }
-
-  /** 设置页的“打开快照文件夹”按钮入口 */
-  openSnapshotFolder(): Promise<void> {
-    return this.snapshotModule.operations.openSnapshotFolder();
-  }
-
   async saveSettings() {
     this.stats.publish();
     this.refreshSidebar();
@@ -2128,10 +2178,8 @@ export default class WritingToolkitPlugin extends Plugin {
     return this.host.services.persistence.save({
       settings: this.settings,
       dailyHistory: this.dailyHistory,
-      dailyGrossHistory: this.dailyGrossHistory,
       dailyDurationHistory: this.dailyDurationHistory,
       projectHistory: this.projectHistory,
-      projectGrossHistory: this.projectGrossHistory,
       projectDurationHistory: this.projectDurationHistory,
       dailyFileDeltas: this.dailyFileDeltas,
       dailyPomodoroHistory: this.dailyPomodoroHistory,

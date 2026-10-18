@@ -118,7 +118,6 @@ function main() {
     dailyGoal: 5000,
     todayStr: "2026-10-16",
     dailyTotal: 1234,
-    dailyGross: 1500,
     dailyDurationSeconds: 3600,
     fileBaselineCount: 80,
     baselinesAt: 1786000000000,
@@ -131,8 +130,7 @@ function main() {
   for (const needle of [
     "# 写作工具箱 · 字数统计自检报告",
     "统计模式 wordCountMode：webnovel",
-    "净增 dailyTotal：1234",
-    "毛新增 dailyGross：1500",
+    "净增 dailyTotal：1234（今日目标与热力图用的就是这个）",
     "有效写作时长：60 分钟",
     "基线条数：80",
     "算不算正文（isDailyCountFile）：是",
@@ -145,7 +143,7 @@ function main() {
   }
   const s2 = diag.buildStatsDiagReport({
     wordCountMode: "standard", dailyGoal: 100, todayStr: "2026-10-16",
-    dailyTotal: 0, dailyGross: 0, dailyDurationSeconds: 0, fileBaselineCount: 0,
+    dailyTotal: 0, dailyDurationSeconds: 0, fileBaselineCount: 0,
     baselinesAt: 0, isCountedFile: false, currentPath: null, currentWords: null,
     pomodoroBaseCount: null, pendingExternal: 0,
   });

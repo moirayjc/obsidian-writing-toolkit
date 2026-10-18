@@ -39,12 +39,12 @@ export interface FormatToolbarConfig {
 }
 
 const ICONS: Record<FormatKind, string> = {
-  bold: "bold",
-  italic: "italic",
-  underline: "underline",
-  strike: "strikethrough",
-  highlight: "highlighter",
-  color: "palette",
+  bold: "wt-bold",
+  italic: "wt-italic",
+  underline: "wt-underline",
+  strike: "wt-strike",
+  highlight: "wt-highlight",
+  color: "wt-color",
 };
 
 /** 格式工具条「字色」按钮用的最近色（本次会话内记忆） */
@@ -191,7 +191,7 @@ export function buildFormatToolbar(config: FormatToolbarConfig) {
         // 批注按钮：贴在格式按钮后面，点击时收起气泡并回调（由 main 打开批注输入框）
         this.bubble.createDiv({ cls: "wt-comment-sep" });
         this.commentBtn = this.bubble.createDiv({ cls: "wt-comment-btn" });
-        setIcon(this.commentBtn, "message-square");
+        setIcon(this.commentBtn, "wt-comment");
         this.commentBtn.setAttribute("aria-label", "添加批注");
         this.commentBtn.addEventListener("click", () => {
           this.hide();

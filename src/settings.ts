@@ -50,8 +50,6 @@ export interface WritingToolkitPluginLike {
     setImmersiveMode: (on: boolean) => void;
     setParagraphHighlight: (on: boolean) => void;
     setHemingwayMode: (on: boolean) => void;
-    saveSnapshotNow: () => Promise<void>;
-    openSnapshotFolder: () => Promise<void>;
     repairProjectStatPaths: () => Promise<void>;
     updateStatusBarVisibility: () => void;
     refreshMobileStatusBar: () => void;
@@ -143,7 +141,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
           new Setting(statsCard)
             .setName("显示码字时速")
-            .setDesc("在状态栏显示实时码字速度")
+            .setDesc("在编辑台左下角信息栏显示当前时速")
             .addToggle((toggle) =>
               toggle
                 .setValue(this.wt.settings.showSpeed)
@@ -182,7 +180,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           new Setting(statsCard)
             .setName("手机端常驻状态条")
             .setDesc(
-              "手机版没有状态栏，开启后在屏幕底部显示一条：今日进度 · 番茄 · 时速"
+              "手机版没有状态栏，开启后在屏幕底部显示一条：今日进度 · 番茄"
             )
             .addToggle((toggle) =>
               toggle
@@ -367,7 +365,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("批注")
               .setDesc(
-                "选中文字后加批注（气泡上的按钮，或右键「添加批注」）。批注存进同目录的「文档名.批注.md」，不改正文。"
+                "选中文字后加批注（气泡上的按钮，或右键「添加批注」）。批注存进库根 `.wt-comments/` 下对应路径的伴随文件，不改正文。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -473,25 +471,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                     this.wt.settings.snapshotOnlyDrafts = value;
                     await this.wt.saveSettings();
                   })
-              );
-          });
-
-          this.group("操作", section, (el) => {
-            new Setting(el)
-              .setName("立即保存")
-              .setDesc("给当前笔记存一份快照（任意 Markdown 文件）")
-              .addButton((button) =>
-                button.setButtonText("保存当前快照").onClick(async () => {
-                  await this.wt.saveSnapshotNow();
-                })
-              );
-
-            new Setting(el)
-              .setName("打开快照文件夹")
-              .addButton((button) =>
-                button.setButtonText("在系统文件管理器中打开").onClick(async () => {
-                  await this.wt.openSnapshotFolder();
-                })
               );
           });
         },

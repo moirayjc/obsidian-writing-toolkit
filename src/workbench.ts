@@ -1,5 +1,6 @@
 import {
   ItemView,
+  MarkdownView,
   Menu,
   Notice,
   Platform,
@@ -19,7 +20,6 @@ import {
   renumberChapterName,
   volumeNumber,
 } from "./chapterOrder";
-import { countChars } from "./outlineText";
 import {
   ChapterEntry,
   NovelProject,
@@ -39,21 +39,17 @@ import {
 import type { UiShellContext } from "./uiShellContext";
 import { WRITING_TOOLKIT_WORKBENCH } from "./uiSlots";
 import {
-  ARCHIVE_RE,
   STATUS_LABEL,
   displayFolderName,
   displayProjectName,
   fileStatCache,
   parseResourceName,
-  relativeTime,
   splitWords,
   type WorkbenchStatus,
 } from "./uiShellShared";
 
 export { WRITING_TOOLKIT_WORKBENCH } from "./uiSlots";
 
-/** 章纲自动保存延迟（毫秒） */
-const OUTLINE_AUTOSAVE_DELAY = 800;
 /** 后台统计每处理多少篇刷新一次聚合数字 */
 const AGGREGATE_EVERY = 8;
 /** 外部（AI/脚本）改动后的统计防抖 */
@@ -78,10 +74,8 @@ interface RowRef {
   rowEl: HTMLElement;
   wordsEl: HTMLElement;
   dotEl: HTMLElement;
-  outlineBtn: HTMLElement;
   known: boolean;
   words: number;
-  outline: boolean;
 }
 
 interface ResourceRowRef {
@@ -96,6 +90,23 @@ interface VolumeRef {
   volume: VolumeEntry;
   metaEl: HTMLElement;
   barEl: HTMLElement;
+}
+
+/** 全书关键字搜索的一条命中：出现次数 + 第一处片段 + 第一处字符位置。 */
+interface SearchHit {
+  count: number;
+  snippet: string;
+  /** 第一处命中的字符偏移；只命中标题时为 -1 */
+  offset: number;
+  /** 扫描时的关键字（打开文件后用它校验/重新定位） */
+  query: string;
+}
+
+/** 全书命中序列里的一处（用于 ↑/↓ 连续定位）。 */
+interface SearchMatch {
+  path: string;
+  offset: number;
+  length: number;
 }
 
 /** 书头里需要随统计刷新的节点 */
@@ -146,8 +157,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * 「编辑台」：以作品为单位的窄栏写作面板（兼顾美感、明确交互与窄侧栏宽度）。
  *
  * 三段结构：
- * 1. 书头 —— 点击书名切换作品、连载状态胶囊、全书字数与卷数概览、正文/设定切换与轻量新建按钮
- * 2. 台面 —— 搜索框（含清空与一键复制正文）+ 正文章节（分卷可折叠、卷头快速+章、当前章高亮）或设定资料
+ * 1. 书头 —— 书名与连载状态点、全书字数与章节数、正文/设定切换与轻量新建按钮
+ * 2. 台面 —— 全书关键字搜索框（含清空、命中片段）+ 独立的一键复制正文按钮 + 正文章节（分卷可折叠、卷头快速+章、当前章高亮）或设定资料
  * 3. 今日状态 —— 紧凑的今日码字进度细条 + 番茄 / 时长 / 快照速览（可点击交互）
  */
 export class WritingToolkitWorkbench extends ItemView {
@@ -166,8 +177,27 @@ export class WritingToolkitWorkbench extends ItemView {
   private projects: readonly NovelProject[] = [];
   private project: NovelProject | null = null;
   private mode: WorkbenchMode = "chapters";
-  /** 搜索关键字（章节标题 / 章号 / 资料文件名） */
+  /** 全书关键字搜索的输入（搜正文 / 设定内容，不再只搜标题与章号） */
   private searchQuery = "";
+  /** 当前搜索结果：文件路径 → 命中次数与片段 */
+  private searchHits = new Map<string, SearchHit>();
+  /** 全书命中序列（按阅读顺序）；↑/↓ 在它上面循环 */
+  private searchMatches: SearchMatch[] = [];
+  /** 当前选中的是第几处（-1 = 还没开始定位） */
+  private searchMatchIndex = -1;
+  /** 命中序列对应的关键字，换词时重置位置 */
+  private searchMatchesQuery = "";
+  /** 搜索扫描的代数：输入变化后旧扫描结果作废 */
+  private searchScanToken = 0;
+  private searchScanTimer = 0;
+  private searchScanning = false;
+  /** 搜索 / 替换面板是否展开（默认收起成标题栏的搜索按钮） */
+  private searchOpen = false;
+  private replaceQuery = "";
+  /** 替换当前一处后，扫描完成时自动定位到下一处 */
+  private searchRevealAfterScan = false;
+  private searchActionEl: HTMLElement | null = null;
+  private copyActionEl: HTMLElement | null = null;
 
   private rows = new Map<string, RowRef>();
   private resourceRows = new Map<string, ResourceRowRef>();
@@ -193,17 +223,9 @@ export class WritingToolkitWorkbench extends ItemView {
   private refreshTimer = 0;
   private footTimer = 0;
   private modifyTimer = 0;
-  private outlineSaveTimer = 0;
   private copyFeedbackTimer = 0;
   private pendingModify = new Set<string>();
 
-  private openOutlinePath: string | null = null;
-  private outlineEditorEl: HTMLElement | null = null;
-  private outlineLoadedText = "";
-  private outlineFile: TFile | null = null;
-
-  private snapshotCount: number | null = null;
-  private snapshotCountPath: string | null = null;
   private footSignature = "";
 
   constructor(leaf: WorkspaceLeaf, host: UiShellContext) {
@@ -220,7 +242,7 @@ export class WritingToolkitWorkbench extends ItemView {
   }
 
   getIcon(): string {
-    return "library-big";
+    return "wt-editor";
   }
 
   async onOpen(): Promise<void> {
@@ -230,6 +252,7 @@ export class WritingToolkitWorkbench extends ItemView {
 
     this.headEl = this.contentEl.createDiv({ cls: "wt-wb-head" });
     this.searchEl = this.contentEl.createDiv({ cls: "wt-wb-searchbar" });
+    this.searchEl.toggleClass("is-collapsed", !this.searchOpen);
     this.renderSearchBar();
     // 「当前文件属于另一本书」提示条（为空时 CSS 隐藏）
     this.noticeEl = this.contentEl.createDiv({ cls: "wt-wb-notice" });
@@ -246,7 +269,7 @@ export class WritingToolkitWorkbench extends ItemView {
       cls: "wt-wb-fab",
       attr: { type: "button", "aria-label": "新建" },
     });
-    setIcon(this.fabEl, "plus");
+    setIcon(this.fabEl, "wt-plus");
     this.fabEl.addEventListener("click", () => this.onFab());
 
     // 结构变化（增删改名）才重建列表；内部目录（快照 / 章纲伴生文件）全部忽略
@@ -273,30 +296,17 @@ export class WritingToolkitWorkbench extends ItemView {
     this.registerEvent(
       this.app.vault.on("modify", (file) => this.onFileModified(file))
     );
-    this.registerEvent(
-      // 只同步高亮，不重建列表：滚动位置、展开的章纲编辑框都保持不动
-      this.app.workspace.on("active-leaf-change", () => this.syncActive())
-    );
-    this.register(
-      this.host.caps.outline.subscribe((change) => {
-        if (change.hasContent === undefined) return;
-        for (const path of change.paths) {
-          this.applyOutlineState(path, change.hasContent);
-        }
-      })
-    );
-
     this.footTimer = window.setInterval(() => this.renderFoot(), 1000);
     this.render();
   }
 
   async onClose(): Promise<void> {
-    await this.flushOutline();
     if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
     if (this.footTimer) window.clearInterval(this.footTimer);
     if (this.modifyTimer) window.clearTimeout(this.modifyTimer);
-    if (this.outlineSaveTimer) window.clearTimeout(this.outlineSaveTimer);
     if (this.copyFeedbackTimer) window.clearTimeout(this.copyFeedbackTimer);
+    if (this.searchScanTimer) window.clearTimeout(this.searchScanTimer);
+    this.searchScanToken++;
     this.statsToken++;
     this.rows.clear();
     this.resourceRows.clear();
@@ -350,9 +360,8 @@ export class WritingToolkitWorkbench extends ItemView {
           mtime: file.stat.mtime,
           size: file.stat.size,
           words,
-          outline: ref?.outline ?? false,
         });
-        if (ref) this.applyChapterStats(ref, words, ref.outline);
+        if (ref) this.applyChapterStats(ref, words);
         if (resRef) this.applyResourceStats(resRef, words);
       }
     }
@@ -388,10 +397,9 @@ export class WritingToolkitWorkbench extends ItemView {
           mtime: file.stat.mtime,
           size: file.stat.size,
           words,
-          outline: ref?.outline ?? false,
         });
         const chapterRef = this.rows.get(path);
-        if (chapterRef) this.applyChapterStats(chapterRef, words, chapterRef.outline);
+        if (chapterRef) this.applyChapterStats(chapterRef, words);
         const resRef = this.resourceRows.get(path);
         if (resRef) this.applyResourceStats(resRef, words);
       } catch {
@@ -410,7 +418,11 @@ export class WritingToolkitWorkbench extends ItemView {
     this.keyboardIndex = null;
 
     this.renderHead();
-    this.renderBody();
+    // 搜索中重建（切作品 / 文件结构变化）时重扫当前标签，避免旧命中粘住。
+    if (this.searchQuery) {
+      this.searchMatchIndex = -1;
+      this.scheduleSearch();
+    } else this.renderBody();
     this.renderNotice();
     this.renderFoot();
     this.updateFab();
@@ -502,7 +514,7 @@ export class WritingToolkitWorkbench extends ItemView {
     if (!other || other.root === this.project.root) return;
 
     const icon = this.noticeEl.createSpan({ cls: "wt-wb-notice-icon" });
-    setIcon(icon, "info");
+    setIcon(icon, "wt-info");
     const text = this.noticeEl.createSpan({ cls: "wt-wb-notice-text" });
     text.appendText("正在编辑");
     text.createSpan({
@@ -536,28 +548,18 @@ export class WritingToolkitWorkbench extends ItemView {
     }
 
     const top = this.headEl.createDiv({ cls: "wt-wb-head-top" });
-    // 书名：左键可切换作品，右键弹管理菜单，保留窄栏呼吸感
-    const bookBtn = top.createEl("button", {
+    const bookGroup = top.createDiv({ cls: "wt-wb-book-group" });
+    // 书名：作品切换统一去主页；这里只保留右键管理菜单
+    const bookEl = bookGroup.createDiv({
       cls: "wt-wb-book",
-      attr: {
-        type: "button",
-        title: `${this.project.name}（点击切换作品，右键更多操作）`,
-      },
+      attr: { title: `${this.project.name}（右键更多操作）` },
     });
-    bookBtn.createSpan({
+    bookEl.createSpan({
       cls: "wt-wb-book-name",
       text: displayFolderName(displayProjectName(this.project.name)),
     });
-    const bookChevron = bookBtn.createSpan({ cls: "wt-wb-book-chevron" });
-    setIcon(bookChevron, "chevron-down");
 
-    bookBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const rect = bookBtn.getBoundingClientRect();
-      this.showProjectSwitcherMenu({ x: rect.left, y: rect.bottom + 4 });
-    });
-
-    bindContextMenu(bookBtn, (pt) => {
+    bindContextMenu(bookEl, (pt) => {
       const menu = new Menu();
       if (this.mode === "chapters") {
         menu.addItem((item) =>
@@ -591,10 +593,24 @@ export class WritingToolkitWorkbench extends ItemView {
       showMenuAt(menu, pt);
     });
 
-    // 连载状态放标题行右侧
-    this.renderStatusChip(top);
+    // 状态点跟书名绑定；标题行右侧只留搜索 / 复制两个常驻小按钮
+    this.renderBookStatus(bookGroup);
+    const headRight = top.createDiv({ cls: "wt-wb-head-right" });
+    this.searchActionEl = this.headIconButton(
+      headRight,
+      "wt-search",
+      "搜索全书 / 替换",
+      () => this.toggleSearchPanel()
+    );
+    this.searchActionEl.toggleClass("is-active", this.searchOpen);
+    this.copyActionEl = this.headIconButton(
+      headRight,
+      "wt-copy",
+      "一键复制本章正文",
+      () => this.copyCurrentChapter()
+    );
 
-    // 标题下方一行紧凑说明：全书字数 · 卷数 · 最近更新
+    // 标题下方一行紧凑说明：全书字数 · 章节数
     const infoEl = this.headEl.createDiv({ cls: "wt-wb-status-info" });
     this.headRefs = { infoEl };
     this.updateHeadInfo();
@@ -649,45 +665,23 @@ export class WritingToolkitWorkbench extends ItemView {
     }
   }
 
-  /** 作品切换菜单：在编辑台内直接切换作品或前往书房主页。 */
-  private showProjectSwitcherMenu(pt: MenuPoint): void {
-    const menu = new Menu();
-    const visible = this.projects.filter(
-      (p) => !this.host.prefs.isProjectHidden(p.root) || p.root === this.project?.root
-    );
-    const activeList = visible.filter((p) => !ARCHIVE_RE.test(p.name));
-    const archiveList = visible.filter((p) => ARCHIVE_RE.test(p.name));
-
-    const addProjectItem = (proj: NovelProject): void => {
-      const label = displayFolderName(displayProjectName(proj.name));
-      const meta = proj.chapterCount > 0 ? ` (${proj.chapterCount}章)` : "";
-      menu.addItem((item) =>
-        item
-          .setTitle(`${label}${meta}`)
-          .setChecked(proj.root === this.project?.root)
-          .onClick(() => {
-            if (proj.root === this.project?.root) return;
-            this.host.prefs.setWorkbenchProject(proj.root);
-            this.render();
-            this.host.nav.refreshHome();
-          })
-      );
-    };
-
-    for (const proj of activeList) addProjectItem(proj);
-    if (archiveList.length > 0) {
-      if (activeList.length > 0) menu.addSeparator();
-      for (const proj of archiveList) addProjectItem(proj);
-    }
-
-    menu.addSeparator();
-    menu.addItem((item) =>
-      item.setTitle("新建作品…").onClick(() => this.host.nav.openNewProjectDialog())
-    );
-    menu.addItem((item) =>
-      item.setTitle("打开书房主页").onClick(() => void this.host.nav.openHome())
-    );
-    showMenuAt(menu, pt);
+  /** 书头右上角的图标按钮（搜索 / 复制）。 */
+  private headIconButton(
+    parent: HTMLElement,
+    icon: string,
+    label: string,
+    cb: () => void
+  ): HTMLButtonElement {
+    const btn = parent.createEl("button", {
+      cls: "wt-wb-head-tool",
+      attr: { type: "button", "aria-label": label, title: label },
+    });
+    setIcon(btn, icon);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cb();
+    });
+    return btn;
   }
 
   /** 头部轻量胶囊按钮：紧凑不占宽，但比纯文字明确可点。 */
@@ -709,15 +703,12 @@ export class WritingToolkitWorkbench extends ItemView {
     });
   }
 
-  /** 书头说明行：全书字数 · 卷数 · 最近更新。 */
+  /** 书头说明行：全书字数 · 章节数。 */
   private updateHeadInfo(): void {
     const refs = this.headRefs;
     if (!this.project || !refs) return;
-    const chapters = allChapters(this.project);
-    let latest = 0;
     let totalWords = 0;
-    for (const chapter of chapters) {
-      latest = Math.max(latest, chapter.file.stat.mtime);
+    for (const chapter of allChapters(this.project)) {
       const row = this.rows.get(chapter.file.path);
       if (row && row.known) {
         totalWords += row.words;
@@ -726,39 +717,30 @@ export class WritingToolkitWorkbench extends ItemView {
         if (cached) totalWords += cached.words;
       }
     }
-    const info: string[] = [];
-    if (totalWords > 0) {
-      const [num, unit] = splitWords(totalWords);
-      info.push(`${num} ${unit}`);
-    }
-    // 卷数只数显式分卷目录（第N卷…）；「正文草稿」是容器，不算一卷
-    const volumes = this.project.volumes.filter((v) =>
-      looksLikeVolumeFolder(v.name)
-    ).length;
-    if (volumes > 0) info.push(`${volumes} 卷`);
-    if (latest > 0) info.push(`更新于 ${relativeTime(latest)}`);
-    refs.infoEl.setText(info.join(" · "));
-    refs.infoEl.toggleClass("is-empty", info.length === 0);
+    const [num, unit] = splitWords(totalWords);
+    refs.infoEl.setText(
+      `${num} ${unit} · ${this.project.chapterCount} 章`
+    );
+    refs.infoEl.toggleClass("is-empty", false);
   }
 
-  /** 连载状态按钮：未标注时也显示，点一下即可设置。 */
-  private renderStatusChip(parent: HTMLElement): void {
+  /** 书名旁的小状态点：颜色表示连载状态，点一下设置。 */
+  private renderBookStatus(parent: HTMLElement): void {
     if (!this.project) return;
     const status = this.host.prefs.getWorkbenchStatus(this.project.root);
+    const label = status ? STATUS_LABEL[status] : "未标注";
     const btn = parent.createEl("button", {
-      cls: `wt-wb-status is-${status ?? "unset"}`,
-      attr: { type: "button", title: "设置连载状态" },
+      cls: `wt-wb-book-status is-${status ?? "unset"}`,
+      attr: {
+        type: "button",
+        "aria-label": `连载状态：${label}（点击设置）`,
+        title: `连载状态：${label}（点击设置）`,
+      },
     });
-    btn.createSpan({ cls: "wt-wb-status-dot" });
-    btn.createSpan({
-      cls: "wt-wb-status-text",
-      text: status ? STATUS_LABEL[status] : "未标注",
-    });
-    const chevron = btn.createSpan({ cls: "wt-wb-status-chevron" });
-    setIcon(chevron, "chevron-down");
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.showStatusMenu({ x: e.clientX, y: e.clientY });
+      const rect = btn.getBoundingClientRect();
+      this.showStatusMenu({ x: rect.left, y: rect.bottom + 4 });
     });
   }
 
@@ -797,25 +779,34 @@ export class WritingToolkitWorkbench extends ItemView {
     this.mode = mode;
     this.host.prefs.setWorkbenchMode(mode);
     this.keyboardIndex = null;
+    this.searchMatchIndex = -1;
+    this.searchMatches = [];
     this.renderHead();
     this.renderSearchBar();
-    this.renderBody();
+    this.scheduleSearch();
     this.updateFab();
   }
 
   // ---------- 搜索栏 ----------
 
-  /** 搜索栏内嵌清空按钮与右侧一键复制按钮，不额外挤占横向宽度。 */
+  /** 搜索按钮打开的面板：上一行搜索，下一行替换；收起时不占高度。 */
   private renderSearchBar(): void {
     this.searchEl.empty();
-    const wrap = this.searchEl.createDiv({ cls: "wt-wb-search-wrap" });
+    this.searchEl.toggleClass("is-collapsed", !this.searchOpen);
+    if (!this.searchOpen) return;
+
+    const searchRow = this.searchEl.createDiv({ cls: "wt-wb-search-row" });
+    const wrap = searchRow.createDiv({ cls: "wt-wb-search-wrap" });
     const icon = wrap.createSpan({ cls: "wt-wb-search-icon" });
-    setIcon(icon, "search");
+    setIcon(icon, "wt-search");
     const input = wrap.createEl("input", {
       cls: "wt-wb-search",
       type: "search",
-      placeholder: this.mode === "chapters" ? "搜索章节标题 / 章号" : "搜索资料",
-      attr: { title: "↑↓ 选择结果，回车打开，esc 清空" },
+      placeholder:
+        this.mode === "chapters" ? "搜索全书关键字" : "搜索设定关键字",
+      attr: {
+        title: "↑↓ / Enter 上下定位，Shift+Enter 上一处，esc 清空 / 关闭搜索",
+      },
     });
     this.searchInputEl = input;
     input.value = this.searchQuery;
@@ -824,15 +815,13 @@ export class WritingToolkitWorkbench extends ItemView {
       cls: `wt-wb-search-clear${this.searchQuery ? "" : " is-hidden"}`,
       attr: { type: "button", "aria-label": "清空搜索", title: "清空搜索 (esc)" },
     });
-    setIcon(clearBtn, "x");
+    setIcon(clearBtn, "wt-close");
     this.searchClearBtn = clearBtn;
     clearBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       input.value = "";
-      this.searchQuery = "";
+      this.clearSearchState();
       clearBtn.addClass("is-hidden");
-      this.keyboardIndex = null;
-      this.renderBody();
       input.focus();
     });
 
@@ -840,55 +829,582 @@ export class WritingToolkitWorkbench extends ItemView {
       this.searchQuery = input.value.trim();
       this.searchClearBtn?.toggleClass("is-hidden", !this.searchQuery);
       this.keyboardIndex = null;
-      this.renderBody();
+      this.scheduleSearch();
     });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
-        input.value = "";
-        this.searchQuery = "";
-        this.searchClearBtn?.addClass("is-hidden");
-        this.keyboardIndex = null;
-        this.renderBody();
-        input.blur();
+        e.preventDefault();
+        if (this.searchQuery) {
+          input.value = "";
+          this.clearSearchState();
+          this.searchClearBtn?.addClass("is-hidden");
+          input.focus();
+        } else {
+          this.toggleSearchPanel(false);
+        }
       } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        this.moveKeyboard(e.key);
+        if (!this.searchScanning && this.searchMatches.length > 0) {
+          this.stepSearchMatch(e.key === "ArrowDown" ? 1 : -1);
+        } else {
+          this.moveKeyboard(e.key);
+        }
       } else if (e.key === "Enter") {
         e.preventDefault();
-        this.openKeyboardTarget(e.metaKey || e.ctrlKey);
+        if (!this.searchScanning && this.searchMatches.length > 0) {
+          this.stepSearchMatch(e.shiftKey ? -1 : 1);
+        } else {
+          this.openKeyboardTarget(e.metaKey || e.ctrlKey);
+        }
       }
       e.stopPropagation();
     });
 
-    // 搜索框右侧：一键复制本章干净正文（点击后显示 √ 反馈）
-    const copyBtn = wrap.createEl("button", {
-      cls: "wt-wb-search-copy",
-      attr: {
-        type: "button",
-        "aria-label": "一键复制本章正文",
-        title:
-          "一键复制本章正文（不含批注标记、批注文件内容；文档没开着也能复制）",
-      },
+    const replaceRow = this.searchEl.createDiv({
+      cls: "wt-wb-search-replace",
     });
-    setIcon(copyBtn, "copy");
-    copyBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const target = this.currentPath ?? this.firstChapterPath();
-      if (!target) {
-        new Notice("先打开一章，或在这篇作品里建一章");
+    const replaceInput = replaceRow.createEl("input", {
+      cls: "wt-wb-replace",
+      type: "text",
+      placeholder: "替换为…",
+      attr: { title: "回车替换当前一处；全部替换会先确认" },
+    });
+    replaceInput.value = this.replaceQuery;
+    replaceInput.addEventListener("input", () => {
+      this.replaceQuery = replaceInput.value;
+    });
+    replaceInput.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        this.toggleSearchPanel(false);
+        input.focus();
         return;
       }
-      void this.host.actions.copyCleanChapter(target);
-      copyBtn.addClass("is-copied");
-      setIcon(copyBtn, "check");
-      if (this.copyFeedbackTimer) window.clearTimeout(this.copyFeedbackTimer);
-      this.copyFeedbackTimer = window.setTimeout(() => {
-        this.copyFeedbackTimer = 0;
-        copyBtn.removeClass("is-copied");
-        setIcon(copyBtn, "copy");
-      }, 1300);
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void this.replaceCurrent();
+        return;
+      }
+      e.stopPropagation();
     });
-    copyBtn.addEventListener("keydown", (e) => e.stopPropagation());
+
+    const replaceBtn = replaceRow.createEl("button", {
+      cls: "wt-wb-replace-btn",
+      text: "替换",
+      attr: { type: "button", title: "替换当前一处（Enter）" },
+    });
+    replaceBtn.addEventListener("click", () => void this.replaceCurrent());
+    const allBtn = replaceRow.createEl("button", {
+      cls: "wt-wb-replace-btn is-all",
+      text: "全部",
+      attr: { type: "button", title: "替换当前标签下的全部命中" },
+    });
+    allBtn.addEventListener("click", () => this.replaceAll());
+  }
+
+  /** 标题栏搜索按钮：展开 / 收起查找替换面板。 */
+  private toggleSearchPanel(force?: boolean): void {
+    const open = force ?? !this.searchOpen;
+    if (open === this.searchOpen) {
+      if (open) this.searchInputEl?.focus();
+      return;
+    }
+    this.searchOpen = open;
+    this.searchActionEl?.toggleClass("is-active", open);
+    this.searchEl.toggleClass("is-collapsed", !open);
+    if (open) {
+      this.renderSearchBar();
+      this.searchInputEl?.focus();
+    } else {
+      this.replaceQuery = "";
+      this.clearSearchState();
+    }
+  }
+
+  /** 标题栏复制按钮：一键复制当前章节干净正文。 */
+  private copyCurrentChapter(): void {
+    const target = this.currentPath ?? this.firstChapterPath();
+    if (!target) {
+      new Notice("先打开一章，或在这篇作品里建一章");
+      return;
+    }
+    void this.host.actions.copyCleanChapter(target);
+    const el = this.copyActionEl;
+    if (!el) return;
+    setIcon(el, "wt-check");
+    if (this.copyFeedbackTimer) window.clearTimeout(this.copyFeedbackTimer);
+    this.copyFeedbackTimer = window.setTimeout(() => {
+      this.copyFeedbackTimer = 0;
+      setIcon(el, "wt-copy");
+    }, 1300);
+  }
+
+  /** 清空搜索：输入框、命中缓存、进行中的扫描全部复位。 */
+  private clearSearchState(): void {
+    this.searchQuery = "";
+    this.searchHits.clear();
+    this.searchMatches = [];
+    this.searchMatchIndex = -1;
+    this.searchMatchesQuery = "";
+    this.searchRevealAfterScan = false;
+    this.searchScanning = false;
+    this.searchScanToken++;
+    if (this.searchScanTimer) {
+      window.clearTimeout(this.searchScanTimer);
+      this.searchScanTimer = 0;
+    }
+    this.keyboardIndex = null;
+    this.renderBody();
+  }
+
+  /** 输入后防抖扫描整本书；扫描期间列表显示「正在搜索」。 */
+  private scheduleSearch(): void {
+    if (this.searchScanTimer) {
+      window.clearTimeout(this.searchScanTimer);
+      this.searchScanTimer = 0;
+    }
+    const token = ++this.searchScanToken;
+    if (this.searchQuery !== this.searchMatchesQuery) {
+      this.searchRevealAfterScan = false;
+    }
+    if (!this.searchQuery) {
+      this.searchHits.clear();
+      this.searchMatches = [];
+      this.searchMatchIndex = -1;
+      this.searchMatchesQuery = "";
+      this.searchRevealAfterScan = false;
+      this.searchScanning = false;
+      this.renderBody();
+      return;
+    }
+    this.searchScanning = true;
+    this.renderBody();
+    this.searchScanTimer = window.setTimeout(() => {
+      this.searchScanTimer = 0;
+      void this.scanSearch(this.searchQuery, token);
+    }, 180);
+  }
+
+  /** 在当前标签的范围内扫描全文：正文 = 全书章节，设定 = 全部设定资料。 */
+  private async scanSearch(query: string, token: number): Promise<void> {
+    const q = query.toLowerCase();
+    const project = this.project;
+    if (!project) {
+      this.searchHits = new Map();
+      this.searchMatches = [];
+      this.searchMatchIndex = -1;
+      this.searchMatchesQuery = query;
+      this.searchScanning = false;
+      this.renderBody();
+      return;
+    }
+    // 换关键字时重新从头找；同一个词重扫（文件变化）则保留当前位置。
+    if (query !== this.searchMatchesQuery) {
+      this.searchMatchesQuery = query;
+      this.searchMatchIndex = -1;
+    }
+    const chapters = this.mode === "chapters" ? allChapters(project) : [];
+    const chapterByPath = new Map(chapters.map((c) => [c.file.path, c]));
+    const files =
+      this.mode === "chapters"
+        ? chapters.map((c) => c.file)
+        : project.resources.flatMap((group) => group.files);
+    const hits = new Map<string, SearchHit>();
+    const matches: SearchMatch[] = [];
+    // 已打开的编辑器可能有未保存内容，搜索以编辑器里的实时文本为准。
+    const openText = new Map<string, string>();
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (view instanceof MarkdownView && view.file) {
+        openText.set(view.file.path, view.editor.getValue());
+      }
+    }
+    for (const file of files) {
+      if (token !== this.searchScanToken) return;
+      let text = openText.get(file.path);
+      if (text === undefined) {
+        try {
+          text = await this.app.vault.cachedRead(file);
+        } catch {
+          continue;
+        }
+      }
+      const lower = text.toLowerCase();
+      let index = lower.indexOf(q);
+      let count = 0;
+      let first = -1;
+      while (index !== -1 && count < 999) {
+        if (first < 0) first = index;
+        matches.push({ path: file.path, offset: index, length: q.length });
+        count++;
+        index = lower.indexOf(q, index + q.length);
+      }
+      const entry = chapterByPath.get(file.path);
+      const titleHay = `${entry?.title ?? ""} ${entry?.number ?? ""} ${
+        file.basename
+      }`.toLowerCase();
+      if (count > 0 || titleHay.includes(q)) {
+        hits.set(file.path, {
+          count,
+          snippet: count > 0 ? this.searchSnippet(text, first, q.length) : "",
+          offset: count > 0 ? first : -1,
+          query,
+        });
+      }
+    }
+    if (token !== this.searchScanToken) return;
+    this.searchHits = hits;
+    this.searchMatches = matches;
+    if (this.searchMatchIndex >= matches.length) {
+      this.searchMatchIndex = matches.length > 0 ? 0 : -1;
+    }
+    this.searchScanning = false;
+    const reveal = this.searchRevealAfterScan;
+    this.searchRevealAfterScan = false;
+    this.renderBody();
+    if (reveal && this.searchMatchIndex >= 0) {
+      this.revealSearchMatch(matches[this.searchMatchIndex]);
+    }
+  }
+
+  private searchSnippet(text: string, index: number, length: number): string {
+    const radius = 24;
+    const start = Math.max(0, index - radius);
+    const end = Math.min(text.length, index + length + radius);
+    const body = text.slice(start, end).replace(/\s+/g, " ").trim();
+    return `${start > 0 ? "…" : ""}${body}${end < text.length ? "…" : ""}`;
+  }
+
+  /** 上一处 / 下一处：在全书命中序列里循环，并定位选中。 */
+  private stepSearchMatch(direction: 1 | -1): void {
+    const matches = this.searchMatches;
+    if (matches.length === 0) return;
+    const current = this.searchMatchIndex;
+    const next =
+      current < 0
+        ? direction > 0
+          ? 0
+          : matches.length - 1
+        : (current + direction + matches.length) % matches.length;
+    this.searchMatchIndex = next;
+    this.revealSearchMatch(matches[next]);
+    this.updateSearchSummary();
+    this.updateSearchTargetHighlight();
+  }
+
+  /** 打开 / 定位到指定命中（不改变 searchMatchIndex）。 */
+  private revealSearchMatch(match: SearchMatch): void {
+    const view = this.markdownViewForPath(match.path);
+    if (view) {
+      this.applyEditorSelection(view, match.offset, this.searchMatchesQuery);
+      this.focusSearchInput();
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(match.path);
+    if (!(file instanceof TFile)) return;
+    this.openFile(
+      file,
+      false,
+      {
+        count: 1,
+        snippet: "",
+        offset: match.offset,
+        query: this.searchMatchesQuery,
+      },
+      false
+    );
+  }
+
+  /** 找文件对应的 Markdown 视图：优先当前活动视图，其次已打开的同文件视图。 */
+  private markdownViewForPath(path: string): MarkdownView | null {
+    const active = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (active?.file?.path === path) return active;
+    for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (view instanceof MarkdownView && view.file?.path === path) {
+        return view;
+      }
+    }
+    return null;
+  }
+
+  /** 把命中位置写进编辑器选区；文件可能变过，对不上就重新找第一次出现。 */
+  private applyEditorSelection(
+    view: MarkdownView,
+    offset: number,
+    query: string
+  ): void {
+    const editor = view.editor;
+    const text = editor.getValue();
+    const needle = query;
+    const isMatchAt = (at: number): boolean =>
+      at >= 0 &&
+      text.slice(at, at + needle.length).toLowerCase() === needle.toLowerCase();
+    let at = offset;
+    if (!isMatchAt(at)) at = text.toLowerCase().indexOf(needle.toLowerCase());
+    if (at < 0) return;
+    const from = editor.offsetToPos(at);
+    const to = editor.offsetToPos(at + needle.length);
+    editor.setSelection(from, to);
+    editor.scrollIntoView({ from, to }, true);
+  }
+
+  private focusSearchInput(): void {
+    this.searchInputEl?.focus({ preventScroll: true });
+  }
+
+  /** 搜索框下方的一行命中计数 + 上一处 / 下一处按钮。 */
+  private renderSearchSummary(): void {
+    if (this.searchMatches.length === 0) return;
+    const summary = this.bodyEl.createDiv({ cls: "wt-wb-search-summary" });
+    const text = summary.createSpan({ cls: "wt-wb-search-summary-text" });
+    this.updateSearchSummaryText(text);
+    const nav = summary.createDiv({ cls: "wt-wb-search-nav" });
+    const addNav = (
+      direction: 1 | -1,
+      icon: string,
+      label: string
+    ): void => {
+      const btn = nav.createEl("button", {
+        cls: "wt-wb-search-nav-btn",
+        attr: { type: "button", "aria-label": label, title: label },
+      });
+      setIcon(btn, icon);
+      btn.addEventListener("mousedown", (e) => e.preventDefault());
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.stepSearchMatch(direction);
+        this.focusSearchInput();
+      });
+    };
+    addNav(-1, "wt-chevron-up", "上一处（Shift+Enter）");
+    addNav(1, "wt-chevron-down", "下一处（Enter）");
+  }
+
+  private updateSearchSummary(): void {
+    const el = this.bodyEl.querySelector<HTMLElement>(
+      ".wt-wb-search-summary-text"
+    );
+    if (el) this.updateSearchSummaryText(el);
+  }
+
+  private updateSearchSummaryText(el: HTMLElement): void {
+    const total = this.searchMatches.length;
+    const current = this.searchMatchIndex >= 0 ? this.searchMatchIndex + 1 : 0;
+    el.setText(
+      current > 0 ? `全书 ${total} 处 · 第 ${current} 处` : `全书 ${total} 处`
+    );
+  }
+
+  /** 高亮当前命中所在的章节 / 资料行，并把它滚进视野。 */
+  private updateSearchTargetHighlight(): void {
+    const target =
+      this.searchMatchIndex >= 0
+        ? this.searchMatches[this.searchMatchIndex]?.path ?? null
+        : null;
+    for (const ref of this.rows.values()) {
+      ref.rowEl.toggleClass("is-search-current", ref.entry.file.path === target);
+    }
+    for (const ref of this.resourceRows.values()) {
+      ref.rowEl.toggleClass("is-search-current", ref.file.path === target);
+    }
+    const row = target
+      ? this.rows.get(target)?.rowEl ?? this.resourceRows.get(target)?.rowEl
+      : null;
+    row?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** 点击某条结果时，把「当前第几处」同步到这个文件的第一处命中。 */
+  private syncSearchIndex(file: TFile, hit: SearchHit): void {
+    // 只有标题命中时没有正文位置，清掉上一处的高亮，避免摘要指错文件。
+    if (hit.offset < 0) {
+      this.searchMatchIndex = -1;
+      return;
+    }
+    const index = this.searchMatches.findIndex(
+      (match) => match.path === file.path && match.offset === hit.offset
+    );
+    if (index >= 0) this.searchMatchIndex = index;
+  }
+
+  /** 在当前命中处替换一次，然后自动跳到下一处。 */
+  private async replaceCurrent(): Promise<void> {
+    if (
+      !this.searchQuery ||
+      this.searchScanning ||
+      this.searchMatchesQuery !== this.searchQuery ||
+      this.searchMatches.length === 0
+    ) {
+      return;
+    }
+    const index = this.searchMatchIndex >= 0 ? this.searchMatchIndex : 0;
+    const match = this.searchMatches[index];
+    const file = this.app.vault.getAbstractFileByPath(match.path);
+    if (!(file instanceof TFile)) return;
+    const replacement = this.replaceQuery;
+    try {
+      const view = this.markdownViewForPath(match.path);
+      if (view) {
+        const editor = view.editor;
+        const at = this.findMatchOffset(
+          editor.getValue(),
+          match.offset,
+          this.searchQuery
+        );
+        if (at < 0) return;
+        editor.replaceRange(
+          replacement,
+          editor.offsetToPos(at),
+          editor.offsetToPos(at + this.searchQuery.length)
+        );
+      } else {
+        await this.app.vault.process(file, (content) => {
+          const at = this.findMatchOffset(
+            content,
+            match.offset,
+            this.searchQuery
+          );
+          return at < 0
+            ? content
+            : content.slice(0, at) +
+                replacement +
+                content.slice(at + this.searchQuery.length);
+        });
+      }
+    } catch (error) {
+      console.error("写作工作台：替换失败", error);
+      new Notice("替换失败（详见控制台）");
+      return;
+    }
+    this.searchMatchIndex = index;
+    this.searchRevealAfterScan = true;
+    this.scheduleSearch();
+    this.focusSearchInput();
+  }
+
+  /** 全部替换：先确认，再逐文件替换当前标签下的所有命中。 */
+  private replaceAll(): void {
+    if (
+      !this.searchQuery ||
+      this.searchScanning ||
+      this.searchMatchesQuery !== this.searchQuery
+    ) {
+      return;
+    }
+    if (this.searchMatches.length === 0) {
+      new Notice("没有可替换的命中");
+      return;
+    }
+    const files = new Set(this.searchMatches.map((match) => match.path));
+    const replacement = this.replaceQuery;
+    new ConfirmModal(
+      this.app,
+      "全部替换",
+      `将在 ${files.size} 个文件的 ${this.searchMatches.length} 处，把「${this.searchQuery}」${
+        replacement ? `替换为「${replacement}」` : "替换为空（删除）"
+      }。\n\n会直接改写正文。已打开的文件可以用编辑器撤销；其他文件建议先在「文件恢复」里确认有可用快照。`,
+      "全部替换",
+      () => void this.doReplaceAll(),
+      true
+    ).open();
+  }
+
+  private async doReplaceAll(): Promise<void> {
+    const query = this.searchQuery;
+    const replacement = this.replaceQuery;
+    if (!query) return;
+    const byPath = new Map<string, SearchMatch[]>();
+    for (const match of this.searchMatches) {
+      const list = byPath.get(match.path) ?? [];
+      list.push(match);
+      byPath.set(match.path, list);
+    }
+    let replaced = 0;
+    let failed = 0;
+    for (const path of byPath.keys()) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      try {
+        const view = this.markdownViewForPath(path);
+        if (view) {
+          const editor = view.editor;
+          const offsets = this.collectMatchOffsets(editor.getValue(), query);
+          if (offsets.length > 0) {
+            editor.transaction({
+              changes: offsets.map((offset) => ({
+                from: editor.offsetToPos(offset),
+                to: editor.offsetToPos(offset + query.length),
+                text: replacement,
+              })),
+            });
+            replaced += offsets.length;
+          }
+        } else {
+          let count = 0;
+          await this.app.vault.process(file, (content) => {
+            const result = this.replaceAllInText(content, query, replacement);
+            count = result.count;
+            return result.text;
+          });
+          replaced += count;
+        }
+      } catch (error) {
+        console.error("写作工作台：全部替换失败", path, error);
+        failed++;
+      }
+    }
+    new Notice(
+      `已替换 ${replaced} 处${failed > 0 ? `，${failed} 个文件失败` : ""}`
+    );
+    this.searchMatchIndex = -1;
+    this.searchRevealAfterScan = false;
+    this.scheduleSearch();
+    this.focusSearchInput();
+  }
+
+  private collectMatchOffsets(text: string, query: string): number[] {
+    const lower = text.toLowerCase();
+    const q = query.toLowerCase();
+    const offsets: number[] = [];
+    let index = lower.indexOf(q);
+    while (index !== -1 && offsets.length < 999) {
+      offsets.push(index);
+      index = lower.indexOf(q, index + q.length);
+    }
+    return offsets;
+  }
+
+  private replaceAllInText(
+    text: string,
+    query: string,
+    replacement: string
+  ): { text: string; count: number } {
+    const lower = text.toLowerCase();
+    const q = query.toLowerCase();
+    let out = "";
+    let pos = 0;
+    let count = 0;
+    let index = lower.indexOf(q);
+    while (index !== -1 && count < 999) {
+      out += text.slice(pos, index) + replacement;
+      pos = index + q.length;
+      count++;
+      index = lower.indexOf(q, pos);
+    }
+    return { text: out + text.slice(pos), count };
+  }
+
+  private findMatchOffset(
+    text: string,
+    offset: number,
+    query: string
+  ): number {
+    const lower = text.toLowerCase();
+    const q = query.toLowerCase();
+    if (offset >= 0 && lower.slice(offset, offset + q.length) === q) {
+      return offset;
+    }
+    return lower.indexOf(q);
   }
 
   /** 当前作品的第一章（没打开任何文档时，复制按钮兜底用）。 */
@@ -898,20 +1414,13 @@ export class WritingToolkitWorkbench extends ItemView {
   }
 
   private matchesSearch(entry: ChapterEntry): boolean {
-    const q = this.searchQuery.toLowerCase();
-    if (!q) return true;
-    if (entry.title.toLowerCase().includes(q)) return true;
-    if (entry.file.basename.toLowerCase().includes(q)) return true;
-    if (entry.number !== null && String(entry.number).includes(q)) return true;
-    return false;
+    if (!this.searchQuery) return true;
+    return this.searchHits.has(entry.file.path);
   }
 
   // ---------- ② 台面 ----------
 
   private renderBody(): void {
-    // 重建前先把章纲输入内容落盘（同步取出文本，再异步写入）
-    if (this.outlineEditorEl) void this.flushOutline();
-
     this.updateCurrentPath();
     this.bodyEl.empty();
     this.rows.clear();
@@ -920,9 +1429,6 @@ export class WritingToolkitWorkbench extends ItemView {
     this.volumeViews = [];
     this.resourceGroupEls = [];
     this.listPaths = [];
-    this.outlineEditorEl = null;
-    this.openOutlinePath = null;
-    this.outlineFile = null;
 
     if (!this.project) {
       this.renderEmpty(
@@ -950,6 +1456,16 @@ export class WritingToolkitWorkbench extends ItemView {
     }
 
     const filtering = this.searchQuery.length > 0;
+    if (filtering && this.searchScanning) {
+      this.renderEmpty(
+        "正在搜索全书…",
+        "正在读取当前标签下的全部内容"
+      );
+      this.listPaths = [];
+      this.keyboardIndex = null;
+      return;
+    }
+    if (filtering) this.renderSearchSummary();
 
     // 搜索时：卷内没有命中的章节就不显示这一卷
     const visible: ChapterEntry[] = [];
@@ -982,7 +1498,7 @@ export class WritingToolkitWorkbench extends ItemView {
         const header = volumeEl.createDiv({ cls: "wt-wb-volume-head" });
         header.setAttr("title", "点击折叠 / 展开；右键打开卷菜单");
         const chevron = header.createSpan({ cls: "wt-wb-volume-chevron" });
-        setIcon(chevron, "chevron-down");
+        setIcon(chevron, "wt-chevron-down");
         header.createSpan({
           cls: "wt-wb-volume-name",
           text: displayFolderName(volume.name),
@@ -1035,6 +1551,7 @@ export class WritingToolkitWorkbench extends ItemView {
     this.finalizeKeyboard();
     // 搜索时不抢滚动位置，否则结果列表会被拉回当前章
     if (!filtering) this.scrollToCurrent("center");
+    else this.updateSearchTargetHighlight();
     this.hydrateFromCache();
     this.recomputeTotals();
   }
@@ -1113,7 +1630,7 @@ export class WritingToolkitWorkbench extends ItemView {
     // 在非末卷上会生成一个**全书最大章号**的章节塞进这一卷，顺序与编号对不上。
     // 新建统一用顶部「+ 新章节」；要在中间插章用章节行的「在下方插入一章」。
     menu.addItem((item) =>
-      item.setTitle("只展开本卷").setIcon("fold-vertical").onClick(() => {
+      item.setTitle("只展开本卷").setIcon("wt-fold").onClick(() => {
         for (const view of this.volumeViews) {
           this.setVolumeCollapsed(view.path, view.path !== volume.path);
         }
@@ -1121,13 +1638,13 @@ export class WritingToolkitWorkbench extends ItemView {
       })
     );
     menu.addItem((item) =>
-      item.setTitle("展开全部卷").setIcon("unfold-vertical").onClick(() => {
+      item.setTitle("展开全部卷").setIcon("wt-unfold").onClick(() => {
         for (const view of this.volumeViews) this.setVolumeCollapsed(view.path, false);
         this.afterCollapseChange();
       })
     );
     menu.addItem((item) =>
-      item.setTitle("折叠全部卷").setIcon("fold-vertical").onClick(() => {
+      item.setTitle("折叠全部卷").setIcon("wt-fold").onClick(() => {
         for (const view of this.volumeViews) this.setVolumeCollapsed(view.path, true);
         this.afterCollapseChange();
       })
@@ -1136,12 +1653,12 @@ export class WritingToolkitWorkbench extends ItemView {
     menu.addItem((item) =>
       item
         .setTitle("全书章节重编号…")
-        .setIcon("list-ordered")
+        .setIcon("wt-list-ordered")
         .onClick(() => this.renumberBookNow())
     );
     menu.addSeparator();
     menu.addItem((item) =>
-      item.setTitle("在系统文件管理器中显示").setIcon("folder-open").onClick(() => {
+      item.setTitle("在系统文件管理器中显示").setIcon("wt-folder").onClick(() => {
         this.host.actions.revealPathInSystem(volume.path);
       })
     );
@@ -1150,7 +1667,7 @@ export class WritingToolkitWorkbench extends ItemView {
       menu.addItem((item) =>
         item
           .setTitle("删除卷（移到废纸篓）")
-          .setIcon("trash-2")
+          .setIcon("wt-trash")
           .onClick(() => this.confirmDeleteVolume(volume))
       );
     }
@@ -1236,7 +1753,11 @@ export class WritingToolkitWorkbench extends ItemView {
         : String(entry.number)
     );
 
-    const titleEl = row.createSpan({ cls: "wt-wb-ch-title" });
+    const hit = this.searchQuery
+      ? this.searchHits.get(entry.file.path)
+      : undefined;
+    const titleWrap = row.createDiv({ cls: "wt-wb-ch-titlewrap" });
+    const titleEl = titleWrap.createSpan({ cls: "wt-wb-ch-title" });
     if (entry.title) {
       titleEl.setText(entry.title);
     } else {
@@ -1249,18 +1770,17 @@ export class WritingToolkitWorkbench extends ItemView {
       );
     }
     titleEl.setAttr("title", entry.file.basename);
+    if (hit?.snippet) {
+      titleWrap.createSpan({
+        cls: "wt-wb-ch-snippet",
+        text: hit.snippet,
+      });
+    }
+    if (hit && hit.count > 0) {
+      row.createSpan({ cls: "wt-wb-ch-hits", text: `${hit.count} 处` });
+    }
 
     const wordsEl = row.createSpan({ cls: "wt-wb-ch-words", text: "…" });
-
-    const outlineBtn = row.createEl("button", {
-      cls: "wt-wb-ch-outline",
-      attr: { type: "button", title: "写本章章纲" },
-    });
-    setIcon(outlineBtn, "pen-line");
-    outlineBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void this.toggleOutline(entry, row);
-    });
 
     const dotEl = row.createSpan({ cls: "wt-wb-ch-dot" });
     dotEl.setAttr("title", "状态");
@@ -1270,10 +1790,8 @@ export class WritingToolkitWorkbench extends ItemView {
       rowEl: row,
       wordsEl,
       dotEl,
-      outlineBtn,
       known: false,
       words: 0,
-      outline: false,
     };
     this.rows.set(entry.file.path, ref);
 
@@ -1285,7 +1803,12 @@ export class WritingToolkitWorkbench extends ItemView {
       const idx = this.listPaths.indexOf(entry.file.path);
       if (idx >= 0) this.keyboardIndex = idx;
       this.renderKeyboardFocus();
-      this.openFile(entry.file, e.metaKey || (e.ctrlKey && !Platform.isMacOS));
+      this.openFile(
+        entry.file,
+        e.metaKey || (e.ctrlKey && !Platform.isMacOS),
+        hit,
+        true
+      );
     });
 
     bindContextMenu(row, (pt) => this.showFileMenu(entry.file, pt, entry));
@@ -1321,13 +1844,20 @@ export class WritingToolkitWorkbench extends ItemView {
     }
 
     const activePath = this.app.workspace.getActiveFile()?.path ?? null;
-    const q = this.searchQuery.toLowerCase();
+    const filtering = this.searchQuery.length > 0;
+    if (filtering && this.searchScanning) {
+      this.renderEmpty("正在搜索设定…", "正在读取当前标签下的全部内容");
+      this.listPaths = [];
+      this.keyboardIndex = null;
+      return;
+    }
+    if (filtering) this.renderSearchSummary();
     const matchedGroups: Array<{ group: ResourceGroup; files: TFile[] }> = [];
     for (const group of project.resources) {
-      const files = q
-        ? group.files.filter((f) => f.basename.toLowerCase().includes(q))
+      const files = filtering
+        ? group.files.filter((f) => this.searchHits.has(f.path))
         : group.files;
-      if (files.length === 0 && q) continue;
+      if (files.length === 0 && filtering) continue;
       matchedGroups.push({ group, files });
     }
 
@@ -1338,7 +1868,6 @@ export class WritingToolkitWorkbench extends ItemView {
       return;
     }
 
-    const filtering = q.length > 0;
     for (const { group, files } of matchedGroups) {
       const collapsed =
         !filtering && resourceGroupCollapse.get(group.path) === true;
@@ -1351,7 +1880,7 @@ export class WritingToolkitWorkbench extends ItemView {
       const head = groupEl.createDiv({ cls: "wt-wb-volume-head" });
       head.setAttr("title", "点击折叠 / 展开本分类；右键或点 + 新建笔记");
       const chevron = head.createSpan({ cls: "wt-wb-volume-chevron" });
-      setIcon(chevron, "chevron-down");
+      setIcon(chevron, "wt-chevron-down");
       head.createSpan({
         cls: "wt-wb-volume-name",
         text: displayFolderName(group.name),
@@ -1368,7 +1897,7 @@ export class WritingToolkitWorkbench extends ItemView {
           title: `在「${displayFolderName(group.name)}」中新建笔记`,
         },
       });
-      setIcon(addBtn, "plus");
+      setIcon(addBtn, "wt-plus");
       addBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         this.createNoteIn(group.path);
@@ -1380,12 +1909,12 @@ export class WritingToolkitWorkbench extends ItemView {
       bindContextMenu(head, (pt) => {
         const menu = new Menu();
         menu.addItem((item) =>
-          item.setTitle("新建笔记").setIcon("file-plus").onClick(() => {
+          item.setTitle("新建笔记").setIcon("wt-file-plus").onClick(() => {
             this.createNoteIn(group.path);
           })
         );
         menu.addItem((item) =>
-          item.setTitle("在系统文件管理器中显示").setIcon("folder-open").onClick(() => {
+          item.setTitle("在系统文件管理器中显示").setIcon("wt-folder").onClick(() => {
             this.host.actions.revealPathInSystem(group.path);
           })
         );
@@ -1400,6 +1929,7 @@ export class WritingToolkitWorkbench extends ItemView {
 
     this.rebuildListPaths();
     this.finalizeKeyboard();
+    if (this.searchQuery) this.updateSearchTargetHighlight();
     this.hydrateFromCache();
     this.recomputeTotals();
   }
@@ -1433,8 +1963,18 @@ export class WritingToolkitWorkbench extends ItemView {
     if (isActive) row.addClass("is-current");
 
     const { tag, name } = parseResourceName(file.basename);
-    const titleEl = row.createSpan({ cls: "wt-wb-res-title", text: name });
+    const hit = this.searchQuery
+      ? this.searchHits.get(file.path)
+      : undefined;
+    const titleWrap = row.createDiv({ cls: "wt-wb-res-titlewrap" });
+    const titleEl = titleWrap.createSpan({ cls: "wt-wb-res-title", text: name });
     titleEl.setAttr("title", file.basename);
+    if (hit?.snippet) {
+      titleWrap.createSpan({ cls: "wt-wb-res-snippet", text: hit.snippet });
+    }
+    if (hit && hit.count > 0) {
+      row.createSpan({ cls: "wt-wb-res-hits", text: `${hit.count} 处` });
+    }
     if (tag) {
       const tagEl = row.createSpan({ cls: "wt-wb-res-tag", text: tag });
       tagEl.setAttr("data-tag", tag);
@@ -1456,7 +1996,12 @@ export class WritingToolkitWorkbench extends ItemView {
       const idx = this.listPaths.indexOf(file.path);
       if (idx >= 0) this.keyboardIndex = idx;
       this.renderKeyboardFocus();
-      this.openFile(file, e.metaKey || (e.ctrlKey && !Platform.isMacOS));
+      this.openFile(
+        file,
+        e.metaKey || (e.ctrlKey && !Platform.isMacOS),
+        hit,
+        true
+      );
     });
 
     bindContextMenu(row, (pt) => this.showFileMenu(file, pt, null));
@@ -1468,7 +2013,7 @@ export class WritingToolkitWorkbench extends ItemView {
   private hydrateFromCache(): void {
     for (const ref of this.rows.values()) {
       const cached = statCache.get(ref.entry.file.path);
-      if (cached) this.applyChapterStats(ref, cached.words, cached.outline);
+      if (cached) this.applyChapterStats(ref, cached.words);
     }
     for (const ref of this.resourceRows.values()) {
       const cached = statCache.get(ref.file.path);
@@ -1496,7 +2041,7 @@ export class WritingToolkitWorkbench extends ItemView {
         cached.mtime === file.stat.mtime &&
         cached.size === file.stat.size
       ) {
-        this.applyByPath(file.path, cached.words, cached.outline);
+        this.applyByPath(file.path, cached.words);
       } else {
         pending.push(file);
       }
@@ -1507,11 +2052,9 @@ export class WritingToolkitWorkbench extends ItemView {
     for (const file of pending) {
       if (token !== this.statsToken) return;
       let words = 0;
-      let outline = false;
       try {
         const content = await this.app.vault.cachedRead(file);
         words = this.host.actions.countWords(content);
-        outline = await this.hasOutline(file);
       } catch {
         /* 读取失败按空处理 */
       }
@@ -1520,54 +2063,28 @@ export class WritingToolkitWorkbench extends ItemView {
         mtime: file.stat.mtime,
         size: file.stat.size,
         words,
-        outline,
       });
-      this.applyByPath(file.path, words, outline);
+      this.applyByPath(file.path, words);
       if (++done % AGGREGATE_EVERY === 0) this.recomputeTotals();
     }
     this.recomputeTotals();
   }
 
-  private applyByPath(path: string, words: number, outline: boolean): void {
+  private applyByPath(path: string, words: number): void {
     const chapterRef = this.rows.get(path);
-    if (chapterRef) this.applyChapterStats(chapterRef, words, outline);
+    if (chapterRef) this.applyChapterStats(chapterRef, words);
     const resRef = this.resourceRows.get(path);
     if (resRef) this.applyResourceStats(resRef, words);
   }
 
-  private async hasOutline(file: TFile): Promise<boolean> {
-    try {
-      return await this.host.caps.outline.has(file);
-    } catch {
-      return false;
-    }
-  }
-
-  private applyOutlineState(path: string, hasContent: boolean): void {
-    const ref = this.rows.get(path);
-    if (ref) {
-      ref.outline = hasContent;
-      ref.outlineBtn.toggleClass("is-on", hasContent);
-      ref.outlineBtn.setAttr(
-        "title",
-        hasContent ? "查看 / 编辑本章章纲（已写）" : "写本章章纲"
-      );
-    }
-    const cached = statCache.get(path);
-    if (cached) cached.outline = hasContent;
-  }
-
-  private applyChapterStats(ref: RowRef, words: number, outline: boolean): void {
+  private applyChapterStats(ref: RowRef, words: number): void {
     ref.known = true;
     ref.words = words;
-    ref.outline = outline;
     ref.wordsEl.setText(words > 0 ? formatNumber(words) : "—");
     ref.wordsEl.toggleClass("is-empty", words === 0);
     ref.dotEl.toggleClass("is-written", words > 0);
     ref.dotEl.toggleClass("is-blank", words === 0);
     ref.dotEl.setAttr("title", words > 0 ? `已写 ${formatNumber(words)} 字` : "还没写");
-    ref.outlineBtn.toggleClass("is-on", outline);
-    ref.outlineBtn.setAttr("title", outline ? "查看 / 编辑本章章纲（已写）" : "写本章章纲");
   }
 
   private applyResourceStats(ref: ResourceRowRef, words: number): void {
@@ -1605,20 +2122,24 @@ export class WritingToolkitWorkbench extends ItemView {
   // ---------- ③ 今日仪表 ----------
 
   private renderFoot(): void {
-    void this.ensureSnapshotCount();
-
     const pomo = this.host.stats.getTodayPomodoroSummary();
     const duration = Math.round(this.host.stats.durationSeconds() || 0);
-    const todayWords = Math.max(0, this.host.stats.gross() || 0);
+    const todayNet = this.host.stats.total() || 0;
+    const todayWords = Math.max(0, todayNet);
     const dailyGoal = Math.max(1, this.host.settings.dailyGoal || 2000);
+    const showSpeed = !!this.host.settings.showSpeed;
+    const speed = showSpeed
+      ? Math.max(0, this.host.stats.statusBarSpeed() || 0)
+      : 0;
 
     const signature = [
       !!this.project,
-      todayWords,
+      todayNet,
       dailyGoal,
       pomo?.count ?? 0,
       duration,
-      this.snapshotCount ?? -1,
+      showSpeed,
+      speed,
       this.currentPath ?? "",
     ].join("|");
     if (signature === this.footSignature) return;
@@ -1631,10 +2152,13 @@ export class WritingToolkitWorkbench extends ItemView {
     }
 
     const details: Array<{ text: string; title: string; onClick: () => void }> = [];
-    if (todayWords > 0) {
+    if (todayNet !== 0) {
       details.push({
-        text: `今日 ${formatNumber(todayWords)} 字`,
-        title: `今日目标 ${formatNumber(dailyGoal)} 字（点击查看明细）`,
+        text: `今日 ${formatNumber(todayNet)} 字`,
+        title:
+          todayNet < 0
+            ? `今日净增 ${formatNumber(todayNet)} 字（新增为正，删除会抵减）· 点击查看明细`
+            : `今日目标 ${formatNumber(dailyGoal)} 字（点击查看明细）`,
         onClick: () => this.host.stats.showDailyBreakdown(),
       });
     }
@@ -1652,15 +2176,12 @@ export class WritingToolkitWorkbench extends ItemView {
         onClick: () => void this.host.nav.openSidebar(),
       });
     }
-    if (this.snapshotCount !== null && this.snapshotCount > 0) {
+    if (showSpeed) {
       details.push({
-        text: `${this.snapshotCount} 快照`,
-        title: "点击对比当前章节最近快照",
-        onClick: () => {
-          if (this.currentPath) {
-            void this.host.caps.snapshots.openDiff(this.currentPath);
-          }
-        },
+        text: speed > 0 ? `时速 ${formatNumber(speed)} 字` : "时速 —",
+        title:
+          "最近 60 秒有效码字速度；连续写 10 秒后开始显示；粘贴/整章导入不计入",
+        onClick: () => void this.host.nav.openSidebar(),
       });
     }
 
@@ -1703,21 +2224,6 @@ export class WritingToolkitWorkbench extends ItemView {
       void this.createNextChapter();
     } else {
       this.createResourceCategory();
-    }
-  }
-
-  private async ensureSnapshotCount(): Promise<void> {
-    const path = this.currentPath;
-    if (!path || this.snapshotCountPath === path) return;
-    this.snapshotCountPath = path;
-    this.snapshotCount = null;
-    try {
-      const entries = await this.host.caps.snapshots.list(path);
-      if (this.snapshotCountPath !== path) return;
-      this.snapshotCount = entries.length;
-      this.renderFoot();
-    } catch {
-      this.snapshotCount = 0;
     }
   }
 
@@ -1794,7 +2300,12 @@ export class WritingToolkitWorkbench extends ItemView {
   private openKeyboardTarget(newTab: boolean): void {
     const path = this.listPaths[this.keyboardIndex ?? 0];
     const file = path ? this.app.vault.getAbstractFileByPath(path) : null;
-    if (file instanceof TFile) this.openFile(file, newTab);
+    if (!(file instanceof TFile)) return;
+    this.openFile(
+      file,
+      newTab,
+      this.searchQuery ? this.searchHits.get(file.path) : undefined
+    );
   }
 
   private scrollToCurrent(block: ScrollLogicalPosition): void {
@@ -1831,12 +2342,6 @@ export class WritingToolkitWorkbench extends ItemView {
       menu.addItem((item) =>
         item.setTitle("在下方插入一章").onClick(() => {
           void this.insertChapterAfter(entry);
-        })
-      );
-      menu.addItem((item) =>
-        item.setTitle("编辑章纲").onClick(() => {
-          const ref = this.rows.get(entry.file.path);
-          if (ref) void this.toggleOutline(entry, ref.rowEl);
         })
       );
       menu.addItem((item) =>
@@ -1879,8 +2384,13 @@ export class WritingToolkitWorkbench extends ItemView {
     showMenuAt(menu, pt);
   }
 
-  /** 打开文件。 */
-  private openFile(file: TFile, newTab: boolean): void {
+  /** 打开文件；带搜索命中时，打开后定位并选中第一处关键字。 */
+  private openFile(
+    file: TFile,
+    newTab: boolean,
+    searchHit?: SearchHit,
+    focusEditor = false
+  ): void {
     const workspace = this.app.workspace;
     const leaf = newTab
       ? workspace.getLeaf("tab")
@@ -1888,8 +2398,49 @@ export class WritingToolkitWorkbench extends ItemView {
       ? workspace.getMostRecentLeaf(workspace.rootSplit) ??
         workspace.getLeaf("tab")
       : workspace.getLeaf(false);
-    void leaf.openFile(file, { active: true });
+    const opened = leaf.openFile(file, { active: true });
     if (Platform.isMobile && !newTab) workspace.leftSplit.collapse();
+    if (searchHit) this.syncSearchIndex(file, searchHit);
+    if (searchHit && searchHit.offset >= 0) {
+      void opened
+        .then(() =>
+          this.selectSearchHit(leaf, file, searchHit, focusEditor)
+        )
+        .catch((error) => {
+          console.error("写作工作台：定位搜索命中失败", error);
+        });
+    }
+  }
+
+  /** 等 Markdown 视图就绪后，把光标移到第一处命中并选中。 */
+  private async selectSearchHit(
+    leaf: WorkspaceLeaf,
+    file: TFile,
+    hit: SearchHit,
+    focusEditor: boolean
+  ): Promise<void> {
+    const view = await this.waitForMarkdownView(leaf, file.path);
+    if (!view) return;
+    this.applyEditorSelection(view, hit.offset, hit.query);
+    if (focusEditor) view.editor.focus();
+    else this.focusSearchInput();
+    this.updateSearchSummary();
+    this.updateSearchTargetHighlight();
+  }
+
+  /** 打开文件后视图可能晚一拍挂上，最多等 1s。 */
+  private async waitForMarkdownView(
+    leaf: WorkspaceLeaf,
+    path: string
+  ): Promise<MarkdownView | null> {
+    for (let i = 0; i < 50; i++) {
+      const view = leaf.view;
+      if (view instanceof MarkdownView && view.file?.path === path) {
+        return view;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+    }
+    return null;
   }
 
   private nextChapterNumber(): number {
@@ -2371,165 +2922,4 @@ export class WritingToolkitWorkbench extends ItemView {
       });
   }
 
-  // ---------- 章纲就地编辑 ----------
-
-  private async toggleOutline(
-    entry: ChapterEntry,
-    rowEl: HTMLElement
-  ): Promise<void> {
-    if (this.openOutlinePath === entry.file.path) {
-      if (await this.flushOutline()) this.closeOutlineEditor();
-      return;
-    }
-    if (!(await this.flushOutline())) return;
-    this.closeOutlineEditor();
-
-    this.openOutlinePath = entry.file.path;
-    this.outlineFile = entry.file;
-    this.outlineLoadedText = "";
-
-    const ref = this.rows.get(entry.file.path);
-    ref?.outlineBtn.addClass("is-open");
-
-    const box = this.bodyEl.createDiv({ cls: "wt-wb-outline-box" });
-    rowEl.after(box);
-    this.outlineEditorEl = box;
-
-    const ta = box.createEl("textarea", { cls: "wt-wb-outline-input" });
-    ta.placeholder = "本章章纲：剧情梗概、场景要点…";
-    ta.spellcheck = false;
-    const foot = box.createDiv({ cls: "wt-wb-outline-foot" });
-    const stats = foot.createSpan({ cls: "wt-wb-outline-stats", text: "读取中…" });
-    const footRight = foot.createDiv({ cls: "wt-wb-outline-foot-right" });
-    const state = footRight.createSpan({ cls: "wt-wb-outline-state", text: "" });
-    const closeBtn = footRight.createEl("button", {
-      cls: "wt-wb-outline-close",
-      text: "收起",
-      attr: { type: "button", title: "保存并收起 (esc)" },
-    });
-
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void this.flushOutline(ta, state).then((saved) => {
-        if (saved) {
-          this.closeOutlineEditor();
-          this.bodyEl.focus();
-        }
-      });
-    });
-
-    let loaded: string;
-    try {
-      const res = await this.host.caps.outline.load(entry.file);
-      loaded = res.value;
-    } catch (error) {
-      console.error("写作工作台：读取章纲失败", error);
-      state.setText("读取失败");
-      new Notice("章纲读取失败");
-      ta.disabled = true;
-      return;
-    }
-    if (this.openOutlinePath !== entry.file.path) return;
-    this.outlineLoadedText = loaded;
-    ta.value = loaded;
-    this.updateOutlineStats(ta.value, stats);
-    state.setText(loaded.trim() ? "已保存" : "未填写");
-
-    ta.addEventListener("input", () => {
-      this.updateOutlineStats(ta.value, stats);
-      state.setText("未保存");
-      state.addClass("is-dirty");
-      if (this.outlineSaveTimer) window.clearTimeout(this.outlineSaveTimer);
-      this.outlineSaveTimer = window.setTimeout(() => {
-        this.outlineSaveTimer = 0;
-        void this.saveOutlineValue(ta.value, state);
-      }, OUTLINE_AUTOSAVE_DELAY);
-    });
-    ta.addEventListener("blur", () => void this.flushOutline(ta, state));
-    ta.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Escape" || ((e.metaKey || e.ctrlKey) && e.key === "Enter")) {
-        e.preventDefault();
-        void this.flushOutline(ta, state).then((saved) => {
-          if (saved) {
-            this.closeOutlineEditor();
-            this.bodyEl.focus();
-          }
-        });
-      }
-    });
-
-    ta.focus();
-  }
-
-  private updateOutlineStats(value: string, el: HTMLElement): void {
-    const chars = countChars(value);
-    const paragraphs = value.split("\n").filter((l) => l.trim().length > 0).length;
-    el.setText(paragraphs === 0 ? "未填写" : `${paragraphs} 段 · ${chars} 字`);
-  }
-
-  private async saveOutlineValue(
-    value: string,
-    stateEl?: HTMLElement
-  ): Promise<boolean> {
-    const file = this.outlineFile;
-    if (!file) return true;
-    if (value === this.outlineLoadedText) return true;
-    try {
-      await this.host.caps.outline.save(file, value);
-      this.outlineLoadedText = value;
-      stateEl?.setText(value.trim() ? "已保存" : "未填写");
-      stateEl?.removeClass("is-dirty");
-      const ref = this.rows.get(file.path);
-      const hasContent = value.trim().length > 0;
-      if (ref) {
-        ref.outline = hasContent;
-        ref.outlineBtn.toggleClass("is-on", hasContent);
-      }
-      const cached = statCache.get(file.path);
-      if (cached) cached.outline = hasContent;
-      else if (ref && ref.known) {
-        statCache.set(file.path, {
-          mtime: file.stat.mtime,
-          size: file.stat.size,
-          words: ref.words,
-          outline: hasContent,
-        });
-      }
-      return true;
-    } catch (err) {
-      console.error("写作工作台：保存章纲失败", err);
-      stateEl?.setText("保存失败");
-      stateEl?.addClass("is-dirty");
-      new Notice("章纲保存失败");
-      return false;
-    }
-  }
-
-  private async flushOutline(
-    ta?: HTMLTextAreaElement,
-    stateEl?: HTMLElement
-  ): Promise<boolean> {
-    if (this.outlineSaveTimer) window.clearTimeout(this.outlineSaveTimer);
-    this.outlineSaveTimer = 0;
-    const box = this.outlineEditorEl;
-    if (!box) return true;
-    const input =
-      ta ?? (box.querySelector<HTMLTextAreaElement>("textarea"));
-    if (!input) return true;
-    const state =
-      stateEl ??
-      box.querySelector<HTMLElement>(".wt-wb-outline-state");
-    return this.saveOutlineValue(input.value, state ?? undefined);
-  }
-
-  private closeOutlineEditor(): void {
-    if (this.openOutlinePath) {
-      this.rows.get(this.openOutlinePath)?.outlineBtn.removeClass("is-open");
-    }
-    this.outlineEditorEl?.remove();
-    this.outlineEditorEl = null;
-    this.openOutlinePath = null;
-    this.outlineFile = null;
-  }
 }

@@ -75,7 +75,7 @@ async function main() {
 
   const chapterFile = new TFile("正文/第一章.md");
   const secondChapter = new TFile("正文/第二章.md");
-  const sidecarFile = new TFile("正文/第一章.批注.md");
+  const sidecarFile = new TFile(".wt-comments/正文/第一章.批注.md");
   const folder = new TFolder("正文");
   const files = new Map([
     [chapterFile.path, chapterFile],
@@ -156,6 +156,7 @@ async function main() {
     prefixInvalidations: 0,
     storeInvalidations: [],
     maxParallelSaves: 0,
+    folderMigrations: [],
   };
   let panelFactory = null;
   let panelHost = null;
@@ -208,7 +209,10 @@ async function main() {
     },
     handleModified(target) {
       if (!target.endsWith(".批注.md")) return null;
-      const docPath = target.replace(/\.批注\.md$/, ".md");
+      const rel = target.startsWith(".wt-comments/")
+        ? target.slice(".wt-comments/".length)
+        : target;
+      const docPath = rel.replace(/\.批注\.md$/, ".md");
       this.invalidate(docPath);
       return docPath;
     },
@@ -217,14 +221,21 @@ async function main() {
     },
     handleRenamed(oldPath, newPath) {
       const docs = new Set();
-      if (oldPath.endsWith(".批注.md")) {
-        docs.add(oldPath.replace(/\.批注\.md$/, ".md"));
-      }
-      if (newPath.endsWith(".批注.md")) {
-        docs.add(newPath.replace(/\.批注\.md$/, ".md"));
+      for (const target of [oldPath, newPath]) {
+        if (!target.endsWith(".批注.md")) continue;
+        const rel = target.startsWith(".wt-comments/")
+          ? target.slice(".wt-comments/".length)
+          : target;
+        docs.add(rel.replace(/\.批注\.md$/, ".md"));
       }
       for (const docPath of docs) this.invalidate(docPath);
       return [...docs];
+    },
+    async migrateLegacySidecars() {
+      return 0;
+    },
+    async migrateFolderPrefix(oldFolder, newFolder) {
+      calls.folderMigrations.push([oldFolder, newFolder]);
     },
   };
 
@@ -520,7 +531,7 @@ async function main() {
       calls.decorRefreshes > 0
   );
 
-  const oldSidecarFile = files.get("正文/第一章.批注.md");
+  const oldSidecarFile = files.get(".wt-comments/正文/第一章.批注.md");
   const renamedChapter = new TFile("正文/改名第一章.md");
   files.set(renamedChapter.path, renamedChapter);
   vaultHandlers.get("rename")(renamedChapter, "正文/第一章.md");
@@ -529,17 +540,20 @@ async function main() {
     "源文档改名串行迁移批注伴随文件",
     renameCalls.some(
       (call) =>
-        call.oldPath === "正文/第一章.批注.md" &&
-        call.newPath === "正文/改名第一章.批注.md"
+        call.oldPath === ".wt-comments/正文/第一章.批注.md" &&
+        call.newPath === ".wt-comments/正文/改名第一章.批注.md"
     ) &&
-      files.get("正文/改名第一章.批注.md") === oldSidecarFile
+      files.get(".wt-comments/正文/改名第一章.批注.md") === oldSidecarFile
   );
 
   vaultHandlers.get("rename")(new TFolder("改名正文"), "正文");
   await settle();
   r.check(
-    "目录改名清理整段批注缓存",
-    calls.prefixInvalidations === 1
+    "目录改名同步搬 .wt-comments 镜像并清理缓存",
+    calls.prefixInvalidations === 1 &&
+      calls.folderMigrations.length === 1 &&
+      calls.folderMigrations[0][0] === "正文" &&
+      calls.folderMigrations[0][1] === "改名正文"
   );
 
   settings.commentsEnabled = false;

@@ -10,7 +10,7 @@ import type { EventScope, TimerHandle } from "./services/eventsService";
  *
  * Obsidian 手机版没有桌面那样的状态栏，写正文时看不到今日进度与番茄钟。
  * 这里在屏幕底部放一枚轻量药丸（只在手机端、且正在看正文时出现）：
- * 进度条 + 「今日/目标」+ 番茄数 +（开启时）码字时速；点一下弹出操作菜单。
+ * 进度条 + 「今日/目标」+ 番茄数；点一下弹出操作菜单。
  * 阅读 / 编辑正文以外的界面（主页、编辑台、工具箱）不显示，避免和那些界面自带的数字重复。
  */
 export class MobileStatusBar {
@@ -20,8 +20,6 @@ export class MobileStatusBar {
   private fillEl!: HTMLElement;
   private goalEl!: HTMLElement;
   private pomoEl!: HTMLElement;
-  private speedEl!: HTMLElement;
-  private speedSepEl!: HTMLElement;
   private timer: TimerHandle | null = null;
   private shown = false;
 
@@ -38,8 +36,6 @@ export class MobileStatusBar {
     this.fillEl = track.createDiv({ cls: "wt-mbar-fill" });
     this.goalEl = this.el.createSpan({ cls: "wt-mbar-goal" });
     this.pomoEl = this.el.createSpan({ cls: "wt-mbar-pomo" });
-    this.speedSepEl = this.el.createSpan({ cls: "wt-mbar-sep" });
-    this.speedEl = this.el.createSpan({ cls: "wt-mbar-speed" });
 
     this.events.onWorkspace("active-leaf-change", () => this.sync());
     this.events.onWorkspace("layout-change", () => this.sync());
@@ -76,29 +72,21 @@ export class MobileStatusBar {
     if (!show) return;
 
     const goal = Math.max(1, this.host.settings.dailyGoal);
-    const gross = Math.max(0, this.host.stats.gross());
-    const pct = Math.min(100, (gross / goal) * 100);
+    const net = this.host.stats.total();
+    const pct = Math.min(100, Math.max(0, (net / goal) * 100));
     this.fillEl.style.width = `${pct}%`;
-    this.el.toggleClass("is-done", gross >= goal);
-    this.goalEl.setText(`${formatNumber(gross)} / ${formatNumber(goal)}`);
+    this.el.toggleClass("is-done", net >= goal);
+    this.goalEl.setText(`${formatNumber(net)} / ${formatNumber(goal)}`);
 
     const state = this.host.caps.pomodoro.getPomodoroState();
     const pomoText = this.pomodoroText(state);
     this.pomoEl.setText(pomoText);
     this.pomoEl.toggleClass("is-hidden", !pomoText);
 
-    const speed = this.host.settings.showSpeed
-      ? this.host.stats.statusBarSpeed()
-      : 0;
-    const showSpeed = speed > 0;
-    this.speedEl.setText(`${formatNumber(speed)}字/时`);
-    this.speedEl.toggleClass("is-hidden", !showSpeed);
-    this.speedSepEl.toggleClass("is-hidden", !showSpeed || !pomoText);
-
     const entry = this.host.stats.getTodayPomodoroSummary();
     this.el.setAttr(
       "title",
-      `今日新增 ${formatNumber(gross)} 字 · 目标 ${formatNumber(goal)} 字` +
+      `今日净增 ${formatNumber(net)} 字 · 目标 ${formatNumber(goal)} 字` +
         (entry ? ` · 番茄 ${entry.count} 个 / ${formatNumber(entry.words)} 字` : "")
     );
   }
@@ -125,13 +113,11 @@ export class MobileStatusBar {
     const entry = this.host.stats.getTodayPomodoroSummary();
 
     const menu = new Menu();
-    const gross = Math.max(0, this.host.stats.gross());
+    const net = Math.max(0, this.host.stats.total());
     menu.addItem((item) =>
       item
         .setTitle(
-          `今日新增 ${formatNumber(gross)} 字（净增 ${formatNumber(
-            this.host.stats.total()
-          )} 字）`
+          `今日净增 ${formatNumber(net)} 字（新增为正，删除为负）`
         )
         .setDisabled(true)
     );

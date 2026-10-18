@@ -256,7 +256,7 @@ export class OutlineEditorModal extends Modal {
 
     this.contentEl.empty();
     const head = this.contentEl.createDiv({ cls: "wt-outline-modal-head" });
-    this.prevBtn = iconButton(head, "chevron-left", "上一章（⌘/Ctrl+↑）", () =>
+    this.prevBtn = iconButton(head, "wt-chevron-left", "上一章（⌘/Ctrl+↑）", () =>
       void this.switchBy(-1)
     );
     head.createSpan({
@@ -270,7 +270,7 @@ export class OutlineEditorModal extends Modal {
       cls: "wt-outline-modal-hint",
       text: "⌘/Ctrl + ↵ 保存并关闭",
     });
-    this.nextBtn = iconButton(head, "chevron-right", "下一章（⌘/Ctrl+↓）", () =>
+    this.nextBtn = iconButton(head, "wt-chevron-right", "下一章（⌘/Ctrl+↓）", () =>
       void this.switchBy(1)
     );
 

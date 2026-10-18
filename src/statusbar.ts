@@ -6,7 +6,8 @@ import { TextPromptModal } from "./promptModal";
 
 interface SpeedSample {
   time: number;
-  count: number;
+  /** 这次变化新增的字数（只记正增量） */
+  delta: number;
 }
 
 /** 状态栏番茄钟入口需要的动作回调（由插件提供，避免状态栏直接持有插件）。 */
@@ -20,8 +21,6 @@ export interface PomodoroActions {
 export class WritingStatusBar {
   private container: HTMLElement;
   private wordCountEl: HTMLElement;
-  private speedEl: HTMLElement;
-  private speedSepEl: HTMLElement;
   private goalEl: HTMLElement;
   private pomoSepEl: HTMLElement;
   private pomoEl: HTMLElement;
@@ -29,8 +28,12 @@ export class WritingStatusBar {
   private pomodoroPaused = false;
 
   private speedSamples: SpeedSample[] = [];
-  private cumulativeDelta: number = 0;
-  private speedEma: number = 0;
+  private speedValue: number = 0;
+  /** 时速只看最近 60 秒；少于 10 秒不给数，避免一两个词就飙到几千。 */
+  private readonly SPEED_WINDOW_MS = 60_000;
+  private readonly SPEED_MIN_WINDOW_MS = 10_000;
+  /** 单次超过 120 字视为粘贴/整章导入，不计入打字速度。 */
+  private readonly MAX_SPEED_DELTA = 120;
   private lastDocCount: number = -1;
   private selectedCount: number = 0;
 
@@ -79,9 +82,6 @@ export class WritingStatusBar {
     this.wordCountEl = this.container.createSpan({ cls: "wt-stat" });
     this.container.createSpan({ cls: "wt-sep", text: "|" });
 
-    this.speedEl = this.container.createSpan({ cls: "wt-stat" });
-    this.speedSepEl = this.container.createSpan({ cls: "wt-sep", text: "|" });
-
     this.goalEl = this.container.createSpan({ cls: "wt-stat wt-goal" });
     this.goalEl.addEventListener("click", () => this.promptGoal());
 
@@ -94,15 +94,14 @@ export class WritingStatusBar {
 
   setState(state: StatusBarState): void {
     this.state = state;
-    const show = state.showSpeed;
-    this.speedEl.toggleClass("is-hidden", !show);
-    this.speedSepEl.toggleClass("is-hidden", !show);
     if (this.lastDocCount >= 0) this.refresh(this.lastDocCount);
   }
 
-  /** 当前码字时速（字/时），供手机端状态条复用同一份采样。 */
+  /** 当前码字时速（字/时），供编辑台左下角信息栏读取；停笔太久返回 0。 */
   getSpeed(): number {
-    return this.speedEma;
+    const last = this.speedSamples[this.speedSamples.length - 1];
+    if (!last || Date.now() - last.time > 30_000) return 0;
+    return this.speedValue;
   }
 
   /** 自检用：当前文档路径与字数（还没建立时 path 为空）。 */
@@ -121,8 +120,7 @@ export class WritingStatusBar {
     this.lastDocCount = docCount;
     // 切换文件后重置时速采样，按当前文件的输入速度重新计算
     this.speedSamples = [];
-    this.cumulativeDelta = 0;
-    this.speedEma = 0;
+    this.speedValue = 0;
     this.rememberBaseline(path, docCount);
     this.refresh(docCount);
   }
@@ -130,8 +128,7 @@ export class WritingStatusBar {
   rebaseCurrentDocument(text: string, resetSpeed = false): void {
     if (resetSpeed) {
       this.speedSamples = [];
-      this.cumulativeDelta = 0;
-      this.speedEma = 0;
+      this.speedValue = 0;
     }
     const docCount = this.wordCount.count(text, this.state.wordCountMode);
     this.lastDocCount = docCount;
@@ -235,20 +232,33 @@ export class WritingStatusBar {
    * isNewFile=true 表示这是全新文件的第一笔内容（之前视作 0 字），
    * 整份内容算作本次新增。
    */
-  onEditorChange(text: string, isNewFile = false): number {
+  onEditorChange(
+    text: string,
+    isNewFile = false,
+    countSpeed = true
+  ): number {
     const docCount = this.wordCount.count(text, this.state.wordCountMode);
     const now = Date.now();
 
     if (this.lastDocCount >= 0) {
       const change = docCount - this.lastDocCount;
-      if (change > 0) {
-        this.cumulativeDelta += change;
+      if (countSpeed && change > 0) {
+        if (change <= this.MAX_SPEED_DELTA) {
+          this.speedSamples.push({ time: now, delta: change });
+        } else {
+          // 粘贴/整章导入不是打字速度；清掉旧采样，从下一段重新算。
+          this.speedSamples = [];
+          this.speedValue = 0;
+        }
       }
     }
     this.lastDocCount = docCount;
 
-    this.speedSamples.push({ time: now, count: this.cumulativeDelta });
-    while (this.speedSamples.length > 0 && now - this.speedSamples[0].time > 120000) {
+    const cutoff = now - this.SPEED_WINDOW_MS;
+    while (
+      this.speedSamples.length > 0 &&
+      this.speedSamples[0].time < cutoff
+    ) {
       this.speedSamples.shift();
     }
 
@@ -278,39 +288,44 @@ export class WritingStatusBar {
   }
 
   private refresh(wordCount: number): void {
-    let speed = 0;
+    const now = Date.now();
+    const cutoff = now - this.SPEED_WINDOW_MS;
+    while (
+      this.speedSamples.length > 0 &&
+      this.speedSamples[0].time < cutoff
+    ) {
+      this.speedSamples.shift();
+    }
     if (this.speedSamples.length >= 2) {
       const first = this.speedSamples[0];
       const last = this.speedSamples[this.speedSamples.length - 1];
       const elapsedMs = last.time - first.time;
-      // 至少 30 秒的采样窗口才计算，避免短时爆发输入产生离谱时速
-      if (elapsedMs >= 30_000) {
-        const elapsedMin = elapsedMs / 60000;
-        const delta = last.count - first.count;
-        const raw = Math.max(0, Math.round((delta / elapsedMin) * 60));
-        // 指数滑动平均：新值占 40%，历史占 60%，让显示更稳定
-        this.speedEma = raw > 0 ? Math.round(raw * 0.4 + this.speedEma * 0.6) : 0;
+      if (elapsedMs >= this.SPEED_MIN_WINDOW_MS) {
+        const words = this.speedSamples.reduce(
+          (sum, sample) => sum + sample.delta,
+          0
+        );
+        // 按最近一段的实际时长折算，取整到 10 字/时，减少假精度。
+        const raw = words / (elapsedMs / 3_600_000);
+        this.speedValue = Math.max(0, Math.round(raw / 10) * 10);
+      } else {
+        this.speedValue = 0;
       }
-      speed = this.speedEma;
+    } else {
+      this.speedValue = 0;
     }
 
     const wordCountText = this.selectedCount > 0
       ? `本章 ${formatNumber(this.selectedCount)}/${formatNumber(wordCount)}`
       : `本章 ${formatNumber(wordCount)}`;
     this.wordCountEl.setText(wordCountText);
-    this.speedEl.setText(formatNumber(speed) + "字/时");
-    const show = this.state.showSpeed;
-    this.speedEl.toggleClass("is-hidden", !show);
-    this.speedSepEl.toggleClass("is-hidden", !show);
     this.goalEl.setText(
-      "目标 " + formatNumber(this.state.dailyGross) +
+      "目标 " + formatNumber(this.state.dailyTotal) +
         "/" + formatNumber(this.state.dailyGoal)
     );
     this.goalEl.setAttr(
       "title",
-      `今日新增 ${formatNumber(this.state.dailyGross)} 字 · 净增 ${formatNumber(
-        this.state.dailyTotal
-      )} 字（删除会减少净增）· 点击修改目标`
+      `今日净增 ${formatNumber(this.state.dailyTotal)} 字（新增为正，删除为负）· 点击修改目标`
     );
   }
 
@@ -351,6 +366,11 @@ export class WritingStatusBar {
   /** 该文件是否已有基线（有基线才谈得上「增量」）。 */
   hasBaseline(path: string): boolean {
     return this.fileBaselines.has(path);
+  }
+
+  /** 读取某个文件的基线字数；还没建档时返回 undefined。 */
+  getBaseline(path: string): number | undefined {
+    return this.fileBaselines.get(path);
   }
 
   /** 状态栏是否已经知道「当前文件」（插件刚加载、编辑器还没就绪时会没有）。 */
