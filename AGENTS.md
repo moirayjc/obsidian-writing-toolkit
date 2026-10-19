@@ -4,6 +4,7 @@
 
 1. [`docs/插件化架构说明.md`](docs/插件化架构说明.md)——单 Obsidian 插件内的 Host + Services + Feature Modules 架构、模块边界和硬约束。
 2. [`docs/插件设计文档.md`](docs/插件设计文档.md)——当前代码的模块地图、数据模型、必须遵守的约定和踩坑清单。
+   改样式 / 配色 / 手机端 / 标题排版，再读 [`docs/样式与主题.md`](docs/样式与主题.md)。
 3. [`specs/README.md`](specs/README.md)——**M / L 级改动**的规格流程（分级、模板、状态机、验收标准写法）；
    写 spec 前先读 [`specs/constitution.md`](specs/constitution.md)（13 条不可协商条款）。
 

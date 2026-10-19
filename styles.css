@@ -1163,7 +1163,7 @@
   line-height: 1.8;
 }
 
-/* === 快照对比弹窗 === */
+/* === 快照对比弹窗（双栏自由编辑） === */
 .wt-diff-modal .modal-content {
   display: flex;
   flex-direction: column;
@@ -1186,6 +1186,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 保存状态用颜色区分：未保存 / 保存失败要一眼看见，已保存保持灰 */
+.wt-diff-save {
+  font-weight: var(--font-medium);
+}
+
+.wt-diff-save.is-saved {
+  color: var(--text-faint);
+}
+
+.wt-diff-save.is-dirty {
+  color: var(--text-muted);
+}
+
+.wt-diff-save.is-saving {
+  color: var(--text-muted);
+}
+
+.wt-diff-save.is-error {
+  color: var(--color-red);
+}
+
 .wt-diff-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1203,22 +1224,31 @@
   color: var(--text-on-accent) !important;
 }
 
+/* 两栏各自连续滚动：左栏只读、右栏可编辑。
+   这里刻意不做逐行对齐——逐块对齐与整篇连续编辑在同一 DOM 结构里互斥，
+   见 specs/archive/003-snapshot-diff-free-edit/spec.md。 */
 .wt-diff-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1px;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   border: 0.5px solid var(--background-modifier-border);
   border-radius: var(--wt-radius-8px);
   background: var(--background-modifier-border);
 }
 
+.wt-diff-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--background-primary);
+}
+
 .wt-diff-colhead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  flex: none;
   padding: 7px 12px;
   background: var(--background-secondary);
   color: var(--text-muted);
@@ -1226,98 +1256,115 @@
   font-weight: var(--font-medium);
 }
 
-.wt-diff-block {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  background: var(--background-primary);
-}
-
-.wt-diff-block.is-empty {
-  background: transparent;
-  opacity: 0.3;
-}
-
-.wt-diff-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 2px 10px;
-  color: var(--text-normal);
-  font-size: var(--font-ui-small);
-  background: var(--background-primary);
-}
-
-.wt-diff-blank {
-  flex: none;
-  min-height: 1.25em;
-}
-
-.wt-diff-lineno {
-  flex: none;
-  width: 2.4em;
-  padding-top: 2px;
-  color: var(--text-faint);
-  font-size: 0.72em;
-  line-height: 1.6;
-  text-align: right;
-  user-select: none;
-}
-
-.wt-diff-marker {
-  flex: none;
-  width: 1.1em;
-  padding-top: 2px;
-  color: var(--text-faint);
-  font-size: 0.8em;
-  line-height: 1.5;
-  text-align: center;
-  user-select: none;
-}
-
-.wt-diff-text {
+/* 正文栏：等宽排版不重要，要的是「像编辑器一样」的连续文本流。
+   user-select 必须显式给 text——Obsidian 在 body 上关掉了选择。 */
+.wt-diff-pane {
   flex: 1;
-  min-width: 0;
-  line-height: 1.6;
+  min-height: 0;
+  padding: 10px 14px 24px;
+  overflow-y: auto;
+  color: var(--text-normal);
+  font-family: var(--font-text);
+  font-size: var(--font-text-size);
+  line-height: 1.8;
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-.wt-diff-line.del {
-  background: rgba(255, 92, 92, 0.08);
-}
-
-.wt-diff-line.add {
-  background: rgba(94, 201, 126, 0.1);
-}
-
-.wt-diff-line.replace {
-  background: rgba(255, 180, 60, 0.1);
-}
-
-.wt-diff-line.is-empty {
-  background: transparent;
-  opacity: 0.3;
-}
-
-.wt-diff-chg {
-  border-radius: var(--wt-radius-2px);
-  background: rgba(255, 180, 60, 0.4);
-}
-
-.wt-diff-line.is-editable .wt-diff-text {
+.wt-diff-pane.is-right {
   cursor: text;
-  border-radius: var(--wt-radius-2px);
+  outline: none;
 }
 
-.wt-diff-line.is-editable .wt-diff-text:focus {
-  outline: 1px solid var(--text-accent);
-  outline-offset: 1px;
+.wt-diff-pane.is-right:focus {
+  background: var(--background-primary-alt);
 }
 
-/* 红/绿/黄行背景已能自解释，图例不再需要 */
+/* 高亮只用 CSS Custom Highlight API：不往正文里塞 span，复制不带多余换行。
+   类名与 src/snapshotDiff.ts 的 HIGHLIGHT_NAMES 一一对应。 */
+.wt-diff-modal ::highlight(wt-diff-left-del),
+.wt-diff-modal ::highlight(wt-diff-left-chg) {
+  background-color: rgba(255, 92, 92, 0.22);
+}
+
+.wt-diff-modal ::highlight(wt-diff-right-add) {
+  background-color: rgba(94, 201, 126, 0.24);
+}
+
+.wt-diff-modal ::highlight(wt-diff-right-chg) {
+  background-color: rgba(255, 180, 60, 0.32);
+}
+
+/* 暗色下同样的透明度会糊成一片，各抬一档 */
+body.theme-dark .wt-diff-modal ::highlight(wt-diff-left-del),
+body.theme-dark .wt-diff-modal ::highlight(wt-diff-left-chg) {
+  background-color: rgba(255, 92, 92, 0.32);
+}
+
+body.theme-dark .wt-diff-modal ::highlight(wt-diff-right-add) {
+  background-color: rgba(94, 201, 126, 0.32);
+}
+
+body.theme-dark .wt-diff-modal ::highlight(wt-diff-right-chg) {
+  background-color: rgba(255, 180, 60, 0.42);
+}
+
+/* 高对比度皮肤：纸面是纯白/炭黑，色块要压深一点才看得出来 */
+body.wt-theme-contrast .wt-diff-modal ::highlight(wt-diff-left-del),
+body.wt-theme-contrast .wt-diff-modal ::highlight(wt-diff-left-chg) {
+  background-color: rgba(214, 58, 58, 0.26);
+}
+
+body.wt-theme-contrast .wt-diff-modal ::highlight(wt-diff-right-add) {
+  background-color: rgba(46, 160, 92, 0.26);
+}
+
+body.wt-theme-contrast .wt-diff-modal ::highlight(wt-diff-right-chg) {
+  background-color: rgba(214, 150, 32, 0.34);
+}
+
+/* 手机端：两栏上下叠放，各自一半高度，仍可选中与编辑 */
+body.wt-mobile .wt-diff-body {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+body.wt-mobile .wt-diff-pane {
+  padding: 8px 12px 18px;
+}
+
 .wt-diff-legend {
-  display: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+.wt-diff-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  border-radius: var(--wt-radius-2px);
+  vertical-align: -1px;
+}
+
+.wt-diff-swatch.is-del {
+  background: rgba(255, 92, 92, 0.32);
+}
+
+.wt-diff-swatch.is-add {
+  background: rgba(94, 201, 126, 0.34);
+}
+
+.wt-diff-swatch.is-chg {
+  background: rgba(255, 180, 60, 0.4);
 }
 
 .wt-diff-hint {

@@ -17,7 +17,7 @@
 | 5 | **数据只有一个写入者**（Persistence Service）；改 `data.json` 字段/结构必须写迁移并保留旧数据；设置项走白名单合并 | 架构说明 §8、设计文档 §4.1 禁忌 6 | `check-persistence-service.js`、`check-module-contract.js`、`check-loaddata.js` |
 | 6 | **一切注册都可撤销**：命令、视图、监听器、定时器、DOM、编辑器扩展都配 disposer；`reload` 幂等；body 级监听用 `registerDomEvent` | 架构说明 §7、设计文档 §4.1 禁忌 7/9 | `check-host.js`、`check-events-service.js`、各模块检查 |
 | 7 | **编辑器内不做跟随文字滚动的浮层**；破坏性操作只做「一次确认 + 可撤销」，不叠弹窗 | 设计文档 §4.1 禁忌 4/5 | 人工回归 |
-| 8 | **样式外科手术式最小改动**：颜色走 `--wt-*` 令牌，改前留 `_backup/` 快照；检查明暗 / 冷淡 / 高对比四主题 + `body.wt-mobile` | 设计文档 §3.5、§3.6、§4.1 禁忌 1 | `check-theme-palette.js`、`check-headingstyle.js`、`check-settingcontrols.js`（部分）+ 人工 |
+| 8 | **样式外科手术式最小改动**：颜色走 `--wt-*` 令牌，改前留 `_backup/` 快照；检查明暗 / 冷淡 / 高对比四主题 + `body.wt-mobile` | 设计文档 §3.5、§4.1 禁忌 1；《样式与主题》§0–§8 | `check-theme-palette.js`、`check-headingstyle.js`、`check-settingcontrols.js`（部分）+ 人工 |
 | 9 | **注释、文档、测试数据一律虚构名**；隐私体检不得用 `--no-verify` 绕过；真实词表放 `.git/wt-blocklist.txt`（不进版本库） | AGENTS.md 硬约束 3、设计文档 §6.1 | `tools/release-check.sh` + pre-commit |
 | 10 | **只在开发检出构建**；工作库只收 `main.js` / `manifest.json` / `styles.css` / `data.json` 四个产物，换装前先备份 `data.json` 到开发库 `_backup/` | AGENTS.md 硬约束 1/2、设计文档 §6.4、§6.5 | 人工流程（`tools/release.sh` 不碰工作库） |
 | 11 | **版本号三处同步**：`manifest.json` = git tag = `versions.json` 的键，`package.json` 保持一致；发布只走 `tools/release.sh` | AGENTS.md、设计文档 §6.1、§6.2 | `tools/release.sh`、`check-boundaries.js` |

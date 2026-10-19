@@ -238,7 +238,7 @@ export class DraftSnapshotManager implements SnapshotOperations {
   async copySnapshot(snapshotPath: string): Promise<void> {
     try {
       const content = await this.readSnapshot(snapshotPath);
-      await copyText(content);
+      await copyTextToClipboard(content);
       new Notice(`写作工具箱：已复制快照内容（${pathBasename(snapshotPath)}）`);
     } catch (e) {
       new Notice(`写作工具箱：复制失败：${String(e)}`);
@@ -522,7 +522,7 @@ function dirname(path: string): string {
 }
 
 /** 复制文本到剪贴板：桌面端用 Electron，移动端用 Web Clipboard。 */
-async function copyText(text: string): Promise<void> {
+export async function copyTextToClipboard(text: string): Promise<void> {
   if (Platform.isMobile) {
     await navigator.clipboard.writeText(text);
     return;
