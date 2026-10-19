@@ -87,6 +87,17 @@ npm run dev       # 监听构建（常驻进程，用完记得关）
 
 渲染、布局、主题、输入法、移动端**验证不了**，只能进 Obsidian 手点。
 
+**用无头 Chrome / 本地预览器做渲染取证时，必须自己收尾，绝不留孤儿进程。**
+（2026-10-19 真实事故：一轮截图留下一个跑了 5 小时的 headless 进程树，父进程被 launchd 收养成
+`PPID=1`；macOS 因此认为 Chrome 已在运行，用户点图标打不开浏览器。）
+
+- 临时 profile 一律建在 `/tmp` 下的**单一明确目录**（如 `/tmp/wt-chrome-<名字>`），不要散落；
+- 脚本里用 `trap '…' EXIT` 兜底 kill，**不要只依赖进程自己退出**；
+- 每轮收尾删掉临时 profile（它动辄上百 MB），并自查：
+  `ps -axo pid,command | grep -- '--headless' | grep -v grep` 应为空、且没有
+  `--user-data-dir=/tmp/…` 的 Chrome 进程；
+- 字符级自查别用 `grep "Google Chrome"` 计数——它会命中自己的命令行，白高兴或白紧张。
+
 ## 改代码前请确认
 
 - 这次改动是 S / M / L？M / L 有 spec 且已到 `approved` 吗？（见 `specs/README.md`）
