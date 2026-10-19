@@ -194,6 +194,12 @@ export const WT_ICONS: Record<string, string> = {
   ),
   // 完成：对勾
   "wt-check": icon(`<path d="M4.8 12.4 9.3 17 19.4 6.6"/>`),
+  // 手机预览：机身 + 听筒 + 底部横条
+  "wt-phone": icon(
+    `<rect x="6.4" y="2.6" width="11.2" height="18.8" rx="2.4"/>` +
+    `<path d="M10.4 5.4h3.2"/>` +
+    `<path d="M10.6 18.6h2.8"/>`,
+  ),
   // 清除：叉
   "wt-close": icon(
     `<path d="M5.8 5.8 18.2 18.2"/>` +

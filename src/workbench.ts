@@ -191,11 +191,8 @@ export class WritingToolkitWorkbench extends ItemView {
   private searchScanToken = 0;
   private searchScanTimer = 0;
   private searchScanning = false;
-  /** 搜索 / 替换面板是否展开（默认收起成标题栏的搜索按钮） */
+  /** 搜索面板是否展开（默认收起成标题栏的搜索按钮） */
   private searchOpen = false;
-  private replaceQuery = "";
-  /** 替换当前一处后，扫描完成时自动定位到下一处 */
-  private searchRevealAfterScan = false;
   private searchActionEl: HTMLElement | null = null;
   private copyActionEl: HTMLElement | null = null;
 
@@ -572,6 +569,13 @@ export class WritingToolkitWorkbench extends ItemView {
         menu.addItem((item) =>
           item.setTitle("新建一卷").onClick(() => this.createVolume())
         );
+        if (!Platform.isMobile) {
+          menu.addItem((item) =>
+            item.setTitle("手机预览本章").onClick(() =>
+              this.previewCurrentChapterOnPhone()
+            )
+          );
+        }
       } else {
         menu.addItem((item) =>
           item.setTitle("新建分类").onClick(() => this.createResourceCategory())
@@ -597,13 +601,13 @@ export class WritingToolkitWorkbench extends ItemView {
       showMenuAt(menu, pt);
     });
 
-    // 状态点跟书名绑定；标题行右侧只留搜索 / 复制两个常驻小按钮
+    // 状态点跟书名绑定；标题行右侧只留搜索 / 复制（桌面端再加手机预览）三个常驻小按钮
     this.renderBookStatus(bookGroup);
     const headRight = top.createDiv({ cls: "wt-wb-head-right" });
     this.searchActionEl = this.headIconButton(
       headRight,
       "wt-search",
-      "搜索全书 / 替换",
+      "搜索全书",
       () => this.toggleSearchPanel()
     );
     this.searchActionEl.toggleClass("is-active", this.searchOpen);
@@ -613,6 +617,12 @@ export class WritingToolkitWorkbench extends ItemView {
       "一键复制本章正文",
       () => this.copyCurrentChapter()
     );
+    // 读者手机预览只在桌面端有意义：真机上人已经在手机上了，不占位置。
+    if (!Platform.isMobile) {
+      this.headIconButton(headRight, "wt-phone", "手机预览本章", () =>
+        this.previewCurrentChapterOnPhone()
+      );
+    }
 
     // 标题下方一行紧凑说明：全书字数 · 章节数
     const infoEl = this.headEl.createDiv({ cls: "wt-wb-status-info" });
@@ -793,7 +803,7 @@ export class WritingToolkitWorkbench extends ItemView {
 
   // ---------- 搜索栏 ----------
 
-  /** 搜索按钮打开的面板：上一行搜索，下一行替换；收起时不占高度。 */
+  /** 搜索按钮打开的面板：只有一行搜索；收起时不占高度。 */
   private renderSearchBar(): void {
     this.searchEl.empty();
     this.searchEl.toggleClass("is-collapsed", !this.searchOpen);
@@ -863,50 +873,9 @@ export class WritingToolkitWorkbench extends ItemView {
       }
       e.stopPropagation();
     });
-
-    const replaceRow = this.searchEl.createDiv({
-      cls: "wt-wb-search-replace",
-    });
-    const replaceInput = replaceRow.createEl("input", {
-      cls: "wt-wb-replace",
-      type: "text",
-      placeholder: "替换为…",
-      attr: { title: "回车替换当前一处；全部替换会先确认" },
-    });
-    replaceInput.value = this.replaceQuery;
-    replaceInput.addEventListener("input", () => {
-      this.replaceQuery = replaceInput.value;
-    });
-    replaceInput.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        this.toggleSearchPanel(false);
-        input.focus();
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        void this.replaceCurrent();
-        return;
-      }
-      e.stopPropagation();
-    });
-
-    const replaceBtn = replaceRow.createEl("button", {
-      cls: "wt-wb-replace-btn",
-      text: "替换",
-      attr: { type: "button", title: "替换当前一处（Enter）" },
-    });
-    replaceBtn.addEventListener("click", () => void this.replaceCurrent());
-    const allBtn = replaceRow.createEl("button", {
-      cls: "wt-wb-replace-btn is-all",
-      text: "全部",
-      attr: { type: "button", title: "替换当前标签下的全部命中" },
-    });
-    allBtn.addEventListener("click", () => this.replaceAll());
   }
 
-  /** 标题栏搜索按钮：展开 / 收起查找替换面板。 */
+  /** 标题栏搜索按钮：展开 / 收起搜索面板。 */
   private toggleSearchPanel(force?: boolean): void {
     const open = force ?? !this.searchOpen;
     if (open === this.searchOpen) {
@@ -920,7 +889,6 @@ export class WritingToolkitWorkbench extends ItemView {
       this.renderSearchBar();
       this.searchInputEl?.focus();
     } else {
-      this.replaceQuery = "";
       this.clearSearchState();
     }
   }
@@ -943,6 +911,16 @@ export class WritingToolkitWorkbench extends ItemView {
     }, 1300);
   }
 
+  /** 桌面端：以读者手机形态预览当前章（没打开任何正文时用第一章兜底）。 */
+  private previewCurrentChapterOnPhone(): void {
+    const target = this.currentPath ?? this.firstChapterPath();
+    if (!target) {
+      new Notice("先打开一章，或在这篇作品里建一章");
+      return;
+    }
+    this.host.actions.openPhonePreview(target);
+  }
+
   /** 清空搜索：输入框、命中缓存、进行中的扫描全部复位。 */
   private clearSearchState(): void {
     this.searchQuery = "";
@@ -950,7 +928,6 @@ export class WritingToolkitWorkbench extends ItemView {
     this.searchMatches = [];
     this.searchMatchIndex = -1;
     this.searchMatchesQuery = "";
-    this.searchRevealAfterScan = false;
     this.searchScanning = false;
     this.searchScanToken++;
     if (this.searchScanTimer) {
@@ -968,15 +945,11 @@ export class WritingToolkitWorkbench extends ItemView {
       this.searchScanTimer = 0;
     }
     const token = ++this.searchScanToken;
-    if (this.searchQuery !== this.searchMatchesQuery) {
-      this.searchRevealAfterScan = false;
-    }
     if (!this.searchQuery) {
       this.searchHits.clear();
       this.searchMatches = [];
       this.searchMatchIndex = -1;
       this.searchMatchesQuery = "";
-      this.searchRevealAfterScan = false;
       this.searchScanning = false;
       this.renderBody();
       return;
@@ -1063,12 +1036,7 @@ export class WritingToolkitWorkbench extends ItemView {
       this.searchMatchIndex = matches.length > 0 ? 0 : -1;
     }
     this.searchScanning = false;
-    const reveal = this.searchRevealAfterScan;
-    this.searchRevealAfterScan = false;
     this.renderBody();
-    if (reveal && this.searchMatchIndex >= 0) {
-      this.revealSearchMatch(matches[this.searchMatchIndex]);
-    }
   }
 
   private searchSnippet(text: string, index: number, length: number): string {
@@ -1229,186 +1197,6 @@ export class WritingToolkitWorkbench extends ItemView {
       (match) => match.path === file.path && match.offset === hit.offset
     );
     if (index >= 0) this.searchMatchIndex = index;
-  }
-
-  /** 在当前命中处替换一次，然后自动跳到下一处。 */
-  private async replaceCurrent(): Promise<void> {
-    if (
-      !this.searchQuery ||
-      this.searchScanning ||
-      this.searchMatchesQuery !== this.searchQuery ||
-      this.searchMatches.length === 0
-    ) {
-      return;
-    }
-    const index = this.searchMatchIndex >= 0 ? this.searchMatchIndex : 0;
-    const match = this.searchMatches[index];
-    const file = this.app.vault.getAbstractFileByPath(match.path);
-    if (!(file instanceof TFile)) return;
-    const replacement = this.replaceQuery;
-    try {
-      const view = this.markdownViewForPath(match.path);
-      if (view) {
-        const editor = view.editor;
-        const at = this.findMatchOffset(
-          editor.getValue(),
-          match.offset,
-          this.searchQuery
-        );
-        if (at < 0) return;
-        editor.replaceRange(
-          replacement,
-          editor.offsetToPos(at),
-          editor.offsetToPos(at + this.searchQuery.length)
-        );
-      } else {
-        await this.app.vault.process(file, (content) => {
-          const at = this.findMatchOffset(
-            content,
-            match.offset,
-            this.searchQuery
-          );
-          return at < 0
-            ? content
-            : content.slice(0, at) +
-                replacement +
-                content.slice(at + this.searchQuery.length);
-        });
-      }
-    } catch (error) {
-      console.error("写作工作台：替换失败", error);
-      new Notice("替换失败（详见控制台）");
-      return;
-    }
-    this.searchMatchIndex = index;
-    this.searchRevealAfterScan = true;
-    this.scheduleSearch();
-    this.focusSearchInput();
-  }
-
-  /** 全部替换：先确认，再逐文件替换当前标签下的所有命中。 */
-  private replaceAll(): void {
-    if (
-      !this.searchQuery ||
-      this.searchScanning ||
-      this.searchMatchesQuery !== this.searchQuery
-    ) {
-      return;
-    }
-    if (this.searchMatches.length === 0) {
-      new Notice("没有可替换的命中");
-      return;
-    }
-    const files = new Set(this.searchMatches.map((match) => match.path));
-    const replacement = this.replaceQuery;
-    new ConfirmModal(
-      this.app,
-      "全部替换",
-      `将在 ${files.size} 个文件的 ${this.searchMatches.length} 处，把「${this.searchQuery}」${
-        replacement ? `替换为「${replacement}」` : "替换为空（删除）"
-      }。\n\n会直接改写正文。已打开的文件可以用编辑器撤销；其他文件建议先在「文件恢复」里确认有可用快照。`,
-      "全部替换",
-      () => void this.doReplaceAll(),
-      true
-    ).open();
-  }
-
-  private async doReplaceAll(): Promise<void> {
-    const query = this.searchQuery;
-    const replacement = this.replaceQuery;
-    if (!query) return;
-    const byPath = new Map<string, SearchMatch[]>();
-    for (const match of this.searchMatches) {
-      const list = byPath.get(match.path) ?? [];
-      list.push(match);
-      byPath.set(match.path, list);
-    }
-    let replaced = 0;
-    let failed = 0;
-    for (const path of byPath.keys()) {
-      const file = this.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) continue;
-      try {
-        const view = this.markdownViewForPath(path);
-        if (view) {
-          const editor = view.editor;
-          const offsets = this.collectMatchOffsets(editor.getValue(), query);
-          if (offsets.length > 0) {
-            editor.transaction({
-              changes: offsets.map((offset) => ({
-                from: editor.offsetToPos(offset),
-                to: editor.offsetToPos(offset + query.length),
-                text: replacement,
-              })),
-            });
-            replaced += offsets.length;
-          }
-        } else {
-          let count = 0;
-          await this.app.vault.process(file, (content) => {
-            const result = this.replaceAllInText(content, query, replacement);
-            count = result.count;
-            return result.text;
-          });
-          replaced += count;
-        }
-      } catch (error) {
-        console.error("写作工作台：全部替换失败", path, error);
-        failed++;
-      }
-    }
-    new Notice(
-      `已替换 ${replaced} 处${failed > 0 ? `，${failed} 个文件失败` : ""}`
-    );
-    this.searchMatchIndex = -1;
-    this.searchRevealAfterScan = false;
-    this.scheduleSearch();
-    this.focusSearchInput();
-  }
-
-  private collectMatchOffsets(text: string, query: string): number[] {
-    const lower = text.toLowerCase();
-    const q = query.toLowerCase();
-    const offsets: number[] = [];
-    let index = lower.indexOf(q);
-    while (index !== -1 && offsets.length < 999) {
-      offsets.push(index);
-      index = lower.indexOf(q, index + q.length);
-    }
-    return offsets;
-  }
-
-  private replaceAllInText(
-    text: string,
-    query: string,
-    replacement: string
-  ): { text: string; count: number } {
-    const lower = text.toLowerCase();
-    const q = query.toLowerCase();
-    let out = "";
-    let pos = 0;
-    let count = 0;
-    let index = lower.indexOf(q);
-    while (index !== -1 && count < 999) {
-      out += text.slice(pos, index) + replacement;
-      pos = index + q.length;
-      count++;
-      index = lower.indexOf(q, pos);
-    }
-    return { text: out + text.slice(pos), count };
-  }
-
-  private findMatchOffset(
-    text: string,
-    offset: number,
-    query: string
-  ): number {
-    const lower = text.toLowerCase();
-    const q = query.toLowerCase();
-    if (offset >= 0 && lower.slice(offset, offset + q.length) === q) {
-      return offset;
-    }
-    return lower.indexOf(q);
   }
 
   /** 当前作品的第一章（没打开任何文档时，复制按钮兜底用）。 */
@@ -2353,6 +2141,14 @@ export class WritingToolkitWorkbench extends ItemView {
           void this.host.caps.snapshots.openDiff(entry.file.path);
         })
       );
+      // 读者手机预览只在桌面端提供（真机上人已经在手机上了）。
+      if (!Platform.isMobile) {
+        menu.addItem((item) =>
+          item.setTitle("手机预览这一章").onClick(() => {
+            this.host.actions.openPhonePreview(entry.file.path);
+          })
+        );
+      }
       const targets = (this.project?.volumes ?? []).filter(
         (v) => v.path !== entry.volumePath
       );

@@ -334,3 +334,13 @@ export function stripInlineFormatting(text: string): string {
     .replace(HIGHLIGHT_PAIR_RE, "$1")
     .replace(ITALIC_PAIR_RE, "$1");
 }
+
+/**
+ * 「交稿载荷」处理：去掉每行行尾空白、收尾多余空行。
+ *
+ * 「一键复制纯净正文」（复制 → 粘贴到平台后台）与「读者手机预览」共用这一份处理，
+ * 保证**预览到的就是粘出去的**；两处各写一套清洗逻辑迟早会漂移。
+ */
+export function cleanChapterText(text: string): string {
+  return text.replace(/[ \t]+$/gm, "").replace(/\n{3,}$/g, "\n");
+}

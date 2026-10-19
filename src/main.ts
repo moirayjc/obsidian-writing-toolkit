@@ -100,7 +100,9 @@ import type {
 } from "./commentView";
 import { WRITING_TOOLKIT_SIDEBAR, WritingToolkitSidebar } from "./sidebar";
 import {
+  ChapterEntry,
   NovelProject,
+  allChapters,
   isInternalPath,
 } from "./project";
 import {
@@ -116,6 +118,11 @@ import {
 } from "./home";
 import type { SnapshotEntry } from "./snapshot";
 import { ConfirmModal } from "./promptModal";
+import { cleanChapterText } from "./formatWrap";
+import {
+  MobilePreviewModal,
+  type ReaderPreviewModel,
+} from "./mobilePreview";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import {
   applyPlatformMobileClass,
@@ -344,6 +351,7 @@ export default class WritingToolkitPlugin extends Plugin {
         revealPathInSystem: (path) => this.revealPathInSystem(path),
         updateStatusBarVisibility: () => this.updateStatusBarVisibility(),
         copyCleanChapter: (path) => this.copyCleanChapter(path),
+        openPhonePreview: (path) => void this.openPhonePreview(path),
         countWords: (text, mode) => this.countWords(text, mode),
       },
     };
@@ -1535,13 +1543,14 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   /**
-   * 复制某篇文档的干净正文（编辑台章节列表里的复制按钮调用）。
+   * 读取一章的实时正文（「一键复制纯净正文」与「读者手机预览」共用）。
    *
    * 批注内容在 `.wt-comments/` 的伴随文件里，正文里的标记只是编辑器装饰，
    * 因此文件文本本身就是干净正文；文档开着时优先读编辑器实时内容。
+   * 路径不可读 / 找不到 / 为空时给出提示并返回 null。
    */
-  async copyCleanChapter(path: string): Promise<void> {
-    if (isInternalPath(path)) return;
+  private async readChapterText(path: string): Promise<string | null> {
+    if (isInternalPath(path)) return null;
     let text: string | null = null;
     const open = this.markdownViewForPath(path);
     if (open?.editor) {
@@ -1550,21 +1559,31 @@ export default class WritingToolkitPlugin extends Plugin {
       const file = this.app.vault.getAbstractFileByPath(path);
       if (!(file instanceof TFile)) {
         new Notice("找不到这篇文档");
-        return;
+        return null;
       }
       try {
         text = await this.app.vault.cachedRead(file);
       } catch (error) {
         console.error("写作工具箱：读取正文失败", error);
         new Notice("读取正文失败（详见控制台）");
-        return;
+        return null;
       }
     }
     if (text === null || text.trim() === "") {
       new Notice("这篇文档是空的");
-      return;
+      return null;
     }
-    const payload = text.replace(/[ \t]+$/gm, "").replace(/\n{3,}$/g, "\n");
+    return text;
+  }
+
+  /**
+   * 复制某篇文档的干净正文（编辑台章节列表里的复制按钮调用）。
+   * 载荷处理走 `cleanChapterText`，与「读者手机预览」是同一份。
+   */
+  async copyCleanChapter(path: string): Promise<void> {
+    const text = await this.readChapterText(path);
+    if (text === null) return;
+    const payload = cleanChapterText(text);
     const name = path.split("/").pop()?.replace(/\.md$/i, "") ?? "本章";
     try {
       await navigator.clipboard.writeText(payload);
@@ -1575,6 +1594,102 @@ export default class WritingToolkitPlugin extends Plugin {
       console.error("写作工具箱：复制正文失败", error);
       new Notice("复制到剪贴板失败（详见控制台）");
     }
+  }
+
+  /* ---------- 读者手机预览（SPEC-005） ---------- */
+
+  /**
+   * 打开「读者手机预览」：把交稿载荷放进手机外框里，按阅读器排版呈现。
+   *
+   * 入口只在桌面端（编辑台书头按钮与菜单）；真机上不显示，这里再兜一次底。
+   * 预览**只读**：不写正文、不写伴随文件、不写 data.json。
+   */
+  private async openPhonePreview(path: string): Promise<void> {
+    if (Platform.isMobile) {
+      new Notice("读者手机预览只在桌面端提供");
+      return;
+    }
+    const chapters = this.readerChaptersFor(path);
+    const index = chapters.findIndex((item) => item.path === path);
+    const model = await this.buildReaderModel(path, index, chapters.length);
+    if (!model) return;
+    // 游标必须跟着每次成功翻章推进：弹窗只回调 offset，闭包里读不到它自己的
+    // model.index，用固定的 index 会让「下一章」永远停在同一个位置。
+    let cursor = index;
+    new MobilePreviewModal(this.app, model, {
+      load: async (offset) => {
+        if (cursor < 0) return null;
+        const nextIndex = cursor + offset;
+        const target = chapters[nextIndex];
+        if (!target) return null;
+        const next = await this.buildReaderModel(
+          target.path,
+          nextIndex,
+          chapters.length
+        );
+        if (next) cursor = nextIndex;
+        return next;
+      },
+    }).open();
+  }
+
+  /** 文档所属作品的章节序列（按阅读顺序）；不属于任何作品时返回空数组。 */
+  private readerChaptersFor(
+    path: string
+  ): Array<{ path: string; title: string }> {
+    const project = this.projectForDocument(path);
+    if (!project) return [];
+    return allChapters(project).map((entry) => ({
+      path: entry.file.path,
+      title: this.chapterDisplayTitle(entry),
+    }));
+  }
+
+  /** 章节显示名：有标题用标题，否则「序章 / 第 N 章 / 文件名」。 */
+  private chapterDisplayTitle(entry: ChapterEntry): string {
+    const title = entry.title?.trim();
+    if (title) return title;
+    if (entry.number === 0) return "序章";
+    if (entry.number !== null && entry.number > 0) {
+      return `第 ${entry.number} 章`;
+    }
+    return entry.file.basename;
+  }
+
+  /** 文档所属作品；不在任何作品目录里时返回 null（预览退化为「单篇」）。 */
+  private projectForDocument(path: string): NovelProject | null {
+    const root = this.host.services.project.projectRootForPath(path);
+    if (!root) return null;
+    return (
+      this.host.services.project
+        .projects()
+        .find((item) => item.root === root) ?? null
+    );
+  }
+
+  /** 组装一章的预览模型：正文与复制同管线，字数按当前统计口径。 */
+  private async buildReaderModel(
+    path: string,
+    index: number,
+    total: number
+  ): Promise<ReaderPreviewModel | null> {
+    const raw = await this.readChapterText(path);
+    if (raw === null) return null;
+    const text = cleanChapterText(raw);
+    const project = this.projectForDocument(path);
+    const entry = project
+      ? allChapters(project).find((item) => item.file.path === path)
+      : undefined;
+    return {
+      path,
+      title: entry
+        ? this.chapterDisplayTitle(entry)
+        : path.split("/").pop()?.replace(/\.md$/i, "") ?? "本章",
+      text,
+      words: this.countWords(text),
+      index,
+      total,
+    };
   }
 
   /* ---------- 格式工具条 · 自检（排查气泡不出现） ---------- */

@@ -135,6 +135,8 @@ export interface UiShellActions {
   updateStatusBarVisibility(): void;
   copyCleanChapter(path: string): Promise<void>;
   countWords(text: string, mode?: WordCountMode): number;
+  /** 桌面端：以「读者手机」形态预览某一章的纯净正文（真机无此入口）。 */
+  openPhonePreview(path: string): void;
 }
 
 /** UI Shell 构造函数的唯一入参（main.ts 在模块激活后构建一次）。 */

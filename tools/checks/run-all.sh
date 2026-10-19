@@ -51,6 +51,8 @@ CHECKS=(
   "check-ui-shell.js:UI Shell 解耦（源码级）"
   "check-boundaries.js:边界与入口守卫（源码级）"
   "check-module-contract.js:模块契约与数据键（源码级）"
+  "check-workbench-search.js:编辑台全书搜索（源码级）"
+  "check-mobilepreview-module.js:读者手机预览（源码级）"
   "check-specs.js:SPEC 规格与流程（specs/）"
 )
 

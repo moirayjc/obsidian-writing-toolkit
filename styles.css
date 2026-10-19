@@ -5215,18 +5215,6 @@ body.wt-mobile .wt-wb .wt-wb-search-wrap {
   height: 40px;
   flex: 1;
 }
-body.wt-mobile .wt-wb .wt-wb-search-replace {
-  margin-top: 2px;
-}
-body.wt-mobile .wt-wb .wt-wb-replace {
-  height: 40px;
-  font-size: var(--wt-fs-15px);
-}
-body.wt-mobile .wt-wb .wt-wb-replace-btn {
-  height: 40px;
-  padding: 0 12px;
-  font-size: var(--wt-fs-14px);
-}
 body.wt-mobile .wt-wb .wt-wb-body {
   padding: 6px 10px 96px;
   -webkit-overflow-scrolling: touch;
@@ -7296,7 +7284,7 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   border-color: var(--wt-rule-strong);
 }
 
-/* ---------- ② 搜索 / 替换面板（默认收起成标题栏按钮） ---------- */
+/* ---------- ② 搜索面板（默认收起成标题栏按钮） ---------- */
 
 .wt-wb .wt-wb-searchbar {
   flex: none;
@@ -7392,64 +7380,6 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
 
 .wt-wb .wt-wb-search-clear.is-hidden {
   display: none;
-}
-
-/* 替换行：输入 + 替换当前 + 全部替换 */
-.wt-wb .wt-wb-search-replace {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.wt-wb .wt-wb-replace {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  border: 0.5px solid var(--wt-rule);
-  border-radius: var(--wt-radius-7px);
-  background: color-mix(in srgb, var(--wt-card-bg) 75%, var(--wt-wash));
-  color: var(--wt-ink);
-  font-size: var(--wt-fs-13px);
-  box-shadow: none;
-  outline: none;
-}
-
-.wt-wb .wt-wb-replace:focus {
-  border-color: var(--wt-accent);
-  background: var(--wt-card-bg);
-  box-shadow: 0 0 0 2px var(--wt-accent-soft);
-}
-
-.wt-wb .wt-wb-replace::placeholder {
-  color: var(--wt-ink-3);
-}
-
-.wt-wb .wt-wb-replace-btn {
-  flex: none;
-  height: 28px;
-  padding: 0 9px;
-  border: 0.5px solid var(--wt-rule-strong);
-  border-radius: var(--wt-radius-7px);
-  background: var(--wt-card-bg);
-  color: var(--wt-ink-2);
-  font-size: var(--wt-fs-12px);
-  white-space: nowrap;
-  box-shadow: none;
-  cursor: pointer;
-}
-
-.wt-wb .wt-wb-replace-btn:hover {
-  border-color: var(--wt-rule-strong);
-  color: var(--wt-ink);
-  background: var(--wt-wash);
-}
-
-.wt-wb .wt-wb-replace-btn.is-all {
-  border-color: color-mix(in srgb, var(--wt-accent) 32%, transparent);
-  background: var(--wt-accent-soft);
-  color: var(--wt-accent);
-  font-weight: 600;
 }
 
 /* 全书搜索：命中计数 + 上一处 / 下一处 */
@@ -8128,4 +8058,323 @@ body.wt-mobile .wt-wb .wt-wb-vol-add {
 
 .wt-comment-card.is-revealed {
   animation: wt-comment-card-reveal 1.4s ease-out;
+}
+
+/* ===== 读者手机预览（SPEC-005）=====
+   桌面端看「小说上传后读者手机里的样子」。
+   框内三种底纹是**阅读器自己的配色**，刻意不跟随 Obsidian 主题（否则就不是
+   「读者的手机」了）；弹窗外壳与工具栏仍走 --wt-* 令牌，保证暗色下不脏。
+   所有选择器都以 .wt-phone-modal 限定，不外溢到既有界面。 */
+
+.modal.wt-phone-modal {
+  /* 弹窗整体高度必须收在一屏内：整台手机（含底栏）打开就能看全，不用滚动。
+     宽度跟着机身走；机身高度由窗口高度反推（见 .wt-phone-device）。 */
+  width: min(420px, 92vw);
+  max-height: calc(100vh - 32px);
+  /* 颜色令牌（--wt-ink / --wt-card-bg / --wt-rule / --wt-wash）只定义在
+     :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) 上；弹窗挂在 body 下，
+     不在那些容器里，直接引用会解析失败（表现为底色/描边整条失效）。
+     这里按 Obsidian 主题变量自带一套，浅色 / 深色 / 高对比度自动跟随。
+     字号与圆角令牌本来就定义在 body 上，可直接用。 */
+  --wt-ink: var(--text-normal);
+  --wt-ink-2: var(--text-muted);
+  --wt-ink-3: var(--text-faint);
+  --wt-rule: var(--background-modifier-border);
+  --wt-card-bg: var(--background-primary);
+  --wt-wash: var(--background-secondary);
+  /* 胶囊选中态底色：浅色用主底色（白卡片浮在灰轨道上）；暗色下主底色比轨道更暗，
+     选中态会「消失」，所以下面用 theme-dark 覆盖成 hover 档。 */
+  --wt-phone-chip-on: var(--background-primary);
+}
+
+body.theme-dark .modal.wt-phone-modal {
+  --wt-phone-chip-on: var(--background-modifier-hover);
+}
+
+.wt-phone-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  max-height: calc(100vh - 32px);
+  box-sizing: border-box;
+  /* 弹窗自己不滚：要滚的是机身里的正文区。 */
+  overflow: hidden;
+}
+
+.wt-phone-modal .wt-phone-title {
+  font-size: var(--wt-fs-16px);
+  font-weight: 600;
+  color: var(--wt-ink);
+}
+
+.wt-phone-modal .wt-phone-hint {
+  margin-top: -6px;
+  font-size: var(--wt-fs-12px);
+  /* --wt-ink-3（--text-faint）在 11–12px 下只有 2.3–2.9:1，达不到小字 AA；
+     这行是防误解说明，次要但必须读得清，用 --wt-ink-2（--text-muted）。 */
+  color: var(--wt-ink-2);
+  text-align: center;
+}
+
+/* ---- 显示设置：字号 / 底纹 / 机型 ---- */
+.wt-phone-modal .wt-phone-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.wt-phone-modal .wt-phone-bar-group {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 0.5px solid var(--wt-rule);
+  border-radius: var(--wt-radius-9px);
+  background: color-mix(in srgb, var(--wt-card-bg) 70%, var(--wt-wash));
+}
+
+.wt-phone-modal .wt-phone-chip {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--wt-radius-7px);
+  background: transparent;
+  color: var(--wt-ink-2);
+  font-size: var(--wt-fs-12px);
+  line-height: 24px;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.wt-phone-modal .wt-phone-chip:hover {
+  color: var(--wt-ink);
+}
+
+.wt-phone-modal .wt-phone-chip.is-active {
+  /* 浅色下主底色是「白卡片浮在灰轨道上」，暗色下主底色反而比轨道更暗、
+     选中态会看不见（实测对比 1.07:1），所以暗色改用 hover 档 + 一圈描边。 */
+  background: var(--wt-phone-chip-on);
+  color: var(--wt-ink);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 0.5px var(--wt-rule), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* ---- 机身（单一通用手机形态，不区分苹果 / 安卓）---- */
+.wt-phone-modal .wt-phone-stage {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  /* 机身高度由「剩余可视高度」决定，整台手机永远在一屏内。
+     弹窗里除机身外还有标题、hint、工具栏三行（含 gap 与 padding 实测约 119px），
+     这里预留 170px 留出余量，再叠一道 72vh 兜住 Obsidian 给 .modal 的默认高度上限。 */
+  min-height: 0;
+  max-height: calc(100vh - 170px);
+}
+
+.wt-phone-modal .wt-phone-device {
+  position: relative;
+  /* 390:844 只是观感比例；宽高都由可视高度反推，保证一屏装得下整台手机。 */
+  aspect-ratio: 390 / 844;
+  height: min(calc(100vh - 170px), 72vh, 720px);
+  width: auto;
+  max-width: min(100%, 360px);
+  padding: 9px;
+  border-radius: 34px;
+  background: linear-gradient(160deg, #2b2e34, #15171b);
+  box-shadow: 0 14px 32px -16px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* 三种阅读底纹（阅读器配色，与 Obsidian 主题无关） */
+.wt-phone-modal .wt-phone-device[data-theme="paper"] {
+  --wt-phone-bg: #ffffff;
+  --wt-phone-ink: #23262b;
+  /* 11–12px 的辅助文字（章节序号 / 字数 / 底栏信息）按 AA 小字标准取深色：
+     原 #9aa0a8 在 #fbfbfc 上只有 2.55:1，截图里几乎看不清。 */
+  --wt-phone-sub: #666c73;
+  --wt-phone-rule: rgba(0, 0, 0, 0.07);
+  --wt-phone-chrome: #fbfbfc;
+}
+
+.wt-phone-modal .wt-phone-device[data-theme="sepia"] {
+  --wt-phone-bg: #f7edd9;
+  --wt-phone-ink: #3d3428;
+  --wt-phone-sub: #6f5d42;
+  --wt-phone-rule: rgba(96, 74, 44, 0.16);
+  --wt-phone-chrome: #f2e6cf;
+}
+
+.wt-phone-modal .wt-phone-device[data-theme="night"] {
+  --wt-phone-bg: #16181c;
+  --wt-phone-ink: #c9ced6;
+  --wt-phone-sub: #98a1ac;
+  --wt-phone-rule: rgba(255, 255, 255, 0.09);
+  --wt-phone-chrome: #1c1f24;
+}
+
+.wt-phone-modal .wt-phone-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 32px;
+  background: var(--wt-phone-bg, #ffffff);
+  color: var(--wt-phone-ink, #23262b);
+}
+
+/* 字号四档（正文尺寸与行距一起给，避免大字号挤成一团） */
+.wt-phone-modal .wt-phone-screen[data-font="s"] {
+  --wt-phone-fs: 15px;
+  --wt-phone-lh: 1.78;
+}
+
+.wt-phone-modal .wt-phone-screen[data-font="m"] {
+  --wt-phone-fs: 17px;
+  --wt-phone-lh: 1.82;
+}
+
+.wt-phone-modal .wt-phone-screen[data-font="l"] {
+  --wt-phone-fs: 19px;
+  --wt-phone-lh: 1.84;
+}
+
+.wt-phone-modal .wt-phone-screen[data-font="xl"] {
+  --wt-phone-fs: 22px;
+  --wt-phone-lh: 1.86;
+}
+
+/* ---- 状态栏（纯 CSS 画信号与电池，不引图标） ---- */
+.wt-phone-modal .wt-phone-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 26px;
+  padding: 0 16px;
+  font-size: var(--wt-fs-11px);
+  color: var(--wt-phone-ink, #23262b);
+}
+
+.wt-phone-modal .wt-phone-status-time {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.wt-phone-modal .wt-phone-status-icons {
+  position: relative;
+  width: 40px;
+  height: 10px;
+  opacity: 0.85;
+}
+
+.wt-phone-modal .wt-phone-status-icons::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 14px;
+  height: 9px;
+  background: currentColor;
+  clip-path: polygon(
+    0 100%, 0 62%, 3.5px 62%, 3.5px 100%,
+    5px 100%, 5px 34%, 8.5px 34%, 8.5px 100%,
+    10px 100%, 10px 12%, 14px 12%, 14px 100%
+  );
+}
+
+.wt-phone-modal .wt-phone-status-icons::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 19px;
+  height: 10px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  background: linear-gradient(to right, currentColor 0 68%, transparent 68%);
+}
+
+/* ---- 阅读器顶栏 ---- */
+.wt-phone-modal .wt-phone-reader-head {
+  flex: none;
+  padding: 5px 18px 8px;
+  border-bottom: 1px solid var(--wt-phone-rule, rgba(0, 0, 0, 0.07));
+  background: var(--wt-phone-chrome, #fbfbfc);
+}
+
+.wt-phone-modal .wt-phone-reader-title {
+  font-size: var(--wt-fs-15px);
+  font-weight: 600;
+  color: var(--wt-phone-ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wt-phone-modal .wt-phone-reader-sub {
+  margin-top: 2px;
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-phone-sub);
+}
+
+/* ---- 正文 ---- */
+.wt-phone-modal .wt-phone-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px 8px;
+  scrollbar-width: thin;
+}
+
+.wt-phone-modal .wt-phone-body {
+  padding-bottom: 6px;
+}
+
+.wt-phone-modal .wt-phone-p {
+  margin: 0 0 0.7em;
+  font-size: var(--wt-phone-fs, 17px);
+  line-height: var(--wt-phone-lh, 1.82);
+  text-indent: 2em;
+  color: var(--wt-phone-ink);
+  overflow-wrap: break-word;
+}
+
+/* ---- 阅读器底栏 ---- */
+.wt-phone-modal .wt-phone-reader-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--wt-phone-rule, rgba(0, 0, 0, 0.07));
+  background: var(--wt-phone-chrome, #fbfbfc);
+}
+
+.wt-phone-modal .wt-phone-foot-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--wt-phone-rule, rgba(0, 0, 0, 0.07));
+  border-radius: var(--wt-radius-7px);
+  background: transparent;
+  color: var(--wt-phone-ink);
+  font-size: var(--wt-fs-12px);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.wt-phone-modal .wt-phone-foot-btn:hover:not(:disabled) {
+  border-color: var(--wt-phone-sub);
+}
+
+.wt-phone-modal .wt-phone-foot-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.wt-phone-modal .wt-phone-foot-info {
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-phone-sub);
 }

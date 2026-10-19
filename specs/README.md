@@ -225,6 +225,8 @@ npm run spec:list                                  # 列出当前规格与状态
 | [`001-theme-tone-contrast`](archive/001-theme-tone-contrast/spec.md) | L | done | 高对比度主题复刻 Notion 皮肤 + 手机端形态对齐；回填自 2026-10-18/19 的实际改动 |
 | [`002-spec-workflow`](archive/002-spec-workflow/spec.md) | L | done | 引入本 SPEC 流程本身（文档 + 模板 + 门禁 + 脚手架 + 发布闸门） |
 | [`003-snapshot-diff-free-edit`](archive/003-snapshot-diff-free-edit/spec.md) | M | done | 快照对比改为双栏自由编辑（左栏任意选中复制、右栏直接编辑、行内高亮、输入停顿后自动保存） |
+| [`004-workbench-search-only`](archive/004-workbench-search-only/spec.md) | M | done | 编辑台只保留全书搜索、摘掉替换（新增 `check-workbench-search.js` 守住「搜索在、替换无」） |
+| [`005-reader-phone-preview`](archive/005-reader-phone-preview/spec.md) | L | done | 桌面端「读者手机预览」：手机外框里看上传后的纯净正文，三底纹 / 四档字号 / 翻章，整机一屏可见 |
 
 > 回填的 spec 是**示例也是真实记录**：它展示了 L 级三件套怎么写、自动检查怎么映射、
 > 人工回归怎么列。新写 spec 时照着它改，比读十条规范快。
