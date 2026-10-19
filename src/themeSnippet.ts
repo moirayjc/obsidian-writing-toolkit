@@ -52,45 +52,53 @@ body.theme-dark .wt-home .wt-heatmap {
 }
 `;
 
+/**
+ * 高对比度：参照 Notion 浅/深色皮肤（2026-10-18）。
+ * 浅色 = 纯白纸 + 深炭黑字 + 暖灰次要字 + 发丝线；
+ * 深色 = 炭黑纸（#191919，不是纯黑）+ 近白字 + 同强度发丝线。
+ * 字体换成系统无衬线栈（-apple-system → SF / PingFang），与 Notion 一致。
+ *
+ * ⚠️ 这段令牌必须与 styles.css「配色主题：高对比度」块逐字一致
+ * （片段带 !important，会盖掉 styles.css 的同名令牌；只改一处 = 改了不生效）。
+ * `tools/checks/check-theme-palette.js` 会拦下任何不一致。
+ */
 const CONTRAST = `
 body ${VIEWS} {
-  --wt-paper: #ffffff; --wt-paper-2: #f2f2f2; --wt-card-bg: #ffffff;
-  --wt-ink: #000000; --wt-ink-2: #1a1a1a; --wt-ink-3: #4d4d4d;
-  --wt-rule: rgba(0, 0, 0, 0.55); --wt-rule-strong: #000000;
-  --wt-wash: rgba(0, 0, 0, 0.07);
-  --wt-accent: #000000; --wt-accent-soft: rgba(0, 0, 0, 0.12); --wt-accent-ink: #ffffff;
-  --wt-jade: #000000; --wt-amber: #000000;
-  --wt-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
-  --wt-serif: "PingFang SC", "Helvetica Neue", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
-  --wt-kai: "PingFang SC", "Helvetica Neue", "Noto Sans SC", sans-serif;
-  --wt-num: "SF Pro Text", "Helvetica Neue", var(--wt-serif);
-}
-body :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
-  --wt-ink-3: #333333;
+  --wt-paper: #ffffff; --wt-paper-2: #f9f8f7; --wt-card-bg: #ffffff;
+  --wt-ink: #202020; --wt-ink-2: #5f5e58; --wt-ink-3: #8d8b85;
+  --wt-rule: rgba(55, 53, 47, 0.22); --wt-rule-strong: #5f5e58;
+  --wt-wash: #f0eceb;
+  --wt-accent: #202020; --wt-accent-soft: rgba(55, 53, 47, 0.1); --wt-accent-ink: #ffffff;
+  --wt-jade: #0f7b6c; --wt-amber: #d9730d;
+  --wt-shadow: none;
+  --wt-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "PingFang SC", "Noto Sans SC", sans-serif;
+  --wt-kai: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --wt-num: "SF Pro Text", "Helvetica Neue", -apple-system, sans-serif;
 }
 body.theme-dark ${VIEWS} {
-  --wt-paper: #000000; --wt-paper-2: #0d0d0d; --wt-card-bg: #000000;
-  --wt-ink: #ffffff; --wt-ink-2: #e6e6e6; --wt-ink-3: #b3b3b3;
-  --wt-rule: rgba(255, 255, 255, 0.6); --wt-rule-strong: #ffffff;
-  --wt-wash: rgba(255, 255, 255, 0.1);
-  --wt-accent: #ffffff; --wt-accent-soft: rgba(255, 255, 255, 0.14); --wt-accent-ink: #000000;
-  --wt-jade: #ffffff; --wt-amber: #ffffff;
-  --wt-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  --wt-paper: #191919; --wt-paper-2: #202020; --wt-card-bg: #252525;
+  --wt-ink: #ffffff; --wt-ink-2: #d4d2ce; --wt-ink-3: #9a9893;
+  --wt-rule: rgba(255, 255, 255, 0.22); --wt-rule-strong: rgba(255, 255, 255, 0.5);
+  --wt-wash: rgba(255, 255, 255, 0.08);
+  --wt-accent: #ffffff; --wt-accent-soft: rgba(255, 255, 255, 0.14); --wt-accent-ink: #191919;
+  --wt-jade: #4dab9a; --wt-amber: #e99745;
+  --wt-shadow: none;
 }
-body.theme-dark :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
-  --wt-ink-3: #cccccc;
-}
-body .wt-home, body .wt-wb.view-content, body .wt-sidebar.view-content, body .wt-settings-page.vertical-tab-content {
+body .wt-home, body .wt-settings-page.vertical-tab-content {
   background: var(--wt-paper);
   background-image: none;
 }
+body .wt-wb, body .wt-wb.view-content, body .wt-sidebar, body .wt-sidebar.view-content {
+  background: var(--wt-paper-2);
+  background-image: none;
+}
 body .wt-home .wt-heatmap {
-  --wt-heat-l0: #f2f2f2; --wt-heat-l1: #bfbfbf; --wt-heat-l2: #8c8c8c;
-  --wt-heat-l3: #404040; --wt-heat-l4: #000000;
+  --wt-heat-l0: #ebedf0; --wt-heat-l1: #c6cbd1; --wt-heat-l2: #959da5;
+  --wt-heat-l3: #586069; --wt-heat-l4: #24292e;
 }
 body.theme-dark .wt-home .wt-heatmap {
-  --wt-heat-l0: #1a1a1a; --wt-heat-l1: #404040; --wt-heat-l2: #8c8c8c;
-  --wt-heat-l3: #bfbfbf; --wt-heat-l4: #ffffff;
+  --wt-heat-l0: #252525; --wt-heat-l1: #383838; --wt-heat-l2: #5a5a5a;
+  --wt-heat-l3: #8a8a8a; --wt-heat-l4: #e0e0e0;
 }
 `;
 

@@ -393,6 +393,9 @@
   padding: 8px 0;
   background: transparent;
   border: 0;
+  /* Obsidian 1.14 的 .setting-item 默认带 border-radius: var(--setting-items-radius)，
+     行间分割线是 border-top，圆角会把线两端翘成弧线。行元素必须直角。 */
+  border-radius: 0;
 }
 .wt-sidebar .setting-item-control input.wt-combo-input {
   width: 54px;
@@ -1487,26 +1490,19 @@ body.theme-dark.wt-theme-cool .cm-editor {
   --background-modifier-border: var(--wt-rule);
 }
 body.wt-theme-contrast .cm-editor {
-  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
-     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
-     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
-     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
-  --wt-accent: #000000;
-  --wt-accent-soft: rgba(0, 0, 0, 0.12);
-  --text-selection: color-mix(in srgb, #000000 16%, transparent);
+  /* 标题样式要在正文里用强调色（H1 / 文档标题）：皮肤里标题是黑的 */
+  --wt-accent: #202020;
+  --wt-accent-soft: rgba(55, 53, 47, 0.1);
+  --text-selection: rgba(35, 131, 226, 0.22);
 }
 body.theme-dark.wt-theme-contrast .cm-editor {
-  /* 标题样式要在正文里用强调色（H1 / 文档标题），而 --wt-accent 只定义在
-     .wt-home/.wt-wb/.wt-sidebar/.wt-settings-page 四个容器上——**普通笔记里没有
-     这些容器**，所以 var(--wt-accent) 解析不到、整条 color 声明作废。
-     这里把强调色延伸进编辑器。（这个坑是「H1 一直没有朱砂」的真正原因。） */
   --wt-accent: #ffffff;
   --wt-accent-soft: rgba(255, 255, 255, 0.14);
-  --text-selection: color-mix(in srgb, #ffffff 20%, transparent);
+  --text-selection: rgba(35, 131, 226, 0.3);
 }
 
 /* 纸色背景真正落到编辑器上。高对比度两档用 --wt-editor-bg 的兜底值
-   （纯白/纯黑），即 Obsidian 自己的背景，等于不改。
+   （浅色纯白 / 深色炭黑），即 Obsidian 自己的背景，等于不改。
    !important 的理由与上面沉浸模式那段相同：Obsidian 给 .cm-editor 写了
    background-color，不压过它就不生效。这是本文件第 78~79 处 !important。 */
 body:not(.wt-theme-contrast) .cm-editor,
@@ -3614,6 +3610,7 @@ body.wt-heading-style .markdown-rendered p {
   padding: 12px 0;
   border-top: none;
   border-bottom: 0.5px solid var(--wt-rule);
+  border-radius: 0;
 }
 
 .wt-home-settings .setting-item:last-child {
@@ -4108,6 +4105,9 @@ body.wt-heading-style .markdown-rendered p {
   padding: 8px 0;
   background: transparent;
   border: 0;
+  /* Obsidian 1.14 的 .setting-item 默认带 border-radius: var(--setting-items-radius)，
+     行间分割线是 border-top，圆角会把线两端翘成弧线。行元素必须直角。 */
+  border-radius: 0;
 }
 /* 卡内分隔线只画在「模块与模块之间」：直接挂在卡上的每一行，
    以及每个小组（.wt-tb-group）的首行。组内的后续行不画线。 */
@@ -4729,6 +4729,7 @@ body.wt-heading-style .markdown-rendered p {
   padding: 15px 0;
   border: 0;
   border-top: 0.5px dashed var(--wt-rule);
+  border-radius: 0;
   background: transparent;
 }
 .wt-settings-page .wt-tb-card > .setting-item:first-child {
@@ -4806,6 +4807,11 @@ body.wt-heading-style .markdown-rendered p {
   inset: 0 auto auto 0;
   pointer-events: none;
 }
+/* 桌面端：可收缩的 260px 基准宽度，给隐藏测量副本一个确定的百分比基准
+   （只给内部 wrapper 写宽度会形成百分比循环，切标签页后塌成竖线）。
+   ⚠️ 手机端不要沿用这条：Obsidian 在容器 ≤400px 时把 `.setting-item` 改成
+   `flex-direction: column`，flex-basis 会从「宽 260px」变成「高 260px」，
+   下拉项凭空多出一大块空白——由下方 body.wt-mobile 段把 flex-basis 改回 auto。 */
 .wt-settings-page .setting-item-control.wt-select-control {
   flex: 0 1 260px;
   width: 260px;
@@ -5248,6 +5254,57 @@ body.wt-mobile .wt-sidebar .setting-item {
   min-height: 46px;
   padding: 10px 0;
 }
+
+/* ---- 设置页（Obsidian 设置弹窗里的插件页）----
+   手机端 Obsidian 设置是全屏单列：宿主的容器查询会把 `.setting-item` 改成纵向
+   堆叠，但插件设置页的桌面内边距（30/40px）和固定宽度控件（220/260px）不会自己
+   跟着变——控件被挤到下一行，下拉还会因为 flex-basis 变成 260px 高（见上方
+   `.wt-select-control` 注释）。这里收窄内边距、控件铺满，标签栏允许横向滚动。 */
+/* 只补左右边距（含安全区），不要覆盖上下：Obsidian 手机端会给设置页加顶部
+   标题栏高度和键盘留白（`.is-phone` 规则），盖掉会把内容顶到标题栏下面。
+   选择器带上 `.modal.mod-settings` 是为了压过宿主
+   `.modal.mod-settings .vertical-tab-content:not(.setting-page)` 的 padding-inline。 */
+body.wt-mobile .modal.mod-settings .wt-settings-page.vertical-tab-content {
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+body.wt-mobile .wt-settings-page .wt-tb-brand {
+  padding-bottom: 12px;
+}
+body.wt-mobile .wt-settings-page .wt-settings-tabs {
+  flex-wrap: nowrap;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+body.wt-mobile .wt-settings-page .wt-settings-tabs::-webkit-scrollbar {
+  display: none;
+}
+body.wt-mobile .wt-settings-page .wt-settings-tab {
+  flex: none;
+  padding: 10px 12px 12px;
+}
+body.wt-mobile .wt-settings-page .wt-tb-card {
+  padding: 14px 16px 4px;
+}
+body.wt-mobile .wt-settings-page .setting-item {
+  min-height: 44px;
+  gap: 10px;
+  padding: 12px 0;
+}
+body.wt-mobile .wt-settings-page .setting-item-control.wt-select-control {
+  /* 窄屏 column 布局下 flex-basis 会变成高度；改回 auto，高度由内容决定 */
+  flex-basis: auto;
+  width: 100%;
+}
+body.wt-mobile .wt-settings-page .setting-item-control input[type="text"],
+body.wt-mobile .wt-settings-page .setting-item-control input[type="range"],
+body.wt-mobile .wt-settings-page .setting-item-control select,
+body.wt-mobile .wt-settings-page .setting-item-control .dropdown,
+body.wt-mobile .wt-settings-page .setting-item-control .combobox-button {
+  width: 100%;
+}
 /* 章纲阅读/编辑切换是手机端唯一的显式入口，命中区按 §4.4 的 44px 触控约定铺开 */
 body.wt-mobile .wt-outline-toolbar {
   gap: 6px;
@@ -5468,6 +5525,7 @@ body.wt-theme-cool.theme-dark :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
 
 /* 纸面：去掉暖色径向光与横格纹，只留一块干净的冷灰底 */
 body.wt-theme-cool .wt-home,
+body.wt-theme-cool .wt-wb.view-content,
 body.wt-theme-cool .wt-sidebar.view-content,
 body.wt-theme-cool .wt-settings-page.vertical-tab-content {
   background: var(--wt-paper);
@@ -5520,102 +5578,417 @@ body.wt-theme-cool.wt-immersive .cm-content {
 
 /* ==========================================================================
    配色主题：高对比度（body.wt-theme-contrast，由设置「配色主题」切换）
-   白 / 灰白底 + 纯黑字，边线与分隔线加深到肉眼清晰可辨。
-   深色下反转为纯黑底 + 纯白字。与其他主题一样只通过 --wt-* 令牌生效。
+   Notion 风灰阶：白纸 + 深炭黑字 + 暖灰次要字 + 发丝线，深色是炭黑纸而非纯黑。
+   与其他主题一样只通过 --wt-* 令牌生效。
+
+   ⚠️ 下面的令牌值必须与 src/themeSnippet.ts 的 CONTRAST 片段逐字一致：
+   片段带 !important 且先于插件 JS 生效，会盖掉本段同名令牌——只改一处等于没改。
+   `tools/checks/check-theme-palette.js` 会拦下任何不一致。
    ========================================================================== */
 
 body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
-  /* 高对比度不用柔光：给可辨识的实心轮廓 */
-  --wt-shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.4);
-  --wt-shadow-card-hover: 0 0 0 1px rgba(0, 0, 0, 0.7);
-  --wt-shadow-float: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  /* Notion 高对比度皮肤复刻 · 浅色（取色自真实皮肤）
+     白纸 + 炭黑字/次要灰/占位灰，发丝线 #d3d1cb，强调线 #2c2c2b。
+     皮肤是平的：卡片只留发丝边，不摆投影。 */
+  --wt-shadow-card: none;
+  --wt-shadow-card-hover: none;
+  --wt-shadow-float: 0 8px 24px rgba(15, 15, 15, 0.12);
   --wt-paper: #ffffff;
-  --wt-paper-2: #f2f2f2;
+  --wt-paper-2: #f9f8f7;
   --wt-card-bg: #ffffff;
-  --wt-ink: #000000;
-  --wt-ink-2: #1a1a1a;
-  --wt-ink-3: #4d4d4d;
-  --wt-rule: rgba(0, 0, 0, 0.55);
-  --wt-rule-strong: #000000;
-  --wt-wash: rgba(0, 0, 0, 0.07);
-  --wt-accent: #000000;
-  --wt-accent-soft: rgba(0, 0, 0, 0.12);
+  --wt-ink: #202020;
+  --wt-ink-2: #5f5e58;
+  --wt-ink-3: #8d8b85;
+  --wt-rule: rgba(55, 53, 47, 0.22);
+  --wt-rule-strong: #5f5e58;
+  --wt-wash: #f0eceb;
+  --wt-accent: #202020;
+  --wt-accent-soft: rgba(55, 53, 47, 0.1);
   --wt-accent-ink: #ffffff;
-  --wt-jade: #000000;
-  --wt-amber: #000000;
-  --wt-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
-  --wt-serif: "PingFang SC", "Helvetica Neue", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
-  --wt-kai: "PingFang SC", "Helvetica Neue", "Noto Sans SC", sans-serif;
-  --wt-num: "SF Pro Text", "Helvetica Neue", var(--wt-serif);
+  --wt-jade: #0f7b6c;
+  --wt-amber: #d9730d;
+  --wt-shadow: none;
+  --wt-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, "PingFang SC", "Noto Sans SC", sans-serif;
+  --wt-kai: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --wt-num: "SF Pro Text", "Helvetica Neue", -apple-system, sans-serif;
+
+  /* 交互色（Notion 的暗蓝）与组件色；只在皮肤里用，不进首帧片段 */
+  --wt-action: #2f5da2;
+  --wt-action-hover: #2b5492;
+  --wt-action-ink: #ffffff;
+  --wt-action-soft: rgba(47, 93, 162, 0.14);
+  --wt-hover: #f0eceb;
+  --wt-selected: #d8d1cc;
+  --wt-selected-border: #2c2c2b;
+  --wt-line: #2c2c2b;
+  --wt-line-soft: #5f5e58;
+  --wt-tag-gray-bg: #e6e5e3;
+  --wt-tag-gray-ink: #383836;
+  --wt-tag-blue-bg: #cee5ff;
+  --wt-tag-blue-ink: #13375f;
+  --wt-tag-green-bg: #daebdd;
+  --wt-tag-green-ink: #1f442f;
+  --wt-tag-brown-bg: #f2ded5;
+  --wt-tag-brown-ink: #4d3425;
 }
 
 body.wt-theme-contrast.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
-  --wt-shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.45);
-  --wt-shadow-card-hover: 0 0 0 1px rgba(255, 255, 255, 0.75);
-  --wt-shadow-float: 0 0 0 1px rgba(255, 255, 255, 0.55);
-  --wt-paper: #000000;
-  --wt-paper-2: #0d0d0d;
-  --wt-card-bg: #000000;
+  /* Notion 高对比度皮肤复刻 · 深色：炭黑纸 + 近白字，平铺不投影 */
+  --wt-shadow-card: none;
+  --wt-shadow-card-hover: none;
+  --wt-shadow-float: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --wt-paper: #191919;
+  --wt-paper-2: #202020;
+  --wt-card-bg: #252525;
   --wt-ink: #ffffff;
-  --wt-ink-2: #e6e6e6;
-  --wt-ink-3: #b3b3b3;
-  --wt-rule: rgba(255, 255, 255, 0.6);
-  --wt-rule-strong: #ffffff;
-  --wt-wash: rgba(255, 255, 255, 0.1);
+  --wt-ink-2: #d4d2ce;
+  --wt-ink-3: #9a9893;
+  --wt-rule: rgba(255, 255, 255, 0.22);
+  --wt-rule-strong: rgba(255, 255, 255, 0.5);
+  --wt-wash: rgba(255, 255, 255, 0.08);
   --wt-accent: #ffffff;
   --wt-accent-soft: rgba(255, 255, 255, 0.14);
-  --wt-accent-ink: #000000;
-  --wt-jade: #ffffff;
-  --wt-amber: #ffffff;
-  --wt-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  --wt-accent-ink: #191919;
+  --wt-jade: #4dab9a;
+  --wt-amber: #e99745;
+  --wt-shadow: none;
+
+  --wt-action: #3b7dc4;
+  --wt-action-hover: #4a8ad0;
+  --wt-action-ink: #ffffff;
+  --wt-action-soft: rgba(59, 125, 196, 0.22);
+  --wt-hover: rgba(255, 255, 255, 0.08);
+  --wt-selected: #3a3a38;
+  --wt-selected-border: #e6e4df;
+  --wt-line: #e6e4df;
+  --wt-line-soft: rgba(255, 255, 255, 0.5);
+  --wt-tag-gray-bg: #2f2f2f;
+  --wt-tag-gray-ink: #d4d4d4;
+  --wt-tag-blue-bg: #23324a;
+  --wt-tag-blue-ink: #cfe1ff;
+  --wt-tag-green-bg: #23372a;
+  --wt-tag-green-ink: #c9e5ce;
+  --wt-tag-brown-bg: #3a2e27;
+  --wt-tag-brown-ink: #e3c7b8;
 }
 
-/* 窄栏小字：浅色墨色再深一档，深色再亮一档 */
-body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
-  --wt-ink-3: #333333;
-}
-body.wt-theme-contrast.theme-dark :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
-  --wt-ink-3: #cccccc;
-}
-
-/* 纸面：纯色底，去掉暖色光晕与横格纹 */
+/* 纸面：主页 / 设置页仍是白纸 */
 body.wt-theme-contrast .wt-home,
-body.wt-theme-contrast .wt-sidebar.view-content,
 body.wt-theme-contrast .wt-settings-page.vertical-tab-content {
   background: var(--wt-paper);
 }
 
-/* 热力图：黑白灰阶 */
+/* 工具箱 / 编辑台（左右两栏）：浅浅的奶白（paper-2），
+   白色卡片浮在上面，中间编辑器仍是 Obsidian 白纸——像 Notion「奶白侧栏 + 白页」。 */
+body.wt-theme-contrast .wt-wb,
+body.wt-theme-contrast .wt-wb.view-content,
+body.wt-theme-contrast .wt-sidebar,
+body.wt-theme-contrast .wt-sidebar.view-content {
+  background: var(--wt-paper-2);
+}
+
+/* 选中态（参照 Notion 高对比度皮肤）：暖灰底 + 近黑 1px 描边 */
+body.wt-theme-contrast .wt-home-nav.is-active,
+body.wt-theme-contrast .wt-home-nav.is-active:hover {
+  background: var(--wt-selected) !important;
+  box-shadow: inset 0 0 0 1px var(--wt-selected-border) !important;
+}
+
+body.wt-theme-contrast .wt-lib-row.is-current {
+  background: var(--wt-selected);
+  box-shadow: inset 0 0 0 1px var(--wt-selected-border);
+}
+
+/* ==========================================================================
+   Notion 高对比度皮肤复刻 · 组件规则
+   取色与形态来自真实皮肤：暗蓝交互色、平铺按钮、发丝边输入框、
+   浅色底深色字的标签、黑色下划线链接、面板之间只靠底色差。
+   ========================================================================== */
+
+/* 交互色：开关 / 链接 / 焦点环 / 主按钮统一用 Notion 的暗蓝 */
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
+  --interactive-accent: var(--wt-action);
+  --interactive-accent-hover: var(--wt-action-hover);
+  --text-accent: var(--wt-action);
+  --text-accent-hover: var(--wt-action-hover);
+  --text-on-accent: var(--wt-action-ink);
+}
+
+/* 首页左导航列 = Notion 侧栏：奶白底，和内容页只靠色差分界 */
+body.wt-theme-contrast .wt-home .wt-home-rail {
+  background: var(--wt-paper-2);
+  border-right-color: transparent;
+}
+
+/* 按钮：主按钮实心暗蓝；次按钮用 Notion 的幽灵形态（无边框，悬停浮出暖灰底） */
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) .wt-btn {
+  border: 1px solid transparent !important;
+  border-radius: var(--wt-radius-6px);
+  background: transparent !important;
+  color: var(--wt-ink);
+}
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) .wt-btn:hover {
+  border-color: transparent !important;
+  background: var(--wt-hover) !important;
+}
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) .wt-btn.is-primary {
+  border-color: var(--wt-action) !important;
+  background: var(--wt-action) !important;
+  color: var(--wt-action-ink) !important;
+}
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) .wt-btn.is-primary:hover {
+  border-color: var(--wt-action-hover) !important;
+  background: var(--wt-action-hover) !important;
+}
+
+/* 轻量胶囊按钮（新章节 / 新卷）：次按钮形态；主态用暗蓝 */
+body.wt-theme-contrast .wt-wb .wt-wb-new {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--wt-ink);
+}
+body.wt-theme-contrast .wt-wb .wt-wb-new:hover {
+  border-color: transparent;
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+}
+body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
+  border-color: var(--wt-action);
+  background: var(--wt-action);
+  color: var(--wt-action-ink);
+}
+body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary:hover {
+  border-color: var(--wt-action-hover);
+  background: var(--wt-action-hover);
+  color: var(--wt-action-ink);
+}
+
+/* 设置页 / 侧栏里的原生按钮：次按钮形态 */
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) .setting-item-control button {
+  border: 1px solid transparent;
+  border-radius: var(--wt-radius-6px);
+  background: transparent;
+  box-shadow: none;
+}
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) .setting-item-control button:hover {
+  border-color: transparent;
+  background: var(--wt-hover);
+}
+
+/* 输入框 / 下拉：白底 + 1px 发丝边；焦点用暗蓝细环（Notion 的焦点语言） */
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) :is(input[type="text"], input[type="search"], input[type="number"], input[type="password"], select, .dropdown, .combobox-button) {
+  border: 1px solid var(--wt-rule) !important;
+  border-radius: var(--wt-radius-6px) !important;
+  background: var(--wt-card-bg) !important;
+  box-shadow: none !important;
+  color: var(--wt-ink);
+}
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) :is(input[type="text"], input[type="search"], input[type="number"], input[type="password"], select, .dropdown, .combobox-button):hover {
+  border-color: var(--wt-line-soft) !important;
+}
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) :is(input[type="text"], input[type="search"], input[type="number"], input[type="password"], select, .dropdown, .combobox-button):focus {
+  border-color: var(--wt-action) !important;
+  box-shadow: 0 0 0 2px var(--wt-action-soft) !important;
+}
+
+/* 开关：Notion 的暗蓝轨道 + 白滑块。
+   深色下 Obsidian 的 --toggle-thumb-color 会跟 --background-primary（被插件映射成炭黑纸）
+   走，滑块就黑了；这里直接钉成白色，两套主题都和 Notion 一致。 */
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) .checkbox-container.is-enabled {
+  background-color: var(--wt-action);
+}
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) .checkbox-container::after {
+  background-color: #ffffff;
+}
+
+/* 文字链接：Notion 的黑字下划线 */
+body.wt-theme-contrast .wt-link {
+  color: var(--wt-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+body.wt-theme-contrast .wt-link:hover {
+  color: var(--wt-action);
+}
+
+/* 标签：浅色底 + 同色系深色字（Notion 的 tag 语言） */
+body.wt-theme-contrast .wt-pill {
+  background: var(--wt-tag-gray-bg);
+  color: var(--wt-tag-gray-ink);
+}
+body.wt-theme-contrast .wt-pill.is-ongoing {
+  background: var(--wt-tag-blue-bg);
+  color: var(--wt-tag-blue-ink);
+}
+body.wt-theme-contrast .wt-pill.is-completed {
+  background: var(--wt-tag-green-bg);
+  color: var(--wt-tag-green-ink);
+}
+body.wt-theme-contrast .wt-pill.is-hiatus {
+  background: var(--wt-tag-brown-bg);
+  color: var(--wt-tag-brown-ink);
+}
+body.wt-theme-contrast .wt-wb .wt-wb-res-tag {
+  background: var(--wt-tag-gray-bg);
+  color: var(--wt-tag-gray-ink);
+}
+
+/* 分段控件（网格/列表）：Notion 的细边控件，不要深灰边 */
+body.wt-theme-contrast .wt-seg {
+  border: 1px solid var(--wt-rule);
+  border-radius: var(--wt-radius-6px);
+}
+body.wt-theme-contrast .wt-seg-btn.is-active {
+  background: var(--wt-hover) !important;
+  color: var(--wt-ink);
+}
+
+/* 筛选小胶囊：白底细边；选中用暖灰底 + 墨色 */
+body.wt-theme-contrast .wt-home .wt-chip {
+  border: 1px solid var(--wt-rule) !important;
+  background: var(--wt-card-bg) !important;
+  color: var(--wt-ink-2);
+}
+body.wt-theme-contrast .wt-home .wt-chip:hover {
+  border-color: var(--wt-line-soft) !important;
+  background: var(--wt-hover) !important;
+}
+body.wt-theme-contrast .wt-home .wt-chip.is-active {
+  background: var(--wt-hover) !important;
+  color: var(--wt-ink) !important;
+}
+
+/* 视图标签：Notion 式药丸选中（替换下划线） */
+body.wt-theme-contrast .wt-sidebar .wt-settings-tabs {
+  border-bottom-color: transparent;
+}
+body.wt-theme-contrast .wt-sidebar .wt-settings-tab {
+  margin-bottom: 0;
+  padding: 5px 8px;
+  border-bottom: 0;
+  border-radius: var(--wt-radius-6px);
+  color: var(--wt-ink-2);
+}
+body.wt-theme-contrast .wt-sidebar .wt-settings-tab:hover:not(.is-active) {
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+}
+body.wt-theme-contrast .wt-sidebar .wt-settings-tab.is-active {
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+  border-bottom-color: transparent;
+}
+
+body.wt-theme-contrast .wt-settings-page .wt-settings-tab {
+  margin-bottom: 0;
+  padding: 5px 8px;
+  border-bottom: 0;
+  border-radius: var(--wt-radius-6px);
+  color: var(--wt-ink-2);
+}
+body.wt-theme-contrast .wt-settings-page .wt-settings-tab:hover:not(.is-active) {
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+}
+body.wt-theme-contrast .wt-settings-page .wt-settings-tab.is-active {
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+  border-bottom-color: transparent;
+}
+
+body.wt-theme-contrast .wt-wb .wt-wb-seg {
+  gap: 4px;
+}
+body.wt-theme-contrast .wt-wb .wt-wb-seg-btn {
+  margin-bottom: 0;
+  padding: 3px 8px;
+  border-bottom: 0;
+  border-radius: var(--wt-radius-6px);
+  color: var(--wt-ink-2);
+}
+body.wt-theme-contrast .wt-wb .wt-wb-seg-btn:hover:not(.is-active) {
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+}
+body.wt-theme-contrast .wt-wb .wt-wb-seg-btn.is-active {
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+  border-bottom-color: transparent;
+}
+
+/* 链接：Notion 的黑色下划线 */
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* 列表 / 卡片内的分隔线：虚线改成实线（Notion 只有实线发丝边）。
+   只改上下两条边的样式：border-style 全开会让未设宽度的左右边露出默认 3px。 */
+body.wt-theme-contrast .wt-today-rows,
+body.wt-theme-contrast .wt-today-row,
+body.wt-theme-contrast .wt-home-settings,
+body.wt-theme-contrast .wt-sidebar .wt-tb-card > .setting-item,
+body.wt-theme-contrast .wt-sidebar .wt-tb-card > .wt-tb-group > .setting-item:first-child,
+body.wt-theme-contrast .wt-sidebar .wt-snap-row,
+body.wt-theme-contrast .wt-sidebar .wt-snap-footer,
+body.wt-theme-contrast .wt-settings-page .wt-tb-card > .setting-item {
+  border-top-style: solid;
+  border-bottom-style: solid;
+}
+body.wt-theme-contrast .wt-np .wt-np-preview {
+  border-style: solid;
+}
+
+/* 结构线：编辑台头 / 脚用 1px 近黑（对应 Notion 的表头线） */
+body.wt-theme-contrast .wt-wb .wt-wb-head {
+  border-bottom: 1px solid var(--wt-line);
+}
+body.wt-theme-contrast .wt-wb .wt-wb-foot {
+  border-top: 1px solid var(--wt-line);
+}
+
+/* 编辑器标题：ink-2 现在是次要灰，H4–H6 要回到墨色（Notion 标题都是黑） */
+body.wt-heading-style.wt-theme-contrast .markdown-source-view .cm-editor .cm-header-4,
+body.wt-heading-style.wt-theme-contrast .markdown-source-view .cm-editor .cm-header-5,
+body.wt-heading-style.wt-theme-contrast .markdown-source-view .cm-editor .cm-header-6 {
+  color: var(--wt-ink);
+}
+
+/* 热力图：Notion 风格灰阶 */
 body.wt-theme-contrast .wt-home .wt-heatmap {
-  --wt-heat-l0: #f2f2f2;
-  --wt-heat-l1: #bfbfbf;
-  --wt-heat-l2: #8c8c8c;
-  --wt-heat-l3: #404040;
-  --wt-heat-l4: #000000;
+  --wt-heat-l0: #ebedf0;
+  --wt-heat-l1: #c6cbd1;
+  --wt-heat-l2: #959da5;
+  --wt-heat-l3: #586069;
+  --wt-heat-l4: #24292e;
 }
 
 body.wt-theme-contrast.theme-dark .wt-home .wt-heatmap {
-  --wt-heat-l0: #1a1a1a;
-  --wt-heat-l1: #404040;
-  --wt-heat-l2: #8c8c8c;
-  --wt-heat-l3: #bfbfbf;
-  --wt-heat-l4: #ffffff;
+  --wt-heat-l0: #252525;
+  --wt-heat-l1: #383838;
+  --wt-heat-l2: #5a5a5a;
+  --wt-heat-l3: #8a8a8a;
+  --wt-heat-l4: #e0e0e0;
 }
 
 /* 下拉菜单 */
 body.wt-theme-contrast .wt-combo-menu {
   --wt-menu-paper: #ffffff;
-  --wt-menu-ink: #000000;
-  --wt-menu-rule: #000000;
-  --wt-menu-wash: rgba(0, 0, 0, 0.08);
-  box-shadow: none;
+  --wt-menu-ink: #202020;
+  --wt-menu-rule: rgba(55, 53, 47, 0.22);
+  --wt-menu-wash: #f0eceb;
+  box-shadow: 0 8px 24px rgba(15, 15, 15, 0.12);
 }
 
 body.wt-theme-contrast.theme-dark .wt-combo-menu {
-  --wt-menu-paper: #000000;
-  --wt-menu-ink: #ffffff;
-  --wt-menu-rule: #ffffff;
-  --wt-menu-wash: rgba(255, 255, 255, 0.12);
+  --wt-menu-paper: #252525;
+  --wt-menu-ink: #ebebeb;
+  --wt-menu-rule: rgba(255, 255, 255, 0.14);
+  --wt-menu-wash: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 
 /* 沉浸模式编辑区：纯白 / 纯黑底 */
@@ -5628,6 +6001,10 @@ body.wt-theme-contrast.wt-immersive .cm-content {
 /* ==========================================================================
    手机端 × 配色主题：底部常驻状态条（.wt-mbar）挂在 body 上，取不到页面令牌，
    这里按主题单独映射。暖纸保持原样（沿用 Obsidian 原生变量）。
+
+   高对比度另外多两条：手机底部导航栏与主操作按钮（FAB）也要跟桌面端同形——
+   桌面在 Notion 皮肤里把「主操作」改成暗蓝实心、把「面板」改成实色奶白；
+   这两处是手机版独有的 DOM，不在桌面组件规则的覆盖范围内，必须单独写。
    ========================================================================== */
 
 body.wt-mobile.wt-theme-cool .wt-mbar.is-on {
@@ -5679,43 +6056,53 @@ body.wt-mobile.wt-theme-cool.theme-dark .wt-mbar-sep {
   color: #6f7c8a;
 }
 
-/* 高对比度：实线黑边、纯黑字与纯黑填充，不做半透明 */
+/* 高对比度：深墨实线边 + 实心深墨填充，不做半透明（与 Notion 皮肤同一套灰阶）。
+   进度色跟桌面端同源：填充用 --wt-accent（浅色墨黑 / 深色近白），达标用 --wt-jade；
+   轨道用 --wt-wash。这样手机状态条与桌面「今日进度」环、左栏进度条是同一套颜色。 */
 body.wt-mobile.wt-theme-contrast .wt-mbar.is-on {
-  border: 1.5px solid #000000;
+  border: 1px solid #2c2c2b;
   background: #ffffff;
   box-shadow: none;
-  color: #000000;
+  color: #202020;
   opacity: 1;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 body.wt-mobile.wt-theme-contrast .wt-mbar-track {
-  background: rgba(0, 0, 0, 0.18);
+  background: #f0eceb;
 }
-body.wt-mobile.wt-theme-contrast .wt-mbar-fill,
+body.wt-mobile.wt-theme-contrast .wt-mbar-fill {
+  background: #202020;
+}
 body.wt-mobile.wt-theme-contrast .wt-mbar.is-done .wt-mbar-fill {
-  background: #000000;
+  background: #0f7b6c;
 }
 body.wt-mobile.wt-theme-contrast .wt-mbar-goal,
 body.wt-mobile.wt-theme-contrast .wt-mbar-pomo {
-  color: #000000;
+  color: #202020;
 }
 body.wt-mobile.wt-theme-contrast .wt-mbar-speed,
 body.wt-mobile.wt-theme-contrast .wt-mbar-sep {
-  color: #333333;
+  color: #5f5e58;
 }
 
 body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar.is-on {
-  border-color: #ffffff;
-  background: #000000;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: #191919;
+  box-shadow: none;
   color: #ffffff;
+  opacity: 1;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-track {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
 }
-body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-fill,
-body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar.is-done .wt-mbar-fill {
+body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-fill {
   background: #ffffff;
+}
+body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar.is-done .wt-mbar-fill {
+  background: #4dab9a;
 }
 body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-goal,
 body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-pomo {
@@ -5723,7 +6110,26 @@ body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-pomo {
 }
 body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-speed,
 body.wt-mobile.wt-theme-contrast.theme-dark .wt-mbar-sep {
-  color: #cccccc;
+  color: #d4d2ce;
+}
+
+/* 高对比度：手机底部导航 = 桌面左侧导航列（实色奶白、无分割线、无毛玻璃）。
+   桌面端该栏只有色差分界（border-right-color: transparent），手机这边照做。 */
+body.wt-mobile.wt-theme-contrast .wt-home .wt-home-rail {
+  background: var(--wt-paper-2);
+  border-top-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 高对比度：手机主操作按钮 = 桌面主按钮（暗蓝实心、平铺无光晕） */
+body.wt-mobile.wt-theme-contrast .wt-wb .wt-wb-fab {
+  background: var(--wt-action);
+  color: var(--wt-action-ink);
+  box-shadow: none;
+}
+body.wt-mobile.wt-theme-contrast .wt-wb .wt-wb-fab:active {
+  background: var(--wt-action-hover);
 }
 
 /* ===== 编辑工具条（选中浮出气泡） =====
@@ -5969,20 +6375,20 @@ body.theme-dark.wt-theme-cool {
   --cmp-line-strong: rgba(200, 215, 230, 0.3);
 }
 body.wt-theme-contrast {
-  --cmp-mark-line: #000000;
-  --cmp-mark-bg: rgba(0, 0, 0, 0.12);
-  --cmp-mark-ink: #ffffff;
-  --cmp-wash: rgba(0, 0, 0, 0.06);
-  --cmp-line: rgba(0, 0, 0, 0.4);
-  --cmp-line-strong: #000000;
+  --cmp-mark-line: #2c2c2b;
+  --cmp-mark-bg: rgba(55, 53, 47, 0.12);
+  --cmp-mark-ink: #202020;
+  --cmp-wash: #f0eceb;
+  --cmp-line: rgba(55, 53, 47, 0.22);
+  --cmp-line-strong: #2c2c2b;
 }
 body.theme-dark.wt-theme-contrast {
-  --cmp-mark-line: #ffffff;
-  --cmp-mark-bg: rgba(255, 255, 255, 0.18);
-  --cmp-mark-ink: #000000;
+  --cmp-mark-line: #e6e4df;
+  --cmp-mark-bg: rgba(255, 255, 255, 0.12);
+  --cmp-mark-ink: #ffffff;
   --cmp-wash: rgba(255, 255, 255, 0.08);
-  --cmp-line: rgba(255, 255, 255, 0.45);
-  --cmp-line-strong: #ffffff;
+  --cmp-line: rgba(255, 255, 255, 0.22);
+  --cmp-line-strong: #e6e4df;
 }
 
 :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
@@ -6546,8 +6952,10 @@ body.wt-indent .cm-editor .cm-line:not([class*="HyperMD-header-"]):not([class*="
   background: color-mix(in srgb, var(--wt-paper-2) 38%, var(--wt-paper));
 }
 
-body.wt-theme-contrast .wt-wb .wt-wb-head {
-  background: var(--wt-paper);
+body.wt-theme-contrast .wt-wb .wt-wb-head,
+body.wt-theme-contrast .wt-wb .wt-wb-volume-head {
+  /* 与奶白栏底色同一块，只靠 0.5px 发丝线分隔（分卷行是吸顶的，必须不透明） */
+  background: var(--wt-paper-2);
 }
 
 .wt-wb .wt-wb-empty-title {
@@ -7332,7 +7740,15 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
 
 body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current,
 body.wt-theme-contrast .wt-wb .wt-wb-res.is-current {
-  box-shadow: inset 0 0 0 1px var(--wt-rule-strong);
+  /* Notion 式选中：暖灰底 + 近黑 1px 描边 */
+  background: var(--wt-selected);
+  box-shadow: inset 0 0 0 1px var(--wt-selected-border);
+  border-radius: var(--wt-radius-6px);
+}
+
+body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current::before,
+body.wt-theme-contrast .wt-wb .wt-wb-res.is-current::before {
+  display: none;
 }
 
 .wt-wb .wt-wb-ch.is-current::before,
@@ -7575,7 +7991,7 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current .wt-wb-res-title {
 }
 
 body.wt-theme-contrast .wt-wb .wt-wb-foot {
-  background: var(--wt-paper);
+  background: var(--wt-paper-2);
 }
 
 .wt-wb .wt-wb-foot-empty {

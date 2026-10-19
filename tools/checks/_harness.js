@@ -16,7 +16,12 @@ const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..", ".."); // 插件根目录
 const ESBUILD = path.join(ROOT, "node_modules", ".bin", "esbuild");
-const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "wt-check-"));
+// 惰性创建：不编译任何东西的检查（如 check-specs）不该留下临时目录
+let TMP_DIR = null;
+function tmpDir() {
+  if (!TMP_DIR) TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "wt-check-"));
+  return TMP_DIR;
+}
 
 function assertEsbuild() {
   if (!fs.existsSync(ESBUILD)) {
@@ -32,7 +37,7 @@ function assertEsbuild() {
  */
 function compile(entry, name, externals) {
   assertEsbuild();
-  const out = path.join(TMP, name + ".js");
+  const out = path.join(tmpDir(), name + ".js");
   execFileSync(
     ESBUILD,
     [path.join(ROOT, entry), "--bundle", "--format=cjs", "--target=ES2020",
@@ -46,8 +51,8 @@ function compile(entry, name, externals) {
 /** TypeScript 源码 → JS 文本（用于把方法体拿出来执行）。 */
 function transpileTs(sourceTs, name, globalName) {
   assertEsbuild();
-  const src = path.join(TMP, name + ".ts");
-  const out = path.join(TMP, name + ".js");
+  const src = path.join(tmpDir(), name + ".ts");
+  const out = path.join(tmpDir(), name + ".js");
   fs.writeFileSync(src, sourceTs, "utf8");
   execFileSync(
     ESBUILD,
@@ -134,11 +139,16 @@ function createReporter(title) {
 }
 
 function cleanup() {
-  try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (_) {}
+  if (!TMP_DIR) return;
+  try { fs.rmSync(TMP_DIR, { recursive: true, force: true }); } catch (_) {}
+  TMP_DIR = null;
 }
 
 module.exports = {
-  ROOT, TMP, ESBUILD,
+  ROOT, ESBUILD, tmpDir,
   compile, transpileTs, sliceBundleModule, extractMethod,
   stubObsidian, createReporter, cleanup,
 };
+
+// 每个检查退出时自动清掉自己的临时目录（惰性创建过才需要清）
+process.on("exit", cleanup);

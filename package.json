@@ -1,12 +1,15 @@
 {
   "name": "obsidian-writing-toolkit",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "写作工具箱：网文字数统计 / 码字时速 / 每日目标",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs production",
     "check": "./node_modules/.bin/tsc --noEmit",
     "verify": "bash tools/checks/run-all.sh",
+    "spec:new": "node tools/spec/new.js",
+    "spec:check": "node tools/checks/check-specs.js",
+    "spec:list": "node tools/checks/check-specs.js --list",
     "lint:review": "eslint src package.json",
     "release": "bash tools/release.sh",
     "lint:gate": "bash tools/lint-gate.sh"

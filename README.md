@@ -103,10 +103,15 @@ npm install
 npm run dev      # 监听模式构建
 npm run build    # 生产模式打包
 npm run check    # TypeScript 类型检查
-npm run verify   # 全量逻辑闸门测试
+npm run verify   # 全量逻辑闸门测试（含 SPEC 结构检查）
+
+npm run spec:new -- <slug> "<标题>" --size M|L   # 新建 M / L 级改动规格
+npm run spec:check                               # 只跑 SPEC 结构检查
+npm run spec:list                                # 查看当前规格与状态
 ```
 
 > ⚠️ 改动代码前，请务必参阅 [`docs/插件设计文档.md`](docs/插件设计文档.md)，内含架构红线约束、令牌系统规范与踩坑记录。
+> M / L 级改动请先按 [`specs/README.md`](specs/README.md) 写规格（S 级不用）。
 
 ---
 

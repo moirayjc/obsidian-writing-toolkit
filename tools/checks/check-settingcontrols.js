@@ -313,6 +313,20 @@ function main() {
       .test(css)
   );
   r.check(
+    "CSS：窄屏把 dropdown 的 flex-basis 改回 auto（否则 column 布局下变 260px 高）并铺满",
+    /body\.wt-mobile \.wt-settings-page \.setting-item-control\.wt-select-control\s*\{[^}]*flex-basis:\s*auto;[^}]*width:\s*100%;/s
+      .test(css)
+  );
+  r.check(
+    "CSS：设置项不带宿主圆角（0.5px 顶部虚线不会两端翘成圆弧）",
+    /\.wt-settings-page \.setting-item\s*\{[^}]*border-radius:\s*0;/s.test(css)
+  );
+  r.check(
+    "CSS：工具箱 / 主页设置行也不带宿主圆角（行分割线不翘成圆弧）",
+    /\.wt-sidebar \.setting-item\s*\{[^}]*border-radius:\s*0;/s.test(css) &&
+      /\.wt-home-settings \.setting-item\s*\{[^}]*border-radius:\s*0;/s.test(css)
+  );
+  r.check(
     "CSS：设置弹窗本身被加宽，而不是误写在不存在的 .modal.vertical-tab-content 节点上",
     /\.modal\.mod-settings:has\(\.wt-settings-page\)\s*\{[^}]*--dialog-width:\s*min\(820px,\s*94vw\)/s
       .test(css)

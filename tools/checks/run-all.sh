@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 跑全部检查（纯逻辑层，不需要启动 Obsidian）。
+# 跑全部检查（不需要启动 Obsidian；含逻辑检查与 SPEC 结构检查）。
 #   npm run verify
 #   ./tools/checks/run-all.sh --vault ~/Documents/WT-Test-Vault
 #
@@ -34,6 +34,7 @@ CHECKS=(
   "check-typewriter-module.js:打字机 Feature Module"
   "check-hemingway-module.js:海明威 Feature Module"
   "check-typography-module.js:排版与主题 Feature Module"
+  "check-theme-palette.js:配色主题令牌同步（styles.css ⇄ 首帧片段）"
   "check-format-toolbar-module.js:编辑工具条 Feature Module"
   "check-snapshot-module.js:快照核心 Feature Module"
   "check-snapshot-ui-module.js:快照 UI Feature Module"
@@ -50,6 +51,7 @@ CHECKS=(
   "check-ui-shell.js:UI Shell 解耦（源码级）"
   "check-boundaries.js:边界与入口守卫（源码级）"
   "check-module-contract.js:模块契约与数据键（源码级）"
+  "check-specs.js:SPEC 规格与流程（specs/）"
 )
 
 failed=""
