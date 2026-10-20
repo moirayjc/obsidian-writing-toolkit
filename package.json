@@ -1,6 +1,6 @@
 {
   "name": "obsidian-writing-toolkit",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "写作工具箱：网文字数统计 / 码字时速 / 每日目标",
   "scripts": {
     "dev": "node esbuild.config.mjs",
