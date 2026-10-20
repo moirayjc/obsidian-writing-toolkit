@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 跑全部检查（不需要启动 Obsidian；含逻辑检查与 SPEC 结构检查）。
+# 跑全部检查（不需要启动 Obsidian；含逻辑检查与规格形式检查）。
 #   npm run verify
 #   ./tools/checks/run-all.sh --vault ~/Documents/WT-Test-Vault
 #
@@ -54,7 +54,7 @@ CHECKS=(
   "check-module-contract.js:模块契约与数据键（源码级）"
   "check-workbench-search.js:编辑台全书搜索（源码级）"
   "check-mobilepreview-module.js:读者手机预览（源码级）"
-  "check-specs.js:SPEC 规格与流程（specs/）"
+  "check-specs.js:规格形式（specs/）"
 )
 
 failed=""

@@ -5,8 +5,8 @@
 1. [`docs/插件化架构说明.md`](docs/插件化架构说明.md)——单 Obsidian 插件内的 Host + Services + Feature Modules 架构、模块边界和硬约束。
 2. [`docs/插件设计文档.md`](docs/插件设计文档.md)——当前代码的模块地图、数据模型、必须遵守的约定和踩坑清单。
    改样式 / 配色 / 手机端 / 标题排版，再读 [`docs/样式与主题.md`](docs/样式与主题.md)。
-3. [`specs/README.md`](specs/README.md)——**M / L 级改动**的规格流程（分级、模板、状态机、验收标准写法）；
-   写 spec 前先读 [`specs/constitution.md`](specs/constitution.md)（13 条不可协商条款）。
+3. [`specs/README.md`](specs/README.md)——**需要作者拍板的改动**（新功能、数据 / 设置变化、
+   用户能察觉的行为变化）先写一页 spec，等确认再动手；修 bug、重构不写。
 
 如果正在做插件化迁移，再读 [`docs/插件化迁移计划.md`](docs/插件化迁移计划.md)（已冻结为历史记录）。README 讲功能；设计文档讲当前代码为什么这么写、哪里不能碰。
 
@@ -38,20 +38,15 @@
    设置页或编辑工具条。`tools/checks/check-commandsurface.js` 固定了命令 ID 与显示名称，
    新增第五条命令必须被视为回归。
 
-## 改动分级与 SPEC（2026-10-19 起）
+## 什么时候写 spec（2026-10-20 起）
 
-动手前先判定 **S / M / L**（定义见 [`specs/README.md`](specs/README.md)）：
+只问一句：**实现之前，需要作者确认要不要这样做吗？**（详见 [`specs/README.md`](specs/README.md)）
 
-| 级别 | 判定 | 要做什么 |
-| --- | --- | --- |
-| **S** | 不改用户可见行为，不动数据 / 设置 / 持久化 / 命令面 / 样式结构 | 不用 spec；提交信息说明为什么算 S |
-| **M** | 单模块行为、单个设置项、单条样式修正、新增一项检查 | `specs/NNN-slug/spec.md` + `tasks.md` |
-| **L** | 新模块 / Service、跨模块、数据或默认值变化、发布级重构、换肤级样式 | 三件套，另加 `plan.md` |
-
-- 建规格：`npm run spec:new -- <slug> "<标题>" --size M|L`；写之前先读宪法。
-- 状态：`draft → approved → implementing → verifying → done`（放弃则 `dropped`）；`done` / `dropped` 后 `git mv` 到 `specs/archive/`。
-- **`approved` 之前不改代码**（S 除外）；实现中需求变了，先改 spec 再改代码。
-- 收工前：`npm run spec:check` 通过，验收证据与文档更新勾完；提交信息带编号 `feat(spec-001): …`。
+- **需要**（新增 / 删除功能或入口、改 `data.json` 结构 / 设置项 / 默认值、用户会察觉的行为变化、换肤）：
+  `npm run spec:new -- <slug> "<标题>"` 写一页 spec → **作者确认前不写实现代码** → 「怎么算完」全勾、
+  知识沉淀进设计文档后改 `status: done`。提交信息带编号 `feat(spec-007): …`。
+- **不需要**（修 bug、重构、性能、补检查、文档、单条样式修正）：直接做。提交信息写清
+  **现象 / 根因 / 怎么验证**（检查名 + 反向验证结果；人工回归做了没有，没做就写没做）。
 
 ## 插件化架构约束
 
@@ -73,8 +68,8 @@
 npm run check     # 类型检查 tsc --noEmit（必须干净，strict: true）
 npm run build     # 生产构建 → 原地覆盖本目录的 main.js
 npm run verify    # 逻辑检查（跑的是构建产物，所以要先 build）
-npm run spec:new -- <slug> "<标题>" --size M|L   # 新建规格（M/L 级改动）
-npm run spec:check     # 规格结构检查（已包含在 verify 里）
+npm run spec:new -- <slug> "<标题>"   # 新建一页 spec（只给需要作者拍板的改动）
+npm run spec:check     # 规格形式检查（已包含在 verify 里）
 npm run release   # 发布：自检 + 构建 + 打包到 release/（见设计文档 §6.1）
 npm run dev       # 监听构建（常驻进程，用完记得关）
 ```
@@ -100,7 +95,9 @@ npm run dev       # 监听构建（常驻进程，用完记得关）
 
 ## 改代码前请确认
 
-- 这次改动是 S / M / L？M / L 有 spec 且已到 `approved` 吗？（见 `specs/README.md`）
+- 这次改动需要作者拍板吗？需要的话，spec 写了、作者确认了吗？（见 `specs/README.md`）
+- 会写正文吗？→ **正文零污染**：快照 / 章纲 / 批注一律放伴随文件，正文 Markdown 不加任何标记
+- 有破坏性操作吗？→ **一次确认 + 可撤销**，不要叠两道弹窗
 - 改样式 → 最小改动 + `--wt-*` 令牌，检查暗色/冷淡/高对比/`body.wt-mobile`；**不要大范围重写 `styles.css`**
 - 编辑器内 UI → **不要做跟随文字滚动的浮层**（历史上因此删掉了整个 `commentPopover.ts`）
 - 「是不是正文」→ 用 `isDailyCountFile()` / `chapterPaths()`，不要写路径关键词匹配
@@ -113,4 +110,4 @@ npm run dev       # 监听构建（常驻进程，用完记得关）
 ## 发布
 
 照设计文档 §6.1（自检清单）与 §6.5（换装流程）。`main.js` 不进 git，作为 Release 附件上传。
-发布前 `tools/release.sh` 会拦下仍在 `implementing` / `verifying` 的规格（确认与本次发布无关时加 `--allow-pending-spec` 放行）；本次涉及且做完的 spec 应移入 `specs/archive/`。
+本次涉及的 spec 做完后把 `status` 改成 `done`；`tools/release.sh` 只列出还在 `draft` 的规格提醒你，不拦截。
