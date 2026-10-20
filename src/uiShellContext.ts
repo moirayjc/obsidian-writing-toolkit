@@ -45,7 +45,8 @@ export interface UiShellStats {
   dailyForDisplay(): Readonly<Record<string, number>>;
   projectForDisplay(key: string): Readonly<Record<string, number>>;
   getProjects(keepKey?: string | null): { key: string; label: string }[];
-  statusBarSpeed(): number;
+  /** 今日平均时速（写下的字 ÷ 写作时长）；null 表示还不够给数。 */
+  todaySpeed(): number | null;
   showDailyBreakdown(): void;
   setWordCountMode(mode: WordCountMode): void;
 }

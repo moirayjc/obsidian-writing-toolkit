@@ -37,8 +37,11 @@ const METHODS = [
 /** 把 main.ts 的真实方法拼进一个只带桩的类，编译后返回构造器。 */
 function loadDayStats(mainSource) {
   const bodies = METHODS.map((sig) => H.extractMethod(mainSource, sig));
+  // 时长阈值常量照搬 main.ts，不在检查里写死
+  const gapConst = mainSource.match(/^const BREAK_GAP_MS = .*;$/m);
+  if (!gapConst) throw new Error("main.ts 里找不到 BREAK_GAP_MS");
   const ts = `
-const MAX_IDLE_GAP_MS = 30_000;
+${gapConst[0]}
 function statsApplied(..._args: unknown[]): void {}
 export class TFile {
   constructor(public path: string, public stat: { ctime: number }) {}

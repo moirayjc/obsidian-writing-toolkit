@@ -141,7 +141,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
 
           new Setting(statsCard)
             .setName("显示码字时速")
-            .setDesc("在编辑台左下角信息栏显示当前时速")
+            .setDesc("在编辑台左下角与主页显示今日平均时速：今天写下的字 ÷ 写作时长，删除不抵减")
             .addToggle((toggle) =>
               toggle
                 .setValue(this.wt.settings.showSpeed)

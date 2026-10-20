@@ -908,11 +908,8 @@ export class WritingToolkitHome extends ItemView {
       const seconds = this.host.stats.getTodayDurationSeconds();
       timeEl.setText(seconds >= 60 ? formatMinutes(seconds) : "—");
       if (speedEl) {
-        speedEl.setText(
-          seconds >= 300 && words > 0
-            ? `${fmt((words / seconds) * 3600)} 字/时`
-            : "—"
-        );
+        const speed = this.host.stats.todaySpeed();
+        speedEl.setText(speed !== null ? `${fmt(speed)} 字/时` : "—");
       }
     };
     update();
@@ -1667,7 +1664,7 @@ export class WritingToolkitHome extends ItemView {
 
     new Setting(card)
       .setName("显示码字时速")
-      .setDesc("在编辑台左下角信息栏显示当前时速")
+      .setDesc("在编辑台左下角与主页显示今日平均时速：今天写下的字 ÷ 写作时长，删除不抵减")
       .addToggle((toggle) =>
         toggle.setValue(this.host.settings.showSpeed).onChange(async (value) => {
           this.host.settings.showSpeed = value;

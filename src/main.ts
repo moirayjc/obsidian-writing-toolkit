@@ -142,9 +142,11 @@ import {
 
 /** 「算不算正文」不再靠路径里的「正文草稿」字样，改用作品识别（见 isDailyCountFile）。 */
 
-/** 两次输入间隔超过该毫秒数即视为停止写作，间隔不计入时长。
- *  2026-08-13 由 120s 收紧为 30s：避免停顿（喝水/切走/思考）被全额算作写作时间。 */
-const MAX_IDLE_GAP_MS = 30_000;
+/** 两次在正文里动笔的间隔不超过它，整段算写作时长；超过算休息，整段不计。
+ *  2026-10-20 由「停顿只算 30 秒」改为「10 分钟内整段计入」（SPEC-006）：
+ *  思考、回看前文、查资料也是创作时间，只算手指在动的时间过于严苛。
+ *  （2026-08-13 曾由 120s 收紧为 30s，理由是不让思考计入；作者已推翻这一口径。） */
+const BREAK_GAP_MS = 10 * 60_000;
 
 interface DailyHistory {
   [date: string]: number;
@@ -161,12 +163,14 @@ export default class WritingToolkitPlugin extends Plugin {
   dailyDurationHistory: DailyHistory = {};
   /** 各作品（按正文草稿的上一级目录）的每日净增字数 */
   projectHistory: Record<string, DailyHistory> = {};
-  /** 各作品的每日有效写作时长 */
+  /** 各作品的每日写作时长（10 分钟内的停顿整段计入，见 BREAK_GAP_MS） */
   projectDurationHistory: Record<string, DailyHistory> = {};
   /** 每日完成的番茄数与本番茄累计字数 */
   dailyPomodoroHistory: Record<string, DailyPomodoro> = {};
   /** 每日各文件的净增明细：出问题时能查出"这个数是哪个文件贡献的" */
   dailyFileDeltas: Record<string, DailyHistory> = {};
+  /** 每日写下的字：手动输入的正增量累计（时速的分子），删除不抵减、粘贴不计 */
+  dailyTypedHistory: DailyHistory = {};
   /** 阶段 6：界面偏好 Service（主页 / 书架 / 编辑台的界面记忆）。 */
   private prefs!: WorkspacePrefsService;
   /** 阶段 6：统计读模型与状态栏更新广播。 */
@@ -191,6 +195,7 @@ export default class WritingToolkitPlugin extends Plugin {
   private settingTab!: WritingToolkitSettingTab;
   private activeDay: string = "";
   private dailySaveTimer: TimerHandle | null = null;
+  private typedSettleTimer: TimerHandle | null = null;
   private lastWritingActivityAt = 0;
   private previousTypewriterMode: boolean | null = null;
   private snapshotModule!: SnapshotModule;
@@ -293,7 +298,7 @@ export default class WritingToolkitPlugin extends Plugin {
         dailyForDisplay: () => this.stats.dailyForDisplay(),
         projectForDisplay: (key) => this.stats.projectForDisplay(key),
         getProjects: (keepKey) => this.stats.getProjects(keepKey),
-        statusBarSpeed: () => this.stats.statusBarSpeed(),
+        todaySpeed: () => this.stats.todaySpeed(),
         showDailyBreakdown: () => this.stats.showDailyBreakdown(),
         setWordCountMode: (mode) => this.setWordCountMode(mode),
       },
@@ -395,7 +400,7 @@ export default class WritingToolkitPlugin extends Plugin {
       projectRootForFile: (path) => this.getProjectForPath(path),
       listMarkdownPaths: () =>
         this.app.vault.getMarkdownFiles().map((file) => file.path),
-      getSpeed: () => this.statusBar?.getSpeed() ?? 0,
+      typedToday: () => this.dailyTypedHistory[this.activeDay] || 0,
     });
     await this.loadPluginData();
 
@@ -652,7 +657,7 @@ export default class WritingToolkitPlugin extends Plugin {
   private registerWorkspaceEvents(): void {
   this.eventScope.onWorkspace("active-leaf-change", () => {
       this.ensureCurrentDay();
-      this.lastWritingActivityAt = 0;
+      // 切换文件不打断写作计时：切去设定 / 资料再回来，这段也算写作时长。
       const file = this.app.workspace.getActiveFile();
       const text = this.getActiveEditorText();
       if (file && text !== null) {
@@ -857,11 +862,6 @@ export default class WritingToolkitPlugin extends Plugin {
     return this.stats.getTodayPomodoroSummary();
   }
 
-  /** 手机端常驻状态条：复用 WritingStatusBar 里已经算好的码字时速。 */
-  statusBarSpeed(): number {
-    return this.stats.statusBarSpeed();
-  }
-
   /** 设置里切换「手机端常驻状态条」后立即生效。 */
   refreshMobileStatusBar(): void {
     this.mobileStatusBar?.syncVisibility();
@@ -881,7 +881,7 @@ export default class WritingToolkitPlugin extends Plugin {
     this.activePomodoro()?.rebaseBaseCount();
     const text = this.getActiveEditorText();
     if (text !== null) {
-      this.statusBar.rebaseCurrentDocument(text, true);
+      this.statusBar.rebaseCurrentDocument(text);
       this.statusBar.setSelectionText(this.getActiveEditorSelection());
     }
   }
@@ -1186,6 +1186,8 @@ export default class WritingToolkitPlugin extends Plugin {
     if (text === null) return;
 
     const editor = this.getActiveEditor();
+    const composing =
+      this.host.services.editor.getViewForEditor(editor)?.composing ?? false;
     const pending = this.pendingProgrammaticEdit;
     const isProgrammatic =
       pending !== null && pending.editor === editor && pending.text === text;
@@ -1227,6 +1229,7 @@ export default class WritingToolkitPlugin extends Plugin {
       !this.statusBar.hasBaseline(file.path) &&
       this.isFreshlyCreated(file);
     let delta: number;
+    let typed = 0;
     if (isProgrammatic) {
       if (programmaticNewFile) {
         const target = this.countWords(text);
@@ -1238,19 +1241,23 @@ export default class WritingToolkitPlugin extends Plugin {
       }
       this.statusBar.rebaseCurrentDocument(text);
     } else {
-      delta = this.statusBar.onEditorChange(
+      ({ delta, typed } = this.statusBar.onEditorChange(
         text,
         freshFile,
-        !isExternalSync && dailyFile
-      );
+        !isExternalSync && dailyFile,
+        composing
+      ));
     }
     this.statusBar.setSelectionText(this.getActiveEditorSelection());
 
     if (dailyFile) {
       if (isProgrammatic && !programmaticNewFile) {
-        this.lastWritingActivityAt = 0;
         this.activePomodoro()?.rebaseBaseCount();
       } else {
+        if (typed > 0) this.recordTyped(typed);
+        if (composing && !isExternalSync && !isProgrammatic) {
+          this.scheduleTypedSettle(file.path);
+        }
         this.applyDailyStats(
           file,
           delta,
@@ -1258,8 +1265,8 @@ export default class WritingToolkitPlugin extends Plugin {
         );
       }
     } else {
+      // 在非正文（设定、大纲等）里打字不计时，但也不打断正文的写作计时。
       statsDiag.skippedNotChapter++;
-      this.lastWritingActivityAt = 0;
     }
 
     const tStatus = performance.now();
@@ -1394,6 +1401,36 @@ export default class WritingToolkitPlugin extends Plugin {
     }
     this.lastDurationTotal = this.dailyDurationSeconds;
     this.scheduleDailySave();
+  }
+
+  /**
+   * 输入法拼字结束后补结算写下的字。选词上屏时不一定还有一次 editor-change，
+   * 所以拼字期间每 300ms 看一眼，拼字结束就按上屏后的字数结算一次。
+   */
+  private scheduleTypedSettle(path: string): void {
+    this.typedSettleTimer?.dispose();
+    this.typedSettleTimer = this.eventScope.setTimeout(() => {
+      this.typedSettleTimer = null;
+      const editor = this.getActiveEditor();
+      if (!editor || this.app.workspace.getActiveFile()?.path !== path) return;
+      if (this.host.services.editor.getViewForEditor(editor)?.composing) {
+        this.scheduleTypedSettle(path);
+        return;
+      }
+      const typed = this.statusBar.settleTyped(editor.getValue());
+      if (typed > 0) {
+        this.recordTyped(typed);
+        this.scheduleDailySave();
+        this.stats.publish();
+      }
+    }, 300);
+  }
+
+  /** 累计今日写下的字（时速的分子）；键用 activeDay，与今日净增记在同一天。 */
+  private recordTyped(words: number): void {
+    this.ensureCurrentDay();
+    const day = this.activeDay;
+    this.dailyTypedHistory[day] = (this.dailyTypedHistory[day] || 0) + words;
   }
 
   /**
@@ -2117,9 +2154,9 @@ export default class WritingToolkitPlugin extends Plugin {
 
   private recordWritingActivity(): void {
     const now = Date.now();
-    if (this.lastWritingActivityAt > 0) {
-      this.dailyDurationSeconds +=
-        Math.min(now - this.lastWritingActivityAt, MAX_IDLE_GAP_MS) / 1000;
+    const gap = now - this.lastWritingActivityAt;
+    if (this.lastWritingActivityAt > 0 && gap <= BREAK_GAP_MS) {
+      this.dailyDurationSeconds += gap / 1000;
     }
     this.lastWritingActivityAt = now;
   }
@@ -2133,11 +2170,13 @@ export default class WritingToolkitPlugin extends Plugin {
     }, 2000);
   }
 
-  /** 每日明细只留最近 60 天，避免插件数据无限膨胀。 */
+  /** 每日明细与写下的字只留最近 60 天，避免插件数据无限膨胀。 */
   private pruneDailyFileDeltas(): void {
-    const days = Object.keys(this.dailyFileDeltas).sort();
-    const excess = days.length - 60;
-    for (let i = 0; i < excess; i++) delete this.dailyFileDeltas[days[i]];
+    for (const map of [this.dailyFileDeltas, this.dailyTypedHistory]) {
+      const days = Object.keys(map).sort();
+      const excess = days.length - 60;
+      for (let i = 0; i < excess; i++) delete map[days[i]];
+    }
   }
 
   /**
@@ -2216,6 +2255,7 @@ export default class WritingToolkitPlugin extends Plugin {
         this.projectHistory = asRecord<Record<string, DailyHistory>>(data.projectHistory) ?? {};
         this.projectDurationHistory = asRecord<Record<string, DailyHistory>>(data.projectDurationHistory) ?? {};
         this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
+        this.dailyTypedHistory = asRecord<DailyHistory>(data.dailyTypedHistory) ?? {};
         this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
         this.prefs.load(data);
         this.fileBaselines = asRecord<Record<string, number>>(data.fileBaselines) ?? {};
@@ -2306,6 +2346,7 @@ export default class WritingToolkitPlugin extends Plugin {
       projectHistory: this.projectHistory,
       projectDurationHistory: this.projectDurationHistory,
       dailyFileDeltas: this.dailyFileDeltas,
+      dailyTypedHistory: this.dailyTypedHistory,
       dailyPomodoroHistory: this.dailyPomodoroHistory,
       ...this.prefs.forPersistence(),
       fileBaselines: this.fileBaselines,

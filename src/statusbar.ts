@@ -4,12 +4,6 @@ import type { StatusBarState } from "./services/statsService";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import { TextPromptModal } from "./promptModal";
 
-interface SpeedSample {
-  time: number;
-  /** 这次变化新增的字数（只记正增量） */
-  delta: number;
-}
-
 /** 状态栏番茄钟入口需要的动作回调（由插件提供，避免状态栏直接持有插件）。 */
 export interface PomodoroActions {
   onStart: () => void;
@@ -27,13 +21,14 @@ export class WritingStatusBar {
   private pomodoroPhase: PomodoroPhase = "idle";
   private pomodoroPaused = false;
 
-  private speedSamples: SpeedSample[] = [];
-  private speedValue: number = 0;
-  /** 时速只看最近 60 秒；少于 10 秒不给数，避免一两个词就飙到几千。 */
-  private readonly SPEED_WINDOW_MS = 60_000;
-  private readonly SPEED_MIN_WINDOW_MS = 10_000;
-  /** 单次超过 120 字视为粘贴/整章导入，不计入打字速度。 */
-  private readonly MAX_SPEED_DELTA = 120;
+  /** 单次超过 120 字视为粘贴/整章导入，不算「写下的字」。 */
+  private readonly MAX_TYPED_DELTA = 120;
+  /**
+   * 最近一次「落定」（没有在输入法拼字）时的字数。写下的字只在落定时刻按与它的差
+   * 结算：拼字期间拼音字母真的在文档里（先插 `n` 再换成 `ni`），逐次累加会把
+   * 按键数当成字数。
+   */
+  private typedRefCount = -1;
   private lastDocCount: number = -1;
   private selectedCount: number = 0;
 
@@ -97,13 +92,6 @@ export class WritingStatusBar {
     if (this.lastDocCount >= 0) this.refresh(this.lastDocCount);
   }
 
-  /** 当前码字时速（字/时），供编辑台左下角信息栏读取；停笔太久返回 0。 */
-  getSpeed(): number {
-    const last = this.speedSamples[this.speedSamples.length - 1];
-    if (!last || Date.now() - last.time > 30_000) return 0;
-    return this.speedValue;
-  }
-
   /** 自检用：当前文档路径与字数（还没建立时 path 为空）。 */
   getCurrentDoc(): { path: string; words: number | null } {
     if (!this.currentFilePath) return { path: "", words: null };
@@ -118,20 +106,15 @@ export class WritingStatusBar {
     const docCount = this.wordCount.count(text, this.state.wordCountMode);
     this.selectedCount = 0;
     this.lastDocCount = docCount;
-    // 切换文件后重置时速采样，按当前文件的输入速度重新计算
-    this.speedSamples = [];
-    this.speedValue = 0;
+    this.typedRefCount = docCount;
     this.rememberBaseline(path, docCount);
     this.refresh(docCount);
   }
 
-  rebaseCurrentDocument(text: string, resetSpeed = false): void {
-    if (resetSpeed) {
-      this.speedSamples = [];
-      this.speedValue = 0;
-    }
+  rebaseCurrentDocument(text: string): void {
     const docCount = this.wordCount.count(text, this.state.wordCountMode);
     this.lastDocCount = docCount;
+    this.typedRefCount = docCount;
     if (this.currentFilePath) this.rememberBaseline(this.currentFilePath, docCount);
     this.refresh(docCount);
   }
@@ -231,42 +214,28 @@ export class WritingStatusBar {
    * 编辑器里的字数变化。
    * isNewFile=true 表示这是全新文件的第一笔内容（之前视作 0 字），
    * 整份内容算作本次新增。
+   *
+   * 返回 delta（相对基线的净变化，进今日净增）与 typed（这次手动写下的字，
+   * 只记 1–120 字的正增量，删除与粘贴都是 0，进时速）。countTyped=false
+   * 用于外部同步刷新等不是作者在打字的变化；composing=true 表示输入法正在
+   * 拼字，这时不结算写下的字，等拼字结束后由 settleTyped() 补上。
    */
   onEditorChange(
     text: string,
     isNewFile = false,
-    countSpeed = true
-  ): number {
+    countTyped = true,
+    composing = false
+  ): { delta: number; typed: number } {
     const docCount = this.wordCount.count(text, this.state.wordCountMode);
-    const now = Date.now();
 
-    if (this.lastDocCount >= 0) {
-      const change = docCount - this.lastDocCount;
-      if (countSpeed && change > 0) {
-        if (change <= this.MAX_SPEED_DELTA) {
-          this.speedSamples.push({ time: now, delta: change });
-        } else {
-          // 粘贴/整章导入不是打字速度；清掉旧采样，从下一段重新算。
-          this.speedSamples = [];
-          this.speedValue = 0;
-        }
-      }
-    }
+    const typed = composing ? 0 : this.takeTyped(docCount, countTyped);
     this.lastDocCount = docCount;
-
-    const cutoff = now - this.SPEED_WINDOW_MS;
-    while (
-      this.speedSamples.length > 0 &&
-      this.speedSamples[0].time < cutoff
-    ) {
-      this.speedSamples.shift();
-    }
 
     // 还不知道当前文件时（插件刚加载、编辑器尚未就绪）不产生增量：
     // 否则会拿"上一个文档"的基线做差，凭空多出几千字。
     if (!this.currentFilePath) {
       this.refresh(docCount);
-      return 0;
+      return { delta: 0, typed: 0 };
     }
 
     const baseline = this.fileBaselines.get(this.currentFilePath);
@@ -284,37 +253,25 @@ export class WritingStatusBar {
 
     this.refresh(docCount);
 
-    return delta;
+    return { delta, typed };
+  }
+
+  /** 输入法拼字结束后补结算写下的字（拼字期间的变化在 onEditorChange 里先不算）。 */
+  settleTyped(text: string): number {
+    return this.takeTyped(
+      this.wordCount.count(text, this.state.wordCountMode),
+      true
+    );
+  }
+
+  /** 按与上一次落定字数的差结算写下的字，并把落定点前移到当前。 */
+  private takeTyped(docCount: number, countTyped: boolean): number {
+    const change = this.typedRefCount >= 0 ? docCount - this.typedRefCount : 0;
+    this.typedRefCount = docCount;
+    return countTyped && change > 0 && change <= this.MAX_TYPED_DELTA ? change : 0;
   }
 
   private refresh(wordCount: number): void {
-    const now = Date.now();
-    const cutoff = now - this.SPEED_WINDOW_MS;
-    while (
-      this.speedSamples.length > 0 &&
-      this.speedSamples[0].time < cutoff
-    ) {
-      this.speedSamples.shift();
-    }
-    if (this.speedSamples.length >= 2) {
-      const first = this.speedSamples[0];
-      const last = this.speedSamples[this.speedSamples.length - 1];
-      const elapsedMs = last.time - first.time;
-      if (elapsedMs >= this.SPEED_MIN_WINDOW_MS) {
-        const words = this.speedSamples.reduce(
-          (sum, sample) => sum + sample.delta,
-          0
-        );
-        // 按最近一段的实际时长折算，取整到 10 字/时，减少假精度。
-        const raw = words / (elapsedMs / 3_600_000);
-        this.speedValue = Math.max(0, Math.round(raw / 10) * 10);
-      } else {
-        this.speedValue = 0;
-      }
-    } else {
-      this.speedValue = 0;
-    }
-
     const wordCountText = this.selectedCount > 0
       ? `本章 ${formatNumber(this.selectedCount)}/${formatNumber(wordCount)}`
       : `本章 ${formatNumber(wordCount)}`;

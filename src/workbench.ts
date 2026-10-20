@@ -1920,9 +1920,7 @@ export class WritingToolkitWorkbench extends ItemView {
     const todayWords = Math.max(0, todayNet);
     const dailyGoal = Math.max(1, this.host.settings.dailyGoal || 2000);
     const showSpeed = !!this.host.settings.showSpeed;
-    const speed = showSpeed
-      ? Math.max(0, this.host.stats.statusBarSpeed() || 0)
-      : 0;
+    const speed = showSpeed ? this.host.stats.todaySpeed() : null;
 
     const signature = [
       !!this.project,
@@ -1931,7 +1929,7 @@ export class WritingToolkitWorkbench extends ItemView {
       pomo?.count ?? 0,
       duration,
       showSpeed,
-      speed,
+      speed ?? "",
       this.currentPath ?? "",
     ].join("|");
     if (signature === this.footSignature) return;
@@ -1970,9 +1968,9 @@ export class WritingToolkitWorkbench extends ItemView {
     }
     if (showSpeed) {
       details.push({
-        text: speed > 0 ? `时速 ${formatNumber(speed)} 字` : "时速 —",
+        text: speed !== null ? `时速 ${formatNumber(speed)} 字` : "时速 —",
         title:
-          "最近 60 秒有效码字速度；连续写 10 秒后开始显示；粘贴/整章导入不计入",
+          "今日平均时速：今天写下的字 ÷ 写作时长（删除不抵减，粘贴不计入；10 分钟内的停顿算作思考，计入时长）；写满 1 分钟后开始显示",
         onClick: () => void this.host.nav.openSidebar(),
       });
     }

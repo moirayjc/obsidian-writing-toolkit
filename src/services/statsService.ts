@@ -32,7 +32,23 @@ export interface StatsServiceHost {
   isProjectHidden(root: string): boolean;
   projectRootForFile(path: string): string | null;
   listMarkdownPaths(): string[];
-  getSpeed(): number;
+  /** 今日写下的字：手动输入的正增量累计，删除不抵减、粘贴不计（时速的分子）。 */
+  typedToday(): number;
+}
+
+/** 写作时长不足 1 分钟时不给时速，避免开头一两句话就飙到几千。 */
+export const MIN_SPEED_SECONDS = 60;
+
+/**
+ * 今日平均时速（字/时）= 今日写下的字 ÷ 今日写作时长，取整到 10。
+ * 时长不足 MIN_SPEED_SECONDS 或还没写下字时返回 null（界面显示「—」）。
+ */
+export function computeTodaySpeed(
+  typedWords: number,
+  durationSeconds: number
+): number | null {
+  if (durationSeconds < MIN_SPEED_SECONDS || typedWords <= 0) return null;
+  return Math.round(((typedWords / durationSeconds) * 3600) / 10) * 10;
 }
 
 function formatNumber(n: number): string {
@@ -81,8 +97,12 @@ export class StatsService {
     return this.host.getPomodoroSummary();
   }
 
-  statusBarSpeed(): number {
-    return this.host.getSpeed();
+  /** 编辑台与主页共用的今日平均时速；null 表示还不够给数。 */
+  todaySpeed(): number | null {
+    return computeTodaySpeed(
+      this.host.typedToday(),
+      this.host.todayTotals().durationSeconds
+    );
   }
 
   /** 热力图 / 今日目标显示：每日净增字数（可正可负，删除会抵减）。 */
