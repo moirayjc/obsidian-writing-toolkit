@@ -44,6 +44,7 @@ CHECKS=(
   "check-outline-module.js:章纲 Feature Module"
   "check-comments-module.js:批注 Feature Module"
   "check-pomodoro-module.js:番茄钟 Feature Module"
+  "check-pomodoro-lock.js:番茄钟锁定（SPEC-007）"
   "check-calendar-module.js:写作日历 Feature Module"
   "check-anchors.js:批注四层锚点定位"
   "check-formatwrap.js:格式包裹与还原"

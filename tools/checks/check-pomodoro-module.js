@@ -117,6 +117,11 @@ async function main() {
     async saveSnapshot() {
       snapshotSaves++;
     },
+    // 锁定与跨重启恢复另由 check-pomodoro-lock.js 覆盖；这里按手机端（不支持）跑。
+    supportsLock: () => false,
+    loadSession: () => null,
+    requestSave() {},
+    lockEnv: {},
   });
 
   let inactiveRejected = false;

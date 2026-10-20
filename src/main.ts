@@ -62,9 +62,13 @@ import {
 } from "./features/commentsModule";
 import {
   createPomodoroModule,
+  LOCKED_NOTICE,
+  parsePomodoroSession,
+  type FocusModes,
   type PomodoroOperations,
   type PomodoroModule,
 } from "./features/pomodoroModule";
+import { createPomodoroLockEnv } from "./pomodoroLockEnv";
 import {
   createCalendarModule,
   type CalendarHandle,
@@ -214,6 +218,8 @@ export default class WritingToolkitPlugin extends Plugin {
   // 这些字段让快照操作不依赖「当前焦点」。
   private lastEditor: Editor | null = null;
   private lastKnownPath: string | null = null;
+  /** data.json 里读到的 pomodoroSession 原值：手机端不处理，写盘时原样带回。 */
+  private loadedPomodoroSession: unknown = null;
   private lastKnownText: string | null = null;
   /** 外部修改（AI/脚本）处理队列：保证串行，避免异步竞态 */
   private externalModifyQueue: Promise<void> = Promise.resolve();
@@ -426,6 +432,7 @@ export default class WritingToolkitPlugin extends Plugin {
         onTogglePause: () => this.togglePomodoroPause(),
         onSkipBreak: () => this.skipPomodoroBreak(),
         onStop: () => this.stopPomodoro(),
+        onOpenOutline: () => this.activePomodoro()?.openLockedOutline(),
       }
     );
     this.disposeStatusBarState = this.stats.subscribe((state) =>
@@ -501,17 +508,7 @@ export default class WritingToolkitPlugin extends Plugin {
         this.formatToolbarModule.allowsPath(path),
       onChanged: () => this.refreshCommentBadges(),
     });
-    this.pomodoroModule = createPomodoroModule({
-      getWordCount: () => this.getPomodoroCount(),
-      getTodayKey: () => this.todayStr,
-      getHistory: () => this.dailyPomodoroHistory,
-      onHistoryChanged: () => {
-        this.scheduleDailySave();
-        this.refreshSidebar();
-      },
-      onStateChange: (state) => this.handlePomodoroState(state),
-      saveSnapshot: () => this.snapshotModule.operations.saveSnapshotNow(false),
-    });
+    this.pomodoroModule = this.buildPomodoroModule();
     this.calendarModule = createCalendarModule({
       allWords: () => this.dailyForDisplay(),
       allDuration: () => this.dailyDurationHistory,
@@ -639,7 +636,8 @@ export default class WritingToolkitPlugin extends Plugin {
   // 长按出菜单后吞掉紧随其后的 click；由事件作用域统一撤销。
   this.eventScope.onDom(document, "click", handleSuppressedClick, true);
   this.eventScope.onDom(document, "keydown", (event: KeyboardEvent) => {
-    if (event.key === "Escape" && this.settings.immersiveMode) {
+    // 锁定中短按 Esc 不退出；长按的紧急出口由番茄钟模块处理。
+    if (event.key === "Escape" && this.settings.immersiveMode && !this.isPomodoroLocked()) {
       this.switchImmersiveMode(false);
       this.refreshImmersiveControls();
       void this.saveSettings();
@@ -793,6 +791,7 @@ export default class WritingToolkitPlugin extends Plugin {
    * 只用于用户操作；onload 按存盘值分别恢复，不走联动。
    */
   private switchHemingwayMode(on: boolean): void {
+    if (this.rejectWhileLocked()) return;
     this.settings.hemingwayMode = on;
     this.setHemingwayMode(on);
     if (this.settings.immersiveMode === on) return;
@@ -803,6 +802,7 @@ export default class WritingToolkitPlugin extends Plugin {
 
   /** 用户切换沉浸模式：退出时一并关闭海明威模式（侧栏开关与 Esc 共用）。 */
   private switchImmersiveMode(on: boolean): void {
+    if (this.rejectWhileLocked()) return;
     this.settings.immersiveMode = on;
     this.setImmersiveMode(on);
     if (on || !this.settings.hemingwayMode) return;
@@ -819,14 +819,68 @@ export default class WritingToolkitPlugin extends Plugin {
     }
   }
 
-  /** 侧栏「开启番茄钟」按钮与命令共用入口。 */
+  /** 侧栏「开启番茄钟」按钮与命令共用入口；桌面端先选锁定方式。 */
   startPomodoro(): void {
     const pomodoro = this.activePomodoro();
     if (!pomodoro) {
       new Notice("番茄钟模块未启动，请重载插件后重试");
       return;
     }
-    pomodoro.start();
+    pomodoro.requestStart();
+  }
+
+  /** 番茄钟锁定中（SPEC-007）：沉浸 / 海明威开关、短按 Esc、番茄设置都不生效。 */
+  isPomodoroLocked(): boolean {
+    return this.activePomodoro()?.isLocked() ?? false;
+  }
+
+  /** 锁定中拒绝切换模式：侧栏开关已先改了设置对象，按锁定方式套回去。 */
+  private rejectWhileLocked(): boolean {
+    if (!this.isPomodoroLocked()) return false;
+    this.activePomodoro()?.reassertLock();
+    new Notice(LOCKED_NOTICE);
+    return true;
+  }
+
+  private buildPomodoroModule(): PomodoroModule {
+    return createPomodoroModule({
+      getWordCount: () => this.getPomodoroCount(),
+      getTodayKey: () => this.todayStr,
+      getHistory: () => this.dailyPomodoroHistory,
+      onHistoryChanged: () => {
+        this.scheduleDailySave();
+        this.refreshSidebar();
+      },
+      onStateChange: (state) => this.handlePomodoroState(state),
+      saveSnapshot: () => this.snapshotModule.operations.saveSnapshotNow(false),
+      supportsLock: () => !Platform.isMobile,
+      loadSession: () => parsePomodoroSession(this.loadedPomodoroSession),
+      requestSave: () => this.scheduleDailySave(),
+      lockEnv: createPomodoroLockEnv(this.app, {
+        recentMarkdownPath: () => this.lastKnownPath,
+        getModes: () => ({
+          immersive: this.settings.immersiveMode,
+          hemingway: this.settings.hemingwayMode,
+        }),
+        applyModes: (modes) => this.applyFocusModes(modes),
+        openOutline: (file) => this.outlineModule.operations.openEditor(file),
+      }),
+    });
+  }
+
+  /** 番茄钟锁定 / 解锁时直接设定两个开关（不走用户切换的联动）。 */
+  private applyFocusModes(modes: FocusModes): void {
+    if (this.settings.hemingwayMode !== modes.hemingway) {
+      this.settings.hemingwayMode = modes.hemingway;
+      this.setHemingwayMode(modes.hemingway);
+    }
+    if (this.settings.immersiveMode !== modes.immersive) {
+      this.settings.immersiveMode = modes.immersive;
+      this.setImmersiveMode(modes.immersive);
+    }
+    if (this.isPomodoroLocked()) this.showImmersiveHint();
+    this.refreshImmersiveControls();
+    void this.saveSettings();
   }
 
   /** 结束番茄钟：侧栏按钮与命令共用入口。 */
@@ -936,6 +990,9 @@ export default class WritingToolkitPlugin extends Plugin {
   /** 进入沉浸模式时的退出提示：几秒后淡出。 */
   private showImmersiveHint(): void {
     if (!this.immersiveHintEl) return;
+    this.immersiveHintEl.setText(
+      this.isPomodoroLocked() ? "锁定中 · 长按 Esc 紧急退出" : "按 Esc 退出沉浸模式"
+    );
     this.immersiveHintEl.addClass("is-visible");
     this.hintHideTimer?.dispose();
     this.hintHideTimer = this.eventScope.setTimeout(() => {
@@ -2279,6 +2336,7 @@ export default class WritingToolkitPlugin extends Plugin {
         this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
         this.dailyTypedHistory = asRecord<DailyHistory>(data.dailyTypedHistory) ?? {};
         this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
+        this.loadedPomodoroSession = data.pomodoroSession ?? null;
         this.prefs.load(data);
         this.fileBaselines = asRecord<Record<string, number>>(data.fileBaselines) ?? {};
         this.baselinesAt = pick(data.baselinesAt, 0);
@@ -2360,6 +2418,12 @@ export default class WritingToolkitPlugin extends Plugin {
     await this.persistPluginData();
   }
 
+  /** 桌面端写实时会话；手机端原样带回读到的值，不覆盖桌面端同步过来的会话。 */
+  private pomodoroSessionForPersistence(): unknown {
+    const live = this.pomodoroModule?.sessionForPersistence();
+    return live === undefined ? this.loadedPomodoroSession : live;
+  }
+
   private persistPluginData(): Promise<void> {
     return this.host.services.persistence.save({
       settings: this.settings,
@@ -2370,6 +2434,7 @@ export default class WritingToolkitPlugin extends Plugin {
       dailyFileDeltas: this.dailyFileDeltas,
       dailyTypedHistory: this.dailyTypedHistory,
       dailyPomodoroHistory: this.dailyPomodoroHistory,
+      pomodoroSession: this.pomodoroSessionForPersistence(),
       ...this.prefs.forPersistence(),
       fileBaselines: this.fileBaselines,
       baselinesAt: this.baselinesAt,

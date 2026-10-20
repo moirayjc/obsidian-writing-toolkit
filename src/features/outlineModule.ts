@@ -55,6 +55,8 @@ export interface OutlineOperations {
   subscribe(listener: (change: OutlineChange) => void): () => void;
   migrateSidecar(oldPath: string, newPath: string): Promise<void>;
   removeSidecar(sourcePath: string): Promise<void>;
+  /** 直接打开某章的章纲弹窗（不依赖侧栏面板，锁定番茄时从状态栏用）。 */
+  openEditor(file: TFile): void;
 }
 
 export interface OutlineChange {
@@ -231,6 +233,43 @@ export function createOutlineModule(
       file,
       runtime.settings.get().outlineStorageMode
     );
+  }
+
+  /** 同卷章节列表，供章纲弹窗前后翻章；找不到所属卷就只给它自己。 */
+  function chapterFilesOf(file: TFile): TFile[] {
+    const runtime = requireRuntime();
+    for (const novel of runtime.project.projects()) {
+      for (const volume of novel.volumes) {
+        if (volume.chapters.some((chapter) => chapter.file.path === file.path)) {
+          return volume.chapters.map((chapter) => chapter.file);
+        }
+      }
+    }
+    return [file];
+  }
+
+  function openEditorFor(
+    file: TFile,
+    chapters: TFile[],
+    onDone: (file: TFile) => void
+  ): OutlinePanelEditorHandle | null {
+    if (disposed) return null;
+    const runtime = requireRuntime();
+    const storage: OutlineEditorStorage = {
+      async load(target) {
+        return (await loadInternal(target)).value;
+      },
+      save(target, value) {
+        return saveInternal(target, value, "editor");
+      },
+    };
+    const editor = createEditor(runtime.app, file, chapters, storage, (finalFile) => {
+      openEditors.delete(editor);
+      onDone(finalFile);
+    });
+    openEditors.add(editor);
+    editor.open();
+    return editor;
   }
 
   function fallbackFile(): TFile | null {
@@ -465,6 +504,10 @@ export function createOutlineModule(
             await removeSidecar(runtime.app, sourcePath);
           });
         },
+        openEditor(file) {
+          assertAcceptingCalls();
+          openEditorFor(file, chapterFilesOf(file), () => undefined);
+        },
       };
 
       context.effects.add(() => {
@@ -539,18 +582,7 @@ export function createOutlineModule(
             },
             fallbackFile,
             chapterFiles(file) {
-              for (const novel of runtimeProject.projects()) {
-                for (const volume of novel.volumes) {
-                  if (
-                    volume.chapters.some(
-                      (chapter) => chapter.file.path === file.path
-                    )
-                  ) {
-                    return volume.chapters.map((chapter) => chapter.file);
-                  }
-                }
-              }
-              return [file];
+              return chapterFilesOf(file);
             },
             async loadOutline(file) {
               return (await loadInternal(file)).value;
@@ -559,22 +591,7 @@ export function createOutlineModule(
               return saveInternal(file, value, "panel");
             },
             openEditor(file, chapters, onDone) {
-              if (disposed) return null;
-              const storage: OutlineEditorStorage = {
-                async load(target) {
-                  return (await loadInternal(target)).value;
-                },
-                save(target, value) {
-                  return saveInternal(target, value, "editor");
-                },
-              };
-              const editor = createEditor(runtimeApp, file, chapters, storage, (finalFile) => {
-                openEditors.delete(editor);
-                onDone(finalFile);
-              });
-              openEditors.add(editor);
-              editor.open();
-              return editor;
+              return openEditorFor(file, chapters, onDone);
             },
           };
 

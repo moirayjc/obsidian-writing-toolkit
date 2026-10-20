@@ -4,12 +4,17 @@ import type { StatusBarState } from "./services/statsService";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import { TextPromptModal } from "./promptModal";
 
+/** 锁定菜单里的说明行（Esc 是键名，保持原样大小写）。 */
+const LOCKED_MENU_HINT = "锁定中 · 长按 Esc 紧急退出";
+
 /** 状态栏番茄钟入口需要的动作回调（由插件提供，避免状态栏直接持有插件）。 */
 export interface PomodoroActions {
   onStart: () => void;
   onTogglePause: () => void;
   onSkipBreak: () => void;
   onStop: () => void;
+  /** 锁定中打开当前章的章纲弹窗。 */
+  onOpenOutline: () => void;
 }
 
 export class WritingStatusBar {
@@ -20,6 +25,7 @@ export class WritingStatusBar {
   private pomoEl: HTMLElement;
   private pomodoroPhase: PomodoroPhase = "idle";
   private pomodoroPaused = false;
+  private pomodoroLocked = false;
 
   /** 单次超过 120 字视为粘贴/整章导入，不算「写下的字」。 */
   private readonly MAX_TYPED_DELTA = 120;
@@ -162,6 +168,7 @@ export class WritingStatusBar {
   setPomodoro(state: PomodoroState | null): void {
     this.pomodoroPhase = state?.phase ?? "idle";
     this.pomodoroPaused = state?.paused ?? false;
+    this.pomodoroLocked = (state?.lock ?? "none") !== "none";
     this.pomoSepEl.removeClass("is-hidden");
     this.pomoEl.removeClass("is-hidden");
     if (!state || state.phase === "idle") {
@@ -171,7 +178,10 @@ export class WritingStatusBar {
     }
     const time = formatDuration(state.remainingMs);
     const pauseMark = state.paused ? " ⏸" : "";
-    if (state.phase === "focus") {
+    if (state.phase === "focus" && this.pomodoroLocked) {
+      this.pomoEl.setText(`🔒 ${time} · ${state.words}`);
+      this.pomoEl.setAttr("title", "锁定中 · 点击查看章纲");
+    } else if (state.phase === "focus") {
       this.pomoEl.setText(`🍅${pauseMark} ${time} · ${state.words}`);
       this.pomoEl.setAttr("title", state.paused ? "继续番茄钟" : "暂停番茄钟");
     } else if (state.phase === "longBreak") {
@@ -190,6 +200,15 @@ export class WritingStatusBar {
       return;
     }
     const menu = new Menu();
+    if (this.pomodoroLocked) {
+      // 锁定中只能看章纲；暂停 / 结束都不给，紧急出口是长按 Esc。
+      menu.addItem((item) =>
+        item.setTitle("查看本章章纲").onClick(() => this.pomodoroActions.onOpenOutline())
+      );
+      menu.addItem((item) => item.setTitle(LOCKED_MENU_HINT).setDisabled(true));
+      menu.showAtMouseEvent(event);
+      return;
+    }
     menu.addItem((item) =>
       item
         .setTitle(this.pomodoroPaused ? "继续番茄钟" : "暂停番茄钟")

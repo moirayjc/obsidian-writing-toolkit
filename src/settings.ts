@@ -50,6 +50,8 @@ export interface WritingToolkitPluginLike {
     setImmersiveMode: (on: boolean) => void;
     setParagraphHighlight: (on: boolean) => void;
     setHemingwayMode: (on: boolean) => void;
+    /** 番茄钟锁定中：番茄设置不可改。 */
+    isPomodoroLocked: () => boolean;
     repairProjectStatPaths: () => Promise<void>;
     updateStatusBarVisibility: () => void;
     refreshMobileStatusBar: () => void;
@@ -202,7 +204,12 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             );
 
           this.group("番茄钟", section, (el) => {
-            new Setting(el)
+            const pomoSettings: Setting[] = [];
+            const track = (setting: Setting): Setting => {
+              pomoSettings.push(setting);
+              return setting;
+            };
+            track(new Setting(el))
               .setName("专注时长")
               .setDesc("一个番茄的专注写作时长")
               .addSlider((slider) =>
@@ -215,7 +222,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   })
               );
 
-            new Setting(el)
+            track(new Setting(el))
               .setName("休息时长")
               .setDesc("番茄结束后的休息时长；设为 0 则不休息")
               .addSlider((slider) =>
@@ -228,7 +235,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   })
               );
 
-            new Setting(el)
+            track(new Setting(el))
               .setName("长休息间隔")
               .setDesc("每完成几个番茄后进入一次长休息")
               .addSlider((slider) =>
@@ -241,7 +248,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   })
               );
 
-            new Setting(el)
+            track(new Setting(el))
               .setName("长休息时长")
               .addSlider((slider) =>
                 slider
@@ -253,7 +260,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   })
               );
 
-            new Setting(el)
+            track(new Setting(el))
               .setName("结束自动保存快照")
               .setDesc("每个番茄完成时自动保存一次当前草稿快照")
               .addToggle((toggle) =>
@@ -264,6 +271,15 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                     await this.wt.saveSettings();
                   })
               );
+
+            // 锁定中（SPEC-007）不能改；锁定前改的，下一个番茄生效。
+            if (this.wt.isPomodoroLocked()) {
+              for (const setting of pomoSettings) setting.setDisabled(true);
+              el.createDiv({
+                cls: "setting-item-description",
+                text: "番茄钟锁定中，专注结束后才能修改",
+              });
+            }
           });
         },
       },

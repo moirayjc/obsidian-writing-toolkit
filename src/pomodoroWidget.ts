@@ -40,6 +40,7 @@ export class PomodoroWidget {
   private cardEl!: HTMLElement;
   private progressCircle!: SVGCircleElement;
   private ringBtnEl!: HTMLButtonElement;
+  private stopBtnEl!: HTMLButtonElement;
   private timeEl!: HTMLElement;
   private fillEl!: HTMLElement;
 
@@ -109,6 +110,7 @@ export class PomodoroWidget {
       cls: "wt-pomo-round-btn",
       attr: { type: "button", "aria-label": "结束专注" },
     });
+    this.stopBtnEl = stopBtn;
     setIcon(stopBtn, "wt-stop");
     stopBtn.addEventListener("click", () => {
       this.host.stopPomodoro?.();
@@ -165,7 +167,12 @@ export class PomodoroWidget {
     this.cardEl.setAttr("role", "group");
     this.cardEl.setAttr("aria-label", `${label}，剩余 ${remainingText}`);
 
-    // 5. 环心按钮的图标与语义（只在状态真的变了时重建，避免每帧动 DOM）
+    // 5. 锁定中（SPEC-007）暂停 / 结束都不可用
+    const locked = s.phase === "focus" && (s.lock ?? "none") !== "none";
+    this.ringBtnEl.disabled = locked;
+    this.stopBtnEl.disabled = locked;
+
+    // 6. 环心按钮的图标与语义（只在状态真的变了时重建，避免每帧动 DOM）
     if (this.lastPhase !== s.phase || this.lastPaused !== s.paused) {
       this.lastPhase = s.phase;
       this.lastPaused = s.paused;

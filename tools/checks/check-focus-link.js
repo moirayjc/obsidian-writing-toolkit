@@ -34,6 +34,13 @@ function createPlugin(Mod, settings) {
     setHemingwayMode(on) { this.calls.push("hemingway:" + on); },
     setImmersiveMode(on) { this.calls.push("immersive:" + on); },
     refreshImmersiveControls() { this.refreshes++; },
+    locked: false,
+    reasserts: 0,
+    rejectWhileLocked() {
+      if (!this.locked) return false;
+      this.reasserts++;
+      return true;
+    },
   });
   return p;
 }
@@ -82,13 +89,26 @@ function main() {
     p.settings.hemingwayMode && !p.calls.includes("immersive:true") && p.refreshes === 0
   );
 
+  p = createPlugin(Mod, { hemingwayMode: true, immersiveMode: true });
+  p.locked = true;
+  p.switchImmersiveMode(false);
+  p.switchHemingwayMode(false);
+  r.check(
+    "8. 番茄钟锁定中：两个开关都被拒绝，并按锁定方式套回",
+    p.settings.immersiveMode && p.settings.hemingwayMode &&
+      p.calls.length === 0 && p.reasserts === 2
+  );
+
   const escBlock = mainSource.slice(
     mainSource.indexOf('event.key === "Escape" && this.settings.immersiveMode'),
     mainSource.indexOf('event.key === "Escape" && this.settings.immersiveMode') + 300
   );
   r.check(
-    "6. 侧栏入口与 Esc 都走联动方法",
-    /setImmersiveMode: \(on\) => this\.switchImmersiveMode\(on\)/.test(mainSource) &&
+    "6. 侧栏入口与 Esc 都走联动方法，锁定中短按 Esc 不退出",
+    /!this\.isPomodoroLocked\(\)/.test(
+      mainSource.slice(mainSource.indexOf("锁定中短按 Esc 不退出"), mainSource.indexOf("锁定中短按 Esc 不退出") + 200)
+    ) &&
+      /setImmersiveMode: \(on\) => this\.switchImmersiveMode\(on\)/.test(mainSource) &&
       /setHemingwayMode: \(on\) => this\.switchHemingwayMode\(on\)/.test(mainSource) &&
       /this\.switchImmersiveMode\(false\)/.test(escBlock)
   );

@@ -1,5 +1,8 @@
 export type PomodoroPhase = "idle" | "focus" | "break" | "longBreak";
 
+/** 番茄钟锁定：不锁定 / 锁定沉浸 / 锁定海明威（海明威自带沉浸）。只限桌面端。 */
+export type PomodoroLockMode = "none" | "immersive" | "hemingway";
+
 export interface PomodoroConfig {
   focusMinutes: number;
   breakMinutes: number;
@@ -15,6 +18,18 @@ export interface PomodoroState {
   /** 本番茄已写字数（专注中实时刷新） */
   words: number;
   paused: boolean;
+  /** 当前锁定方式（由番茄钟模块附加；计时器本身不知道锁定）。 */
+  lock?: PomodoroLockMode;
+}
+
+/** 专注阶段的可持久化快照：截止时间按墙钟，跨重启接着算。 */
+export interface FocusSnapshot {
+  deadline: number;
+  /** 暂停中的剩余毫秒；未暂停为 0。 */
+  pausedRemaining: number;
+  /** 截至快照时本番茄已写的字数。 */
+  words: number;
+  consecutive: number;
 }
 
 export interface FocusResult {
@@ -99,6 +114,43 @@ export class PomodoroTimer {
     this.baseCount = this.getCount();
     this.pausedRemaining = 0;
     this.deadline = Date.now() + this.config().focusMinutes * 60000;
+    this.startTicking();
+    return true;
+  }
+
+  /** 导出专注阶段快照；不在专注中返回 null（休息不跨重启）。 */
+  exportFocus(): FocusSnapshot | null {
+    if (this.phase !== "focus") return null;
+    return {
+      deadline: this.deadline,
+      pausedRemaining: this.pausedRemaining,
+      words: this.words + this.currentFocusWords(),
+      consecutive: this.consecutive,
+    };
+  }
+
+  /**
+   * 从快照恢复专注阶段（仅空闲时）。字数基线取恢复这一刻的计数；
+   * 截止时间已过（关闭期间到点）就直接按完成结算。
+   */
+  restoreFocus(snapshot: FocusSnapshot): boolean {
+    if (this.phase !== "idle") return false;
+    this.phase = "focus";
+    this.words = snapshot.words;
+    this.consecutive = snapshot.consecutive;
+    this.baseCount = this.getCount();
+    if (snapshot.pausedRemaining > 0) {
+      this.pausedRemaining = snapshot.pausedRemaining;
+      this.deadline = 0;
+      this.emit();
+      return true;
+    }
+    this.pausedRemaining = 0;
+    this.deadline = snapshot.deadline;
+    if (this.deadline - Date.now() <= 0) {
+      this.completePhase();
+      return true;
+    }
     this.startTicking();
     return true;
   }
