@@ -347,9 +347,9 @@ export default class WritingToolkitPlugin extends Plugin {
         setTypewriterMode: (on) => this.setTypewriterMode(on),
         setTypewriterOffset: (offset) => this.setTypewriterOffset(offset),
         setPunctuationAssist: (on) => this.setPunctuationAssist(on),
-        setImmersiveMode: (on) => this.setImmersiveMode(on),
+        setImmersiveMode: (on) => this.switchImmersiveMode(on),
         setParagraphHighlight: (on) => this.setParagraphHighlight(on),
-        setHemingwayMode: (on) => this.setHemingwayMode(on),
+        setHemingwayMode: (on) => this.switchHemingwayMode(on),
       },
       actions: {
         saveSettings: () => this.saveSettings(),
@@ -640,8 +640,7 @@ export default class WritingToolkitPlugin extends Plugin {
   this.eventScope.onDom(document, "click", handleSuppressedClick, true);
   this.eventScope.onDom(document, "keydown", (event: KeyboardEvent) => {
     if (event.key === "Escape" && this.settings.immersiveMode) {
-      this.settings.immersiveMode = false;
-      this.setImmersiveMode(false);
+      this.switchImmersiveMode(false);
       this.refreshImmersiveControls();
       void this.saveSettings();
     }
@@ -787,6 +786,29 @@ export default class WritingToolkitPlugin extends Plugin {
 
   setHemingwayMode(on: boolean) {
     this.hemingwayModule?.setEnabled(on);
+  }
+
+  /**
+   * 用户切换海明威模式：开启时一并进入沉浸模式，关闭时一并退出。
+   * 只用于用户操作；onload 按存盘值分别恢复，不走联动。
+   */
+  private switchHemingwayMode(on: boolean): void {
+    this.settings.hemingwayMode = on;
+    this.setHemingwayMode(on);
+    if (this.settings.immersiveMode === on) return;
+    this.settings.immersiveMode = on;
+    this.setImmersiveMode(on);
+    this.refreshImmersiveControls();
+  }
+
+  /** 用户切换沉浸模式：退出时一并关闭海明威模式（侧栏开关与 Esc 共用）。 */
+  private switchImmersiveMode(on: boolean): void {
+    this.settings.immersiveMode = on;
+    this.setImmersiveMode(on);
+    if (on || !this.settings.hemingwayMode) return;
+    this.settings.hemingwayMode = false;
+    this.setHemingwayMode(false);
+    this.refreshImmersiveControls();
   }
 
   private activePomodoro(): PomodoroOperations | null {

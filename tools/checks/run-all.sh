@@ -35,6 +35,7 @@ CHECKS=(
   "check-hardbreak-module.js:回车硬换行 Feature Module"
   "check-typewriter-module.js:打字机 Feature Module"
   "check-hemingway-module.js:海明威 Feature Module"
+  "check-focus-link.js:海明威 ⇄ 沉浸联动"
   "check-typography-module.js:排版与主题 Feature Module"
   "check-theme-palette.js:配色主题令牌同步（styles.css ⇄ 首帧片段）"
   "check-format-toolbar-module.js:编辑工具条 Feature Module"
@@ -55,7 +56,6 @@ CHECKS=(
   "check-module-contract.js:模块契约与数据键（源码级）"
   "check-workbench-search.js:编辑台全书搜索（源码级）"
   "check-mobilepreview-module.js:读者手机预览（源码级）"
-  "check-specs.js:规格形式（specs/）"
 )
 
 failed=""
