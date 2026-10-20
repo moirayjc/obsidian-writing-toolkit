@@ -104,11 +104,7 @@ npm install
 npm run dev      # 监听模式构建
 npm run build    # 生产模式打包
 npm run check    # TypeScript 类型检查
-npm run verify   # 全量逻辑闸门测试（含规格形式检查）
-
-npm run spec:new -- <slug> "<标题>"   # 新建一页 spec
-npm run spec:check                   # 只跑规格形式检查
-npm run spec:list                    # 查看当前规格与状态
+npm run verify   # 全量逻辑闸门测试
 ```
 
 > ⚠️ 改动代码前，请务必参阅 [`docs/插件设计文档.md`](docs/插件设计文档.md)，内含架构红线约束、令牌系统规范与踩坑记录。

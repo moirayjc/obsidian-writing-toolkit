@@ -7,9 +7,6 @@
     "build": "node esbuild.config.mjs production",
     "check": "./node_modules/.bin/tsc --noEmit",
     "verify": "bash tools/checks/run-all.sh",
-    "spec:new": "node tools/spec/new.js",
-    "spec:check": "node tools/checks/check-specs.js",
-    "spec:list": "node tools/checks/check-specs.js --list",
     "lint:review": "eslint src package.json",
     "release": "bash tools/release.sh",
     "lint:gate": "bash tools/lint-gate.sh"

@@ -16,7 +16,7 @@ const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..", ".."); // 插件根目录
 const ESBUILD = path.join(ROOT, "node_modules", ".bin", "esbuild");
-// 惰性创建：不编译任何东西的检查（如 check-specs）不该留下临时目录
+// 惰性创建：不编译任何东西的检查（如纯源码扫描）不该留下临时目录
 let TMP_DIR = null;
 function tmpDir() {
   if (!TMP_DIR) TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "wt-check-"));

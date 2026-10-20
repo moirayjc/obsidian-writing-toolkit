@@ -1,19 +1,4 @@
----
-id: "{{id}}"
-title: "{{title}}"
-status: draft
-created: "{{date}}"
----
-
-# SPEC-{{id}} · {{title}}
-
-## 一句话
-
-<!-- 这次改变什么、为谁改变。 -->
-
-## 为什么
-
-<!-- 现在哪里不对 / 缺什么。有用户原话、事故、代码位置就贴上。 -->
+# 标题
 
 ## 做什么
 
@@ -25,13 +10,7 @@ created: "{{date}}"
 
 ## 怎么算完
 
-<!-- 每条以「自动：」或「人工：」开头。
-     自动：tools/checks/check-xxx.js 的完整路径，或 npm run check / build / verify / lint:gate；
-     人工：进 Obsidian 点哪里、看到什么才算对。 -->
+<!-- 能自动验证的写检查脚本或 npm 命令；渲染、布局、手机端写进 Obsidian 点哪里、看到什么。 -->
 
-- [ ] 自动：`npm run verify` 全部通过
-- [ ] 人工：
-
-## 记录
-
-- {{date}} 立项
+- [ ] `npm run verify` 全部通过
+- [ ] 

@@ -96,11 +96,3 @@ cat <<EOF
   先备份 data.json → 再换入 main.js / styles.css / manifest.json
   步骤见 docs/插件设计文档.md §6.5
 EOF
-
-# 只提醒、不拦截：draft 规格不影响发布，但值得在发版时看一眼
-DRAFTS=$(node tools/checks/check-specs.js --list | grep -E '^\s+draft ' || true)
-if [ -n "$DRAFTS" ]; then
-  echo ""
-  echo "提醒：还有 draft 规格（不影响发布）："
-  echo "$DRAFTS"
-fi
