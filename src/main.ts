@@ -1365,6 +1365,8 @@ export default class WritingToolkitPlugin extends Plugin {
   private applyDailyStats(file: TFile, delta: number, countDuration = true): void {
     statsApplied(file.path, delta, countDuration);
     this.ensureCurrentDay();
+    // 跨天结算后，内存里的今日数值属于 activeDay；键也必须用它。
+    const day = this.activeDay;
     if (countDuration) this.recordWritingActivity();
     const project = this.getProjectForPath(file.path) ?? "未分组";
     if (!this.knownProjects.has(project)) {
@@ -1373,22 +1375,22 @@ export default class WritingToolkitPlugin extends Plugin {
     }
     if (delta !== 0) {
       this.dailyTotal += delta;
-      this.dailyHistory[this.todayStr] = this.dailyTotal;
+      this.dailyHistory[day] = this.dailyTotal;
       const projectDay = this.projectHistory[project]
         ?? (this.projectHistory[project] = {});
-      projectDay[this.todayStr] = (projectDay[this.todayStr] || 0) + delta;
+      projectDay[day] = (projectDay[day] || 0) + delta;
 
       // 明细：今天这个数是哪个文件贡献的（负数是删除/回退）
-      const fileDay = this.dailyFileDeltas[this.todayStr]
-        ?? (this.dailyFileDeltas[this.todayStr] = {});
+      const fileDay = this.dailyFileDeltas[day]
+        ?? (this.dailyFileDeltas[day] = {});
       fileDay[file.path] = (fileDay[file.path] || 0) + delta;
     }
-    this.dailyDurationHistory[this.todayStr] = this.dailyDurationSeconds;
+    this.dailyDurationHistory[day] = this.dailyDurationSeconds;
     const durationInc = this.dailyDurationSeconds - this.lastDurationTotal;
     if (durationInc > 0) {
       const projectDay = this.projectDurationHistory[project]
         ?? (this.projectDurationHistory[project] = {});
-      projectDay[this.todayStr] = (projectDay[this.todayStr] || 0) + durationInc;
+      projectDay[day] = (projectDay[day] || 0) + durationInc;
     }
     this.lastDurationTotal = this.dailyDurationSeconds;
     this.scheduleDailySave();
@@ -2151,7 +2153,9 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   private async reconcileTodayNewFileDeltas(): Promise<void> {
-    const today = this.todayStr;
+    // 先跨天结算：dailyTotal 必须与下面写入的日期键属于同一天。
+    this.ensureCurrentDay();
+    const today = this.activeDay;
     const fileDay = this.dailyFileDeltas[today];
     if (!fileDay) return;
     let changed = false;
@@ -2167,6 +2171,8 @@ export default class WritingToolkitPlugin extends Plugin {
       } catch {
         continue;
       }
+      // 读盘期间跨过了零点：dailyTotal 已切到新的一天，不能再往旧日期上加。
+      if (this.activeDay !== today) break;
       const words = this.countWords(text);
       if (words === oldDelta) continue;
       const diff = words - oldDelta;
@@ -2284,8 +2290,11 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   private async savePluginData() {
-    this.dailyHistory[this.todayStr] = this.dailyTotal;
-    this.dailyDurationHistory[this.todayStr] = this.dailyDurationSeconds;
+    // 内存里的今日数值属于 activeDay，不是写盘这一刻的日期：零点后、跨天结算前
+    // 落盘（防抖、睡眠唤醒、卸载）若按实时日期回填，会把昨天的总数写进今天。
+    const day = this.activeDay || this.todayStr;
+    this.dailyHistory[day] = this.dailyTotal;
+    this.dailyDurationHistory[day] = this.dailyDurationSeconds;
     await this.persistPluginData();
   }
 
