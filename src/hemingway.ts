@@ -4,7 +4,6 @@ import {
   Prec,
   StateEffect,
   StateField,
-  Transaction,
   type Extension,
 } from "@codemirror/state";
 import {
@@ -65,11 +64,12 @@ const hemingwayFilter = EditorState.transactionFilter.of((tr) => {
   let ok = true;
   const docLength = tr.startState.doc.length;
   // 中文输入法的组词更新会替换文档末尾已有的 composing 区间：
-  // 例如先插入「n」，再把末尾的「n」替换为「ni」。
+  // 例如先插入「n」，再把末尾的「n」替换为「ni」，上屏时换成「你」。
   // 这仍属于「只向后写」，不能按普通回改拦截；但中间位置的组词仍拒绝。
-  const isComposition = (tr.annotation(Transaction.userEvent) ?? "").startsWith(
-    "input.compose"
-  );
+  // CodeMirror 真实发出的是 input.type.compose(.start)；旧写法只认
+  // input.compose，导致上屏被拦、正文里只剩拼音字母。
+  const isComposition =
+    tr.isUserEvent("input.type.compose") || tr.isUserEvent("input.compose");
   tr.changes.iterChanges((fromA, toA) => {
     if (isComposition ? toA !== docLength : fromA !== docLength || toA !== docLength) {
       ok = false;

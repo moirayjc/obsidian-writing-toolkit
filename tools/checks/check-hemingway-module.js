@@ -110,6 +110,37 @@ function main() {
       "input.compose"
     ).doc.toString() === "abcd"
   );
+  // CodeMirror 6 真实发出的组词事件：组词中 input.type.compose，首笔 .start。
+  // 旧实现只认 input.compose，拼音上屏成汉字那一步被拦，正文只剩字母。
+  r.check(
+    "真实 IME 事件：首笔 input.type.compose.start 在末尾插入拼音被允许",
+    updateDocument(
+      enabledState,
+      { from: 3, to: 3, insert: "ni" },
+      "input.type.compose.start"
+    ).doc.toString() === "abcni"
+  );
+  const withPinyin = updateDocument(
+    enabledState,
+    { from: 3, to: 3, insert: "ni" },
+    "input.type.compose.start"
+  );
+  r.check(
+    "真实 IME 事件：input.type.compose 把末尾拼音换成汉字被允许",
+    updateDocument(
+      withPinyin,
+      { from: 3, to: 5, insert: "你" },
+      "input.type.compose"
+    ).doc.toString() === "abc你"
+  );
+  r.check(
+    "真实 IME 事件：中间位置的组词仍被拒绝",
+    updateDocument(
+      enabledState,
+      { from: 1, to: 2, insert: "你" },
+      "input.type.compose"
+    ).doc.toString() === "abc"
+  );
   r.check(
     "组合输入延伸到文档末尾时维持现有放行语义",
     updateDocument(
