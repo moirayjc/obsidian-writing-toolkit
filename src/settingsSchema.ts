@@ -39,6 +39,16 @@ export interface WritingToolkitSettings extends SnapshotSettings {
   commentsEnabled: boolean;
   /** 批注按钮不受工具条生效范围限制（全库文件都能批注） */
   commentBubbleEverywhere: boolean;
+  /** 在手机和平板上也提供批注（批注页、工具条按钮、长按入口、正文痕迹） */
+  commentsOnMobile: boolean;
+  /**
+   * 伴随数据（批注 / 快照 / 章纲）存放位置：hidden = `.wt-*` 隐藏目录；
+   * visible = 库根 `_写作工具箱/`（Obsidian 官方同步不同步隐藏目录，用它的要选这个）。
+   * 改它必须走插件的切换流程（会整体搬数据），不要直接赋值。
+   */
+  sidecarLocation: "hidden" | "visible";
+  /** 「检测到可同步目录里已有数据，要切换吗？」点过「不再提示」 */
+  sidecarLocationPromptDismissed: boolean;
   dailyGoal: number;
   dailyDisplayMode: DailyDisplayMode;
   wordCountMode: WordCountMode;
@@ -82,6 +92,9 @@ export const DEFAULT_SETTINGS: WritingToolkitSettings = {
   formatToolbarScope: "all-except-chapters",
   commentsEnabled: true,
   commentBubbleEverywhere: true,
+  commentsOnMobile: true,
+  sidecarLocation: "hidden",
+  sidecarLocationPromptDismissed: false,
   dailyGoal: 5000,
   dailyDisplayMode: "words",
   wordCountMode: "webnovel",

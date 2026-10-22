@@ -8,6 +8,7 @@
 import { Notice } from "obsidian";
 import type { WritingToolkitSettings } from "../settingsSchema";
 import type { WordCountMode } from "../wordcount";
+import { effectiveSnapshotFolder } from "../sidecarLocation";
 
 export interface StatusBarState {
   showSpeed: boolean;
@@ -122,9 +123,7 @@ export class StatsService {
   getProjects(keepKey?: string | null): { key: string; label: string }[] {
     const settings = this.host.getSettings();
     const keys = new Set<string>();
-    const snapshotFolder = (
-      settings.snapshotFolder.trim() || ".wt-snapshots"
-    ).replace(/^\/+|\/+$/g, "");
+    const snapshotFolder = effectiveSnapshotFolder(settings.snapshotFolder);
     const isSnapshotPath = (path: string): boolean =>
       !!snapshotFolder &&
       (path === snapshotFolder || path.startsWith(snapshotFolder + "/"));

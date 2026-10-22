@@ -512,8 +512,8 @@ export class WritingToolkitSidebar extends ItemView {
       },
     ];
 
-    // 批注只在桌面端用：批注文件在不随同步的隐藏目录里，移动端不给批注页
-    if (Platform?.isMobile) {
+    // 移动端可在设置里关掉批注（批注文件不随同步时，手机上写的批注会孤立在手机里）
+    if (Platform?.isMobile && !this.host.settings.commentsOnMobile) {
       const at = sections.findIndex((section) => section.title === "批注");
       if (at >= 0) sections.splice(at, 1);
     }

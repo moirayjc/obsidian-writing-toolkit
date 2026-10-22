@@ -861,11 +861,12 @@ async function main() {
     "utf8"
   );
   r.check(
-    "移动端不提供批注：痕迹、右键入口、选区添加、工具条按钮、工具箱批注页都按 isMobile 关掉",
+    "移动端关掉批注（commentsOnMobile 关）时：痕迹、右键入口、选区添加、工具条按钮、工具箱批注页都关掉",
     (moduleSource.match(/options\.isMobile\?\.\(\)/g) || []).length >= 3 &&
       /commentsEnabled === true && !options\.isMobile\?\.\(\)/.test(toolbarModuleSource) &&
-      /Platform\?\.isMobile[\s\S]{0,200}title === "批注"[\s\S]{0,80}splice/.test(sidebarSource) &&
-      (mainSource.match(/isMobile: \(\) => Platform\.isMobile/g) || []).length === 2
+      /Platform\?\.isMobile && !this\.host\.settings\.commentsOnMobile[\s\S]{0,200}title === "批注"[\s\S]{0,80}splice/.test(sidebarSource) &&
+      (mainSource.match(/isMobile: \(\) => this\.commentsOffOnThisDevice\(\)/g) || []).length === 2 &&
+      /Platform\.isMobile && !this\.settings\.commentsOnMobile/.test(mainSource)
   );
   r.check(
     "UI 插槽常量集中声明批注入口",

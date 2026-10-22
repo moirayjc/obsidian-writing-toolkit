@@ -2,6 +2,7 @@ import { Notice, Platform, TAbstractFile, TFile, TFolder, Vault } from "obsidian
 import type { WordCountMode } from "./wordcount";
 import type { WordCountService } from "./services/wordCountService";
 import { DEFAULT_CHAPTER_EXCLUDE_NAMES, isExcludedChapterName } from "./outlineText";
+import { effectiveSnapshotFolder } from "./sidecarLocation";
 
 // 插件在桌面端运行，Obsidian 会把 electron 注入到插件模块的 require 中。
 declare const require: (id: string) => any;
@@ -462,12 +463,9 @@ export class DraftSnapshotManager implements SnapshotOperations {
     }
   }
 
+  /** 用户自定义的快照文件夹优先，否则跟着伴随数据存放位置（隐藏 / 可同步目录）。 */
   private effectiveFolder(): string {
-    const folder = this.getSettings().snapshotFolder.trim();
-    return (folder || DEFAULT_SNAPSHOT_SETTINGS.snapshotFolder).replace(
-      /^\/+|\/+$/g,
-      ""
-    );
+    return effectiveSnapshotFolder(this.getSettings().snapshotFolder);
   }
 
   /** 递归确保文件夹存在（逐层 mkdir）。 */

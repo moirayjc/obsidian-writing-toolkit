@@ -34,6 +34,7 @@ CHECKS=(
   "check-anchor-tracking.js:批注位置跟踪（作者改正文）"
   "check-comment-panel.js:批注面板（标签 / 列表 / 详情）"
   "check-cnote-contrast.js:批注实心序号对比度"
+  "check-sidecar-location.js:伴随数据存放位置"
   "check-onload.js:onload 体量守卫"
   "check-punctuation-module.js:中文标点辅助 Feature Module"
   "check-hardbreak-module.js:回车硬换行 Feature Module"

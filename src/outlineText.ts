@@ -1,5 +1,12 @@
 import { App, DataAdapter, TFile } from "obsidian";
-import { COMMENTS_FOLDER, isCommentSidecarName } from "./comments";
+import { isCommentSidecarName } from "./comments";
+import {
+  SIDECAR_FOLDERS,
+  VISIBLE_DATA_ROOT,
+  otherLocation,
+  sidecarFolder,
+  type SidecarLocation,
+} from "./sidecarLocation";
 
 /**
  * 章纲相关的纯文本与存储工具
@@ -8,8 +15,16 @@ import { COMMENTS_FOLDER, isCommentSidecarName } from "./comments";
 /** frontmatter 键名：章纲（兼容旧数据） */
 export const OUTLINE_KEY = "章纲";
 
-/** 独立伴生文件目录名 */
-export const OUTLINES_FOLDER = ".wt-outlines";
+/**
+ * 隐藏档的章纲目录。当前实际用哪个目录看存放位置设置：
+ * 一律用 outlinesFolder() / getOutlinePath()，别直接用这个常量拼路径。
+ */
+export const OUTLINES_FOLDER = SIDECAR_FOLDERS.hidden.outlines;
+
+/** 当前存放位置下的章纲目录。 */
+export function outlinesFolder(location?: SidecarLocation): string {
+  return sidecarFolder("outlines", location);
+}
 
 /** 默认识别为正文章节的关键词 */
 export const DEFAULT_DRAFT_KEYWORDS = "正文草稿, 正文, 章节, 草稿, 卷, draft, chapter";
@@ -39,8 +54,25 @@ export function isExcludedChapterName(
 }
 
 /** 获取某个文档对应的独立伴生章纲文件路径 */
-export function getOutlinePath(filePath: string): string {
-  return `${OUTLINES_FOLDER}/${filePath}`;
+export function getOutlinePath(
+  filePath: string,
+  location?: SidecarLocation
+): string {
+  return `${outlinesFolder(location)}/${filePath}`;
+}
+
+/**
+ * 实际读写的章纲路径：当前档位里有就用它；没有而另一档里有（两台设备选得不一样、
+ * 或切换迁移没搬完），就地用那一份——不在这里搬，整体搬家只在切换设置时做。
+ */
+export async function resolveOutlinePath(
+  adapter: DataAdapter,
+  filePath: string
+): Promise<string> {
+  const current = getOutlinePath(filePath);
+  if (await adapter.exists(current)) return current;
+  const other = getOutlinePath(filePath, otherLocation());
+  return (await adapter.exists(other)) ? other : current;
 }
 
 /** 依次补齐路径上的每一级目录（adapter.mkdir 只建一层）。 */
@@ -96,9 +128,22 @@ export async function migrateOutlineSidecar(
   newPath: string
 ): Promise<void> {
   if (!oldPath || !newPath || oldPath === newPath) return;
+  // 两档里都可能有（另一台设备选得不一样时）：哪边有就在哪边跟着改名
+  for (const location of ["hidden", "visible"] as const) {
+    await migrateOutlineSidecarIn(
+      app,
+      getOutlinePath(oldPath, location),
+      getOutlinePath(newPath, location)
+    );
+  }
+}
+
+async function migrateOutlineSidecarIn(
+  app: App,
+  from: string,
+  to: string
+): Promise<void> {
   const adapter = app.vault.adapter;
-  const from = getOutlinePath(oldPath);
-  const to = getOutlinePath(newPath);
   const stat = await adapter.stat(from);
   if (!stat) return;
 
@@ -173,7 +218,12 @@ export function isDraftPath(
 ): boolean {
   if (!path || !path.endsWith(".md")) return false;
   // 排除系统目录及内部目录
-  const excluded = [snapshotFolder, OUTLINES_FOLDER, COMMENTS_FOLDER, ".wt-snapshots", ".wt-outlines", ".wt-comments", configDir];
+  const excluded = [
+    snapshotFolder,
+    ...Object.values(SIDECAR_FOLDERS.hidden),
+    VISIBLE_DATA_ROOT,
+    configDir,
+  ];
   for (const ex of excluded) {
     if (ex) {
       const f = ex.replace(/^\/+|\/+$/g, "");
@@ -268,7 +318,7 @@ export async function loadOutline(
   file: TFile,
   storageMode: "sidecar" | "frontmatter" = "sidecar"
 ): Promise<{ value: string; hasKey: boolean; isLegacyFm: boolean }> {
-  const sidecarPath = getOutlinePath(file.path);
+  const sidecarPath = await resolveOutlinePath(app.vault.adapter, file.path);
   const readSidecar = async (): Promise<{
     value: string;
     hasKey: boolean;
@@ -338,7 +388,7 @@ export async function saveOutline(
     return;
   }
 
-  const sidecarPath = getOutlinePath(file.path);
+  const sidecarPath = await resolveOutlinePath(app.vault.adapter, file.path);
   const parentDir = sidecarPath.includes("/")
     ? sidecarPath.slice(0, sidecarPath.lastIndexOf("/"))
     : "";

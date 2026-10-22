@@ -12,6 +12,7 @@ import {
   parseChapterName,
   sortIndexFor,
 } from "./chapterOrder";
+import { isVisibleDataPath } from "./sidecarLocation";
 
 /**
  * 「作品」识别：把散落在目录树里的章节聚合成本书 → 卷 → 章 的三级结构。
@@ -82,9 +83,15 @@ export interface ProjectScanOptions {
   extraExcluded?: string[];
 }
 
-/** 路径中任意一段以 `.` 开头即视为内部目录（.obsidian / .trash / .wt-*）。 */
+/**
+ * 内部路径：任意一段以 `.` 开头（.obsidian / .trash / .wt-*），
+ * 或在可同步数据目录 `_写作工具箱/` 之下（批注 / 快照 / 章纲选了「可同步目录」时放这里）。
+ */
 export function isInternalPath(path: string): boolean {
-  return path.split("/").some((part) => part.startsWith("."));
+  return (
+    path.split("/").some((part) => part.startsWith(".")) ||
+    isVisibleDataPath(path)
+  );
 }
 
 function isRootFolder(folder: TFolder): boolean {

@@ -19,6 +19,7 @@ export {
   type ThemeTone,
   type WritingToolkitSettings,
 } from "./settingsSchema";
+import { isCustomSnapshotFolder } from "./sidecarLocation";
 
 interface DailyHistory {
   [date: string]: number;
@@ -54,6 +55,10 @@ export interface WritingToolkitPluginLike {
     /** 番茄钟锁定中：番茄设置不可改。 */
     isPomodoroLocked: () => boolean;
     repairProjectStatPaths: () => Promise<void>;
+    /** 切换伴随数据存放位置（插件会先确认、再整体搬家）。 */
+    switchSidecarLocation: (target: "hidden" | "visible") => void;
+    /** 把可同步目录加进 Obsidian 的排除列表。 */
+    addSidecarFolderToExcluded: () => void;
     updateStatusBarVisibility: () => void;
     refreshMobileStatusBar: () => void;
     /** 批注总开关变化后，刷新已打开文档里的批注痕迹 */
@@ -382,7 +387,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("批注")
               .setDesc(
-                "选中文字后加批注（气泡上的按钮，或右键「添加批注」）。批注存进库根 `.wt-comments/` 下对应路径的伴随文件，不改正文。"
+                "选中文字后加批注（气泡上的按钮，或右键「添加批注」）。批注存进伴随文件（位置见下方「伴随数据存放位置」），不改正文。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -407,6 +412,50 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   })
               );
 
+            new Setting(el)
+              .setName("在手机和平板上使用批注")
+              .setDesc(
+                "关掉后，手机和平板上没有批注页、批注按钮和正文里的批注标记。如果批注文件不会同步到手机（见下方「伴随数据存放位置」），建议关掉，免得在手机上写的批注只留在手机里。重新打开工具箱后生效。"
+              )
+              .addToggle((toggle) =>
+                toggle
+                  .setValue(this.wt.settings.commentsOnMobile)
+                  .onChange(async (value) => {
+                    this.wt.settings.commentsOnMobile = value;
+                    await this.wt.saveSettings();
+                  })
+              );
+          });
+
+          this.group("伴随数据存放位置", section, (el) => {
+            new Setting(el)
+              .setName("批注、快照、章纲存放在")
+              .setDesc(
+                "用 Obsidian 官方同步的请选「可同步目录」：官方同步不同步以 . 开头的隐藏目录，选隐藏目录的话批注、快照、章纲不会同步到其他设备。iCloud、坚果云、Git 等通常两种都能同步。切换时会把已有数据整体搬过去；每台设备要选同一项。"
+              )
+              .addDropdown((dd) =>
+                dd
+                  .addOption("hidden", "隐藏目录（.wt-comments 等）")
+                  .addOption("visible", "可同步目录（库根 _写作工具箱/）")
+                  .setValue(this.wt.settings.sidecarLocation)
+                  .onChange((val) => {
+                    // 先退回当前值：切换要确认、要搬家，成功后设置页会重画
+                    dd.setValue(this.wt.settings.sidecarLocation);
+                    this.wt.switchSidecarLocation(val as "hidden" | "visible");
+                  })
+              );
+            if (this.wt.settings.sidecarLocation === "visible") {
+              new Setting(el)
+                .setName("在 Obsidian 搜索里隐藏")
+                .setDesc(
+                  "把 _写作工具箱/ 加进「设置 → 文件与链接 → 排除的文件」，搜索、关系图、快速切换就不再显示批注和快照文件。"
+                )
+                .addButton((button) =>
+                  button
+                    .setButtonText("加入排除列表")
+                    .onClick(() => this.wt.addSidecarFolderToExcluded())
+                );
+            }
           });
 
         },
@@ -427,17 +476,22 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   })
               );
 
-            new Setting(el)
-              .setName("快照文件夹")
-              .setDesc("相对库根目录。默认 .wt-snapshots（隐藏）。要用坚果云同步就改成普通文件夹名。")
-              .addText((text) =>
-                text
-                  .setValue(this.wt.settings.snapshotFolder)
-                  .onChange(async (value) => {
-                    this.wt.settings.snapshotFolder = value.trim();
-                    await this.wt.saveSettings();
-                  })
-              );
+            // 老设置兼容：只有改过快照文件夹的人才看到这一项（没改过的跟着「伴随数据存放位置」走）
+            if (isCustomSnapshotFolder(this.wt.settings.snapshotFolder)) {
+              new Setting(el)
+                .setName("高级：自定义快照文件夹")
+                .setDesc(
+                  "相对库根目录，优先于「写作 → 伴随数据存放位置」。清空则恢复跟随存放位置。"
+                )
+                .addText((text) =>
+                  text
+                    .setValue(this.wt.settings.snapshotFolder)
+                    .onChange(async (value) => {
+                      this.wt.settings.snapshotFolder = value.trim();
+                      await this.wt.saveSettings();
+                    })
+                );
+            }
 
             new Setting(el)
               .setName("连续写作快照间隔")
@@ -526,10 +580,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           this.group("存储方式", section, (el) => {
             new Setting(el)
               .setName("章纲数据存放机制")
-              .setDesc("侧栏章纲的存放位置。推荐 sidecar：存在 .wt-outlines 目录，不碰正文的 YAML。")
+              .setDesc("侧栏章纲的存放位置。推荐独立伴生文件：存在伴随数据目录里（位置见「写作 → 伴随数据存放位置」），不碰正文的 YAML。")
               .addDropdown((dd) =>
                 dd
-                  .addOption("sidecar", "独立伴生文件（.wt-outlines，推荐）")
+                  .addOption("sidecar", "独立伴生文件（推荐）")
                   .addOption("frontmatter", "文档头部 frontmatter（传统方式）")
                   .setValue(this.wt.settings.outlineStorageMode ?? "sidecar")
                   .onChange(async (val) => {

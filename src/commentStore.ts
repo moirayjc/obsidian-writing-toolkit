@@ -9,12 +9,13 @@
  */
 import { App, DataAdapter, TFile } from "obsidian";
 import {
-  COMMENTS_FOLDER,
   WtComment,
+  commentsFolder,
   docPathForSidecar,
   isLegacySidecarPath,
   isSidecarPath,
   legacySidecarPathFor,
+  otherSidecarPathFor,
   parseCommentFileData,
   serializeCommentFile,
   sidecarPathFor,
@@ -31,6 +32,11 @@ import {
 function parentFolder(path: string): string {
   const i = path.lastIndexOf("/");
   return i > 0 ? path.slice(0, i) : "";
+}
+
+/** 隐藏目录里的路径（任意一段以 `.` 开头）：Obsidian 不索引，读写走 adapter。 */
+function isHiddenPath(path: string): boolean {
+  return path.split("/").some((part) => part.startsWith("."));
 }
 
 export class CommentStore {
@@ -110,6 +116,17 @@ export class CommentStore {
     this.generation.set(docPath, (this.generation.get(docPath) ?? 0) + 1);
   }
 
+  /** 存放位置切换后整张缓存作废：按新位置重新读。 */
+  invalidateAll(): void {
+    for (const path of new Set([
+      ...this.cache.keys(),
+      ...this.inflight.keys(),
+      ...this.generation.keys(),
+    ])) {
+      this.invalidate(path);
+    }
+  }
+
   /** 目录改名/删除后清掉整段缓存，避免旧路径的批注继续粘在内存里。 */
   invalidatePrefix(prefix: string): void {
     const matches = (path: string): boolean =>
@@ -141,7 +158,11 @@ export class CommentStore {
       const sidecar = await this.resolveSidecarPath(docPath);
       if (comments.length === 0 && rejectedToWrite.length === 0) {
         // 新、旧两个位置都清掉，避免迁移失败留下的旧文件把批注“复活”。
-        for (const path of new Set([sidecar, legacySidecarPathFor(docPath)])) {
+        for (const path of new Set([
+          sidecar,
+          legacySidecarPathFor(docPath),
+          otherSidecarPathFor(docPath),
+        ])) {
           if (await this.exists(path)) {
             // 用 FileManager.trashFile 而不是 Vault.delete：前者尊重用户「删除到回收站」的设置
             await this.trashPath(path);
@@ -234,8 +255,8 @@ export class CommentStore {
   async migrateFolderPrefix(oldFolder: string, newFolder: string): Promise<number> {
     const adapter = this.app.vault.adapter;
     if (!adapter) return 0;
-    const from = `${COMMENTS_FOLDER}/${oldFolder}`;
-    const to = `${COMMENTS_FOLDER}/${newFolder}`;
+    const from = `${commentsFolder()}/${oldFolder}`;
+    const to = `${commentsFolder()}/${newFolder}`;
     const files = await this.listFilesDeep(adapter, from);
     let moved = 0;
     for (const full of files) {
@@ -262,6 +283,10 @@ export class CommentStore {
   private async resolveSidecarPath(docPath: string): Promise<string> {
     const target = sidecarPathFor(docPath);
     if (await this.exists(target)) return target;
+    // 另一档存放位置里还有（两台设备选得不一样、或切换迁移没搬完）：就地读写那一份，
+    // 不在这里搬——否则两台设备会把文件来回搬。整体搬家只在切换设置时做。
+    const other = otherSidecarPathFor(docPath);
+    if (other !== target && (await this.exists(other))) return other;
     const legacy = legacySidecarPathFor(docPath);
     if (legacy === target || !(await this.exists(legacy))) return target;
     try {
@@ -300,8 +325,8 @@ export class CommentStore {
 
   private async writeText(path: string, text: string): Promise<void> {
     const adapter = this.app.vault.adapter;
-    // .wt-comments 是隐藏目录：按 Obsidian 文档走 Adapter，别指望 Vault 索引。
-    if (path.startsWith(`${COMMENTS_FOLDER}/`) && adapter) {
+    // 隐藏目录（.wt-comments）：按 Obsidian 文档走 Adapter，别指望 Vault 索引。
+    if (isHiddenPath(path) && adapter) {
       await this.ensureFolder(parentFolder(path));
       await adapter.write(path, text);
       return;
@@ -330,7 +355,7 @@ export class CommentStore {
 
   private async trashPath(path: string): Promise<void> {
     const adapter = this.app.vault.adapter;
-    if (path.startsWith(`${COMMENTS_FOLDER}/`) && adapter) {
+    if (isHiddenPath(path) && adapter) {
       if (await adapter.exists(path)) await adapter.remove(path);
       return;
     }

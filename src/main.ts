@@ -78,6 +78,7 @@ import {
   createChapterStatusModule,
   type ChapterStatusModule,
 } from "./features/chapterStatusModule";
+import { effectiveSnapshotFolder, setSidecarLocation } from "./sidecarLocation";
 import {
   createPlanBoardModule,
   type PlanBoardModule,
@@ -136,6 +137,11 @@ import {
   type ReaderPreviewModel,
 } from "./mobilePreview";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
+import {
+  createSidecarLocationModule,
+  resolveStartupSidecarLocation,
+  type SidecarLocationModule,
+} from "./features/sidecarLocationModule";
 import {
   applyPlatformMobileClass,
   handleSuppressedClick,
@@ -225,6 +231,7 @@ export default class WritingToolkitPlugin extends Plugin {
   private pomodoroModule!: PomodoroModule;
   /** 阶段 4：写作日历的数据绑定、设置热更新和实例生命周期。 */
   private calendarModule!: CalendarModule;
+  private sidecarLocationModule!: SidecarLocationModule;
   /** 章节定稿锁：草稿 / 定稿状态、编辑器锁定与临时解锁。 */
   private chapterStatusModule!: ChapterStatusModule;
   private planBoardModule!: PlanBoardModule;
@@ -524,7 +531,7 @@ export default class WritingToolkitPlugin extends Plugin {
     this.formatToolbarModule = createFormatToolbarModule({
       onAddComment: (view) =>
         this.commentsModule.operations.addCommentForView(view),
-      isMobile: () => Platform.isMobile,
+      isMobile: () => this.commentsOffOnThisDevice(),
     });
     this.commentsModule = createCommentsModule({
       getRecentMarkdownPath: () => this.lastKnownPath,
@@ -532,8 +539,9 @@ export default class WritingToolkitPlugin extends Plugin {
       isFormatScopeAllowed: (path) =>
         this.formatToolbarModule.allowsPath(path),
       onChanged: () => this.refreshCommentBadges(),
-      isMobile: () => Platform.isMobile,
+      isMobile: () => this.commentsOffOnThisDevice(),
     });
+    this.sidecarLocationModule = this.buildSidecarLocationModule();
     this.pomodoroModule = this.buildPomodoroModule();
     this.calendarModule = createCalendarModule({
       allWords: () => this.dailyForDisplay(),
@@ -558,6 +566,7 @@ export default class WritingToolkitPlugin extends Plugin {
       this.calendarModule,
       this.chapterStatusModule,
       this.planBoardModule,
+      this.sidecarLocationModule,
     ]);
 
     // 阶段 5：模块就绪后再构建 Shell 上下文；视图创建时只依赖这个上下文。
@@ -1583,11 +1592,31 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   /** 快照文件夹（规范化路径，去首尾斜杠）。 */
+  private buildSidecarLocationModule(): SidecarLocationModule {
+    return createSidecarLocationModule({
+      saveSettings: () => this.saveSettings(),
+      flushPending: () => this.commentsModule.operations.flush(),
+      onSwitched: () => this.settingTab.display(),
+    });
+  }
+
+  /** 这台设备上关掉批注：移动端且没开「在手机和平板上使用批注」。 */
+  private commentsOffOnThisDevice(): boolean {
+    return Platform.isMobile && !this.settings.commentsOnMobile;
+  }
+
+  /** 设置页：切换伴随数据存放位置（会先确认，再整体搬家）。 */
+  switchSidecarLocation(target: "hidden" | "visible"): void {
+    this.sidecarLocationModule.operations.switchTo(target);
+  }
+
+  /** 设置页：把可同步目录加进 Obsidian 的排除列表。 */
+  addSidecarFolderToExcluded(): void {
+    this.sidecarLocationModule.operations.addToObsidianExcluded();
+  }
+
   private snapshotFolder(): string {
-    return (
-      this.settings.snapshotFolder.trim() ||
-      ".wt-snapshots"
-    ).replace(/^\/+|\/+$/g, "");
+    return effectiveSnapshotFolder(this.settings.snapshotFolder);
   }
 
   /** 是否位于快照文件夹内（快照镜像路径可能含「正文草稿」，不应计入正文统计）。 */
@@ -2371,6 +2400,10 @@ export default class WritingToolkitPlugin extends Plugin {
       value === undefined || value === null ? fallback : (value as T);
     const data = asRecord<Record<string, unknown>>(loaded);
     this.settings = this.host.services.settings.load(data);
+    // 伴随数据（批注 / 快照 / 章纲）存放位置：模块激活、读任何伴随文件之前就要定下来。
+    // 以库里实际有数据的那一处为准（data.json 会被同步工具在设备间互相覆盖）
+    setSidecarLocation(this.settings.sidecarLocation);
+    await resolveStartupSidecarLocation(this.app, this.settings);
     if (data) {
       // 老格式（顶层扁平设置）与新格式共用同名字段；旧版设置由 SettingsService
       // 统一迁移。老格式如有历史数据则保留，不主动清空。

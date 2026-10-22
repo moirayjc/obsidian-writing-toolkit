@@ -21,10 +21,10 @@ import {
   hasOutline as hasOutlineContent,
   loadOutline,
   migrateOutlineSidecar,
-  OUTLINES_FOLDER,
   saveOutline,
 } from "../outlineText";
 import { isInternalPath } from "../project";
+import { sidecarFoldersOf } from "../sidecarLocation";
 import type {
   SettingsKey,
   SettingsService,
@@ -37,6 +37,7 @@ const REFRESH_KEYS = [
   "chapterExcludeNames",
   "snapshotFolder",
   "outlineStorageMode",
+  "sidecarLocation",
 ] as const satisfies readonly SettingsKey[];
 
 const REFRESH_KEY_SET = new Set<SettingsKey>(REFRESH_KEYS);
@@ -363,8 +364,11 @@ export function createOutlineModule(
   }
 
   function sourcePathForInternal(path: string): string | null {
-    const prefix = OUTLINES_FOLDER + "/";
-    return path.startsWith(prefix) ? path.slice(prefix.length) : null;
+    for (const folder of sidecarFoldersOf("outlines")) {
+      const prefix = folder + "/";
+      if (path.startsWith(prefix)) return path.slice(prefix.length);
+    }
+    return null;
   }
 
   async function handleVaultRename(

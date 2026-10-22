@@ -75,6 +75,8 @@ export interface CommentStoreAdapter {
   handleModified(path: string): string | null;
   handleDeleted(path: string): string | null;
   handleRenamed(oldPath: string, newPath: string): string[];
+  /** 存放位置切换后整张缓存作废（可选，测试桩可省略）。 */
+  invalidateAll?(): void;
   /** 启动时把旧版同目录批注收进 `.wt-comments/`（可选，测试桩可省略）。 */
   migrateLegacySidecars?(): Promise<number>;
   /** 正文目录改名时同步搬镜像目录（可选，测试桩可省略）。 */
@@ -112,8 +114,8 @@ export interface CommentsModuleOptions {
   /** 数据变化后通知 UI Shell 更新徽标等外围信息。 */
   onChanged?(): void;
   /**
-   * 是不是移动端。批注只在桌面端用：批注文件在隐藏目录 `.wt-comments/`，作者的同步方案
-   * 不同步它，手机上写的批注会孤立在手机里；移动端不画批注痕迹、不给添加入口。
+   * 这台设备上关掉批注：移动端且用户关了「在手机和平板上使用批注」
+   * （批注文件不随同步时，手机上写的批注会孤立在手机里）。为真时不画批注痕迹、不给添加入口。
    */
   isMobile?(): boolean;
 }
@@ -1188,7 +1190,14 @@ export function createCommentsModule(
       context.effects.add(
         context.services.settings.subscribe((change) => {
           if (!active) return;
-          if (change.keys.includes("commentsEnabled")) {
+          if (change.keys.includes("sidecarLocation")) {
+            localStore.invalidateAll?.();
+          }
+          if (
+            change.keys.includes("commentsEnabled") ||
+            change.keys.includes("commentsOnMobile") ||
+            change.keys.includes("sidecarLocation")
+          ) {
             refreshAllDecors();
             refreshPanels();
             notifyChanged(activeCommentDocPath());

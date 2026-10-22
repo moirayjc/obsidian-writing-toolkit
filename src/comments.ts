@@ -17,6 +17,12 @@
  *
  * 本模块是纯逻辑（不依赖 Obsidian API），方便单测。
  */
+import {
+  SIDECAR_FOLDERS,
+  otherLocation,
+  sidecarFolder,
+  sidecarFoldersOf,
+} from "./sidecarLocation";
 
 /** 说话人：作者 / Agent */
 export type CommentSpeaker = "author" | "agent";
@@ -169,8 +175,21 @@ export const LOCATE_VIA_LABELS: Record<LocateVia, string> = {
 
 /* ---------- 伴随文件路径 ---------- */
 
-/** 独立批注目录（镜像正文路径，和 `.wt-outlines` / `.wt-snapshots` 同级）。 */
-export const COMMENTS_FOLDER = ".wt-comments";
+/**
+ * 隐藏档的批注目录（镜像正文路径，和 `.wt-outlines` / `.wt-snapshots` 同级）。
+ * 当前实际用哪个目录看存放位置设置：一律用 commentsFolder()，别直接用这个常量拼路径。
+ */
+export const COMMENTS_FOLDER = SIDECAR_FOLDERS.hidden.comments;
+
+/** 当前存放位置下的批注目录。 */
+export function commentsFolder(): string {
+  return sidecarFolder("comments");
+}
+
+/** 路径在哪个批注目录下（两档都认）；不在任何一个下返回 null。 */
+function commentsFolderOf(path: string): string | null {
+  return sidecarFoldersOf("comments").find((f) => path.startsWith(`${f}/`)) ?? null;
+}
 
 /** 批注伴随文件名后缀（正则）：`xxx.批注.md`，也匹配不带 .md 的 basename */
 const SIDECAR_RE = /\.批注(\.md)?$/i;
@@ -186,7 +205,16 @@ export function isCommentSidecarName(name: string): boolean {
 /** 源文档路径 → 新目录下的批注文件路径（已传入批注文件的路径则原样返回）。 */
 export function sidecarPathFor(docPath: string): string {
   if (isSidecarPath(docPath)) return docPath;
-  return `${COMMENTS_FOLDER}/${docPath.replace(/\.md$/i, ".批注.md")}`;
+  return `${commentsFolder()}/${docPath.replace(/\.md$/i, ".批注.md")}`;
+}
+
+/**
+ * 另一档存放位置下的批注文件路径（两台设备选得不一样时，数据可能还在那边）。
+ * 只用于读取兜底，不往那里写新文件。
+ */
+export function otherSidecarPathFor(docPath: string): string {
+  const folder = sidecarFolder("comments", otherLocation());
+  return `${folder}/${docPath.replace(/\.md$/i, ".批注.md")}`;
 }
 
 /** 旧版同目录批注文件路径（只用于迁移与兼容读取）。 */
@@ -197,14 +225,13 @@ export function legacySidecarPathFor(docPath: string): string {
 
 /** 是否是旧版「正文同目录」的批注文件。 */
 export function isLegacySidecarPath(path: string): boolean {
-  return isSidecarPath(path) && !path.startsWith(`${COMMENTS_FOLDER}/`);
+  return isSidecarPath(path) && commentsFolderOf(path) === null;
 }
 
 /** 批注文件路径 → 源文档路径。新旧两种布局都认。 */
 export function docPathForSidecar(sidecarPath: string): string {
-  const rel = sidecarPath.startsWith(`${COMMENTS_FOLDER}/`)
-    ? sidecarPath.slice(COMMENTS_FOLDER.length + 1)
-    : sidecarPath;
+  const folder = commentsFolderOf(sidecarPath);
+  const rel = folder ? sidecarPath.slice(folder.length + 1) : sidecarPath;
   return rel.replace(/\.批注\.md$/i, ".md");
 }
 

@@ -20,6 +20,7 @@ const MODULE_FILES = {
   "formatToolbarModule.ts": "editor.format-toolbar",
   "outlineModule.ts": "outlines",
   "planBoardModule.ts": "plan-board",
+  "sidecarLocationModule.ts": "sidecar-location",
   "pomodoroModule.ts": "pomodoro",
   "snapshotModule.ts": "snapshots.core",
   "snapshotUiModule.ts": "snapshots.ui",
@@ -37,7 +38,8 @@ const SETTINGS_LITERAL_KEYS = [
   "pomodoroBreakMinutes", "pomodoroLongBreakEvery", "pomodoroLongBreakMinutes",
   "pomodoroAutoSnapshot", "draftKeywords", "chapterExcludeNames",
   "outlineStorageMode", "newProjectFolder", "sharedLibraryFolder",
-  "planBoardFile",
+  "planBoardFile", "commentsOnMobile", "sidecarLocation",
+  "sidecarLocationPromptDismissed",
 ];
 
 const SNAPSHOT_SETTING_KEYS = [
@@ -95,18 +97,18 @@ function main() {
     ])
   );
 
-  // 1. 14 个模块 id 与文件一一对应，无重复。
+  // 1. 15 个模块 id 与文件一一对应，无重复。
   const ids = Object.entries(MODULE_FILES).map(([file, id]) => {
     const defined = new RegExp(`id:\\s*"${id.replace(/\./g, "\\.")}"`).test(sources[file]);
     return defined ? id : null;
   });
   r.check(
-    "14 个 Feature Module 文件都声明了约定的模块 id",
-    featureFiles.length === 14 && ids.every(Boolean)
+    "15 个 Feature Module 文件都声明了约定的模块 id",
+    featureFiles.length === 15 && ids.every(Boolean)
   );
   r.check(
     "模块 id 无重复且集合稳定",
-    new Set(ids).size === 14 && sameSet(ids, Object.values(MODULE_FILES))
+    new Set(ids).size === 15 && sameSet(ids, Object.values(MODULE_FILES))
   );
 
   // 2. 只有 snapshots.ui 有依赖，且依赖 snapshots.core。
@@ -120,7 +122,7 @@ function main() {
       /dependsOn:\s*\["snapshots\.core"\]/.test(withDepends[0][1])
   );
 
-  // 3. main.ts 恰好创建并激活 14 个模块。
+  // 3. main.ts 恰好创建并激活 15 个模块。
   const mainSource = readFile("src/main.ts");
   const factoryCalls = (mainSource.match(/create[A-Za-z]+Module\s*\(/g) || []).length;
   const activateBlock = mainSource.slice(
@@ -129,8 +131,8 @@ function main() {
   );
   const activated = (activateBlock.match(/this\.[A-Za-z]+Module,/g) || []).length;
   r.check(
-    "main.ts 创建并激活恰好 14 个模块",
-    factoryCalls === 14 && activated === 14,
+    "main.ts 创建并激活恰好 15 个模块",
+    factoryCalls === 15 && activated === 15,
     "factories=" + factoryCalls + ", activated=" + activated
   );
 
@@ -158,7 +160,7 @@ function main() {
     badLogs.join(", ")
   );
 
-  // 6. 设置默认键 = schema 34 键 + snapshot 6 键（DEFAULT_SETTINGS 展开默认值）。
+  // 6. 设置默认键 = schema 37 键 + snapshot 6 键（DEFAULT_SETTINGS 展开默认值）。
   const schemaSource = readFile("src/settingsSchema.ts");
   const schemaKeys = objectKeys(
     schemaSource,
@@ -170,7 +172,7 @@ function main() {
     "export const DEFAULT_SNAPSHOT_SETTINGS"
   );
   r.check(
-    "DEFAULT_SETTINGS 展开 snapshot 默认值，共 34 + 6 个键",
+    "DEFAULT_SETTINGS 展开 snapshot 默认值，共 37 + 6 个键",
     /\.\.\.DEFAULT_SNAPSHOT_SETTINGS/.test(schemaSource) &&
       schemaKeys !== null &&
       sameSet(schemaKeys, SETTINGS_LITERAL_KEYS) &&
