@@ -20,14 +20,13 @@ function mk(over) {
   return Object.assign(
     {
       id: 1,
-      status: "pending",
+      origin: "author",
       quote: "",
       paragraph: "",
       paragraphHint: 1,
       lineHint: 1,
       createdAt: "2026-10-16 10:00",
-      content: "测试批注",
-      reply: "",
+      messages: [{ by: "author", text: "测试批注" }],
       current: "",
     },
     over
@@ -168,7 +167,7 @@ function main() {
     paragraph: "他推开门，屋里空荡荡的，只有炉火还在响。",
     paragraphHint: 2,
     lineHint: 3,
-    content: "整段批注：这段节奏太慢",
+    messages: [{ by: "author", text: "整段批注：这段节奏太慢" }],
   });
   expectHit(
     "无原文的整段批注：靠整段紧凑匹配 → paragraph",

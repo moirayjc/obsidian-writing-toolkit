@@ -1,4 +1,4 @@
-import { ItemView, Setting, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Platform, Setting, WorkspaceLeaf, setIcon } from "obsidian";
 import type { UiPanelGroup } from "./services/uiService";
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import { PomodoroWidget } from "./pomodoroWidget";
@@ -9,7 +9,7 @@ export { WRITING_TOOLKIT_SIDEBAR } from "./uiSlots";
 
 /** 侧栏只消费徽标需要的窄视图，不依赖批注面板的实现模块。 */
 interface CommentsBadgeView {
-  items: ReadonlyArray<{ status: string }>;
+  items: ReadonlyArray<{ turn: string }>;
 }
 
 export class WritingToolkitSidebar extends ItemView {
@@ -90,7 +90,7 @@ export class WritingToolkitSidebar extends ItemView {
     void this.updateCommentsBadge();
   }
 
-  /** 在「批注」标签上显示当前文档的批注总数（待处理为蓝、全部处理完为灰、无批注隐藏）。 */
+  /** 在「批注」标签上显示当前文档的批注数（有等你的显示其条数、为蓝；全在等 Agent 时显示总数、为灰；无批注隐藏）。 */
   private async updateCommentsBadge(): Promise<void> {
     const badge = this.commentsBadgeEl;
     if (!badge) return;
@@ -103,11 +103,10 @@ export class WritingToolkitSidebar extends ItemView {
     }
     if (seq !== this.badgeSeq || badge !== this.commentsBadgeEl) return;
     const total = model.items.length;
-    const pending = model.items.filter((item) => item.status === "pending")
-      .length;
-    badge.setText(total > 0 ? String(total) : "");
+    const mine = model.items.filter((item) => item.turn === "author").length;
+    badge.setText(mine > 0 ? String(mine) : total > 0 ? String(total) : "");
     badge.toggleClass("is-empty", total === 0);
-    badge.toggleClass("is-done", total > 0 && pending === 0);
+    badge.toggleClass("is-done", total > 0 && mine === 0);
   }
 
   /** 根据番茄钟状态更新组件。 */
@@ -512,6 +511,12 @@ export class WritingToolkitSidebar extends ItemView {
         },
       },
     ];
+
+    // 批注只在桌面端用：批注文件在不随同步的隐藏目录里，移动端不给批注页
+    if (Platform?.isMobile) {
+      const at = sections.findIndex((section) => section.title === "批注");
+      if (at >= 0) sections.splice(at, 1);
+    }
 
     const tabEls: HTMLElement[] = [];
     const panelEls: HTMLElement[] = [];

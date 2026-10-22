@@ -7342,7 +7342,8 @@ body.theme-dark.wt-theme-cool {
 body.wt-theme-contrast {
   --cmp-mark-line: #2c2c2b;
   --cmp-mark-bg: rgba(55, 53, 47, 0.12);
-  --cmp-mark-ink: #202020;
+  /* 实心序号是墨色底，字必须是白的（1.0.6 起误写成 #202020，黑底黑字看不清） */
+  --cmp-mark-ink: #ffffff;
   --cmp-wash: #f0eceb;
   --cmp-line: rgba(55, 53, 47, 0.22);
   --cmp-line-strong: #2c2c2b;
@@ -7350,7 +7351,8 @@ body.wt-theme-contrast {
 body.theme-dark.wt-theme-contrast {
   --cmp-mark-line: #e6e4df;
   --cmp-mark-bg: rgba(255, 255, 255, 0.12);
-  --cmp-mark-ink: #ffffff;
+  /* 深色下实心序号是浅灰底，字要深色（原来白字压浅灰同样看不清） */
+  --cmp-mark-ink: #191919;
   --cmp-wash: rgba(255, 255, 255, 0.08);
   --cmp-line: rgba(255, 255, 255, 0.22);
   --cmp-line-strong: #e6e4df;
@@ -7689,6 +7691,203 @@ body.is-phone .wt-comment-btn {
   padding: 5px 8px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ===== 批注面板：标签 + 列表行 ===== */
+.wt-comments-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 2px 0 8px;
+  flex-wrap: wrap;
+}
+
+.wt-comments-tab {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  border-radius: var(--wt-radius-pill);
+  cursor: pointer;
+  color: var(--cmp-ink-2);
+}
+
+.wt-comments-tab.is-active {
+  color: var(--cmp-ink);
+  font-weight: 600;
+  border: 0.5px solid color-mix(in srgb, var(--cmp-mark-line) 55%, transparent);
+  background: color-mix(in srgb, var(--cmp-mark-line) 10%, transparent);
+}
+
+.wt-comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wt-comment-row {
+  padding: 6px 8px;
+  border-radius: var(--wt-radius-6px);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wt-comment-row:hover,
+.wt-comment-row:focus-visible {
+  background: var(--cmp-surface-2);
+}
+
+.wt-comment-row.is-agent-turn {
+  opacity: 0.72;
+}
+
+.wt-comment-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wt-comment-row-id {
+  font-size: var(--font-ui-smaller);
+  color: var(--cmp-ink-3);
+  flex: none;
+}
+
+.wt-comment-row-quote {
+  font-size: var(--font-ui-small);
+  color: var(--cmp-ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-comment-row-flag {
+  font-size: var(--font-ui-smaller);
+  color: var(--cmp-ink-3);
+  border: 0.5px dashed color-mix(in srgb, var(--cmp-ink-3) 55%, transparent);
+  border-radius: var(--wt-radius-pill);
+  padding: 0 6px;
+  flex: none;
+}
+
+.wt-comment-row-last {
+  font-size: var(--font-ui-smaller);
+  color: var(--cmp-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 批注面板：单条详情（内容可选中复制，点了不跳转） ===== */
+.wt-comment-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: auto;
+}
+
+.wt-comment-detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.wt-comment-detail-bar button {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.wt-comment-detail-locate {
+  margin-left: auto;
+}
+
+.wt-comment-detail .wt-comment-quote {
+  cursor: text;
+}
+
+.wt-comment-detail .wt-comment-quote:hover {
+  color: var(--cmp-ink-2);
+  border-left-color: color-mix(in srgb, var(--cmp-line-strong) 55%, transparent);
+}
+
+/* 详情页里操作按钮常显（列表卡片那套「悬停才显示」不适用） */
+.wt-comment-detail .wt-comment-card-actions {
+  opacity: 1;
+}
+
+/* ===== 批注对话：作者 / Agent 消息 + 回复框 ===== */
+.wt-comment-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wt-comment-msg {
+  font-size: var(--font-ui-small);
+  color: var(--cmp-ink);
+  border-radius: var(--wt-radius-6px);
+  padding: 4px 8px;
+  word-break: break-word;
+}
+
+.wt-comment-msg.is-author {
+  border-left: 2px solid color-mix(in srgb, var(--cmp-mark-line) 55%, transparent);
+}
+
+.wt-comment-msg.is-agent {
+  background: var(--cmp-surface-2);
+}
+
+.wt-comment-msg-who {
+  font-size: var(--font-ui-smaller);
+  color: var(--cmp-ink-3);
+}
+
+.wt-comment-msg-text {
+  white-space: pre-wrap;
+}
+
+/* 等 Agent 的卡片平时变淡；正在里面写回复时恢复 */
+.wt-comment-card.is-resolved:focus-within {
+  opacity: 1;
+}
+
+.wt-comment-reply-box {
+  display: flex;
+  gap: 4px;
+  align-items: flex-end;
+  cursor: auto;
+}
+
+.wt-comment-reply-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  resize: vertical;
+  font-family: var(--font-text);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
+.wt-comment-reply-input {
+  min-height: 64px;
+}
+
+.wt-comment-reply-box button {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+body.wt-mobile .wt-comment-reply-input {
+  font-size: var(--font-ui-medium);
 }
 
 /* 长回复的「展开 / 收起」按钮 */
@@ -9431,4 +9630,415 @@ body.wt-mobile .wt-lock-banner-btn {
 .is-phone.auto-full-screen .workspace-leaf-content.wt-has-lock-banner .view-content .markdown-source-view > .cm-editor > .cm-scroller,
 .is-phone.auto-full-screen .workspace-leaf-content.wt-has-lock-banner .view-content .markdown-reading-view > .markdown-preview-view {
   padding-top: calc(var(--view-top-spacing-markdown) + var(--wt-lock-banner-height));
+}
+
+/* ============================================================================
+ * 批注面板美化（2026-10-23）：沿用工具箱的纸卡 / 分段控件 / 幽灵按钮语言。
+ * 全部挂在 .wt-tb-comments 父级下提高特异性，不用 !important；
+ * 按钮三连清（border / background / box-shadow），免得宿主冷灰底压在暖纸上跳出来。
+ * 批注只在桌面端用，这里不写手机端适配。
+ * ========================================================================== */
+.wt-tb-comments {
+  --wt-cmt-bubble: color-mix(in srgb, var(--wt-ink) 4%, var(--wt-card-bg));
+  --wt-cmt-line: color-mix(in srgb, var(--wt-accent) 45%, transparent);
+}
+
+.wt-tb-comments button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* ---- 标题行 ---- */
+.wt-tb-comments .wt-comments-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 2px 10px;
+}
+
+.wt-tb-comments .wt-comments-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--wt-serif);
+  font-size: var(--wt-fs-14px);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--wt-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-tb-comments .wt-comments-sub {
+  margin: 0;
+  flex: none;
+  font-family: var(--wt-num);
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comments-empty {
+  padding: 18px 8px;
+  color: var(--wt-ink-3);
+  font-size: var(--wt-fs-13px);
+  line-height: 1.7;
+  text-align: center;
+}
+
+.wt-tb-comments .wt-comments-empty.is-small {
+  padding: 14px 8px;
+}
+
+/* ---- 标签：与书架「网格 / 列表」同款分段控件，文字版 ---- */
+.wt-tb-comments .wt-comments-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 0 10px;
+  padding: 2px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-8px);
+  background: var(--wt-card-bg);
+}
+
+.wt-tb-comments .wt-comments-tab {
+  flex: 1;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--wt-radius-6px);
+  font-size: var(--wt-fs-12px);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--wt-ink-3);
+  white-space: nowrap;
+  transition: background-color var(--wt-dur-snap) ease, color var(--wt-dur-snap) ease;
+}
+
+.wt-tb-comments .wt-comments-tab:hover {
+  color: var(--wt-ink);
+}
+
+.wt-tb-comments .wt-comments-tab.is-active {
+  border: 0;
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
+  font-weight: 600;
+}
+
+/* ---- 列表：一张纸卡，行间发丝线 ---- */
+.wt-tb-comments .wt-comments-list {
+  gap: 0;
+  overflow: hidden;
+  border: 0.5px solid var(--wt-rule);
+  border-radius: var(--wt-radius-12px);
+  background: var(--wt-card-bg);
+  box-shadow: var(--wt-shadow);
+}
+
+.wt-tb-comments .wt-comments-list:empty {
+  display: none;
+}
+
+.wt-tb-comments .wt-comment-row {
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 0;
+  transition: background-color var(--wt-dur-snap) ease;
+}
+
+.wt-tb-comments .wt-comment-row + .wt-comment-row {
+  border-top: 0.5px solid var(--wt-rule);
+}
+
+.wt-tb-comments .wt-comment-row:hover,
+.wt-tb-comments .wt-comment-row:focus-visible {
+  background: var(--background-modifier-hover);
+  outline: none;
+}
+
+.wt-tb-comments .wt-comment-row.is-agent-turn {
+  opacity: 1;
+}
+
+.wt-tb-comments .wt-comment-row-id {
+  font-family: var(--wt-num);
+  font-size: var(--wt-fs-11px);
+  font-variant-numeric: tabular-nums;
+  color: var(--wt-ink-3);
+}
+
+/* 等你的那条：编号前一粒强调色圆点 */
+.wt-tb-comments .wt-comment-row:not(.is-agent-turn) .wt-comment-row-id::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: var(--wt-radius-circle);
+  background: var(--wt-accent);
+  vertical-align: 1px;
+}
+
+.wt-tb-comments .wt-comment-row-quote {
+  font-family: var(--wt-serif);
+  font-size: var(--wt-fs-13px);
+  color: var(--wt-ink);
+}
+
+.wt-tb-comments .wt-comment-row.is-agent-turn .wt-comment-row-quote {
+  color: var(--wt-ink-2);
+}
+
+.wt-tb-comments .wt-comment-row-last {
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comment-row-flag {
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-wash);
+  font-size: var(--wt-fs-11px);
+  color: var(--wt-ink-3);
+}
+
+/* ---- 底部：两个指令按钮 ---- */
+.wt-tb-comments .wt-comments-footer {
+  flex-direction: row;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.wt-tb-comments .wt-comments-footer button {
+  flex: 1;
+  height: 30px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-8px);
+  background: var(--wt-card-bg);
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-2);
+  transition: color var(--wt-dur-snap) ease, border-color var(--wt-dur-snap) ease;
+}
+
+.wt-tb-comments .wt-comments-footer button:hover {
+  border-color: var(--wt-accent);
+  color: var(--wt-accent);
+}
+
+/* ---- 详情：一张纸卡 ---- */
+.wt-tb-comments .wt-comment-detail {
+  gap: 10px;
+  padding: 10px 14px 14px;
+  border: 0.5px solid var(--wt-rule);
+  border-radius: var(--wt-radius-12px);
+  background: var(--wt-card-bg);
+  box-shadow: var(--wt-shadow);
+}
+
+.wt-tb-comments .wt-comment-detail-bar {
+  gap: 8px;
+  margin: 0 -6px;
+}
+
+.wt-tb-comments .wt-comment-detail-bar button {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--wt-radius-6px);
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-2);
+}
+
+.wt-tb-comments .wt-comment-detail-bar button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--wt-ink);
+}
+
+.wt-tb-comments .wt-comment-detail-bar .wt-comment-detail-locate {
+  color: var(--wt-accent);
+}
+
+.wt-tb-comments .wt-comment-detail-bar .wt-comment-card-id {
+  margin-left: 0;
+  font-family: var(--wt-num);
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comment-chip {
+  padding: 1px 8px;
+  border: 0;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-accent-soft);
+  font-size: var(--wt-fs-11px);
+  color: var(--wt-accent);
+}
+
+.wt-tb-comments .wt-comment-chip.is-resolved {
+  background: var(--wt-wash);
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comment-detail .wt-comment-card-loc {
+  margin-top: -4px;
+  font-size: var(--wt-fs-11px);
+  color: var(--wt-ink-3);
+}
+
+/* 原文：强调色竖线 + 衬线，像书页上的引文 */
+.wt-tb-comments .wt-comment-detail .wt-comment-quote,
+.wt-tb-comments .wt-comment-detail .wt-comment-quote:hover {
+  padding: 6px 10px;
+  border-left: 2.5px solid var(--wt-accent);
+  border-radius: 0 var(--wt-radius-6px) var(--wt-radius-6px) 0;
+  background: var(--wt-accent-soft);
+  font-family: var(--wt-serif);
+  font-size: var(--wt-fs-13px);
+  line-height: 1.75;
+  color: var(--wt-ink);
+}
+
+/* ---- 对话：Agent 浅底块，作者只有一条强调色竖线；都占满整行 ---- */
+.wt-tb-comments .wt-comment-thread {
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.wt-tb-comments .wt-comment-msg {
+  padding: 8px 10px;
+  border-radius: var(--wt-radius-8px);
+  font-size: var(--wt-fs-13px);
+  line-height: 1.75;
+  color: var(--wt-ink);
+}
+
+.wt-tb-comments .wt-comment-msg.is-agent {
+  background: var(--wt-cmt-bubble);
+}
+
+.wt-tb-comments .wt-comment-msg.is-author {
+  padding: 2px 0 2px 11px;
+  border-left: 2px solid var(--wt-cmt-line);
+  border-radius: 0;
+}
+
+.wt-tb-comments .wt-comment-msg-who {
+  margin-bottom: 2px;
+  font-size: var(--wt-fs-11px);
+  letter-spacing: 0.08em;
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comment-msg.is-author .wt-comment-msg-who {
+  color: var(--wt-accent);
+}
+
+/* ---- 回复框 ---- */
+.wt-tb-comments .wt-comment-reply-box {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.wt-tb-comments .wt-comment-reply-input {
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-8px);
+  background: var(--wt-paper);
+  box-shadow: none;
+  font-size: var(--wt-fs-13px);
+  line-height: 1.7;
+  color: var(--wt-ink);
+}
+
+.wt-tb-comments .wt-comment-reply-input:focus,
+.wt-tb-comments .wt-comment-reply-input:focus-visible {
+  border-color: var(--wt-accent);
+  box-shadow: 0 0 0 2px var(--wt-accent-soft);
+  outline: none;
+}
+
+.wt-tb-comments .wt-comment-reply-input::placeholder {
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comment-reply-box button {
+  align-self: flex-end;
+  height: 28px;
+  padding: 0 16px;
+  border-radius: var(--wt-radius-7px);
+  background: var(--wt-accent);
+  font-size: var(--wt-fs-12px);
+  font-weight: 600;
+  color: var(--wt-card-bg);
+}
+
+.wt-tb-comments .wt-comment-reply-box button:hover {
+  filter: brightness(1.06);
+}
+
+.wt-tb-comments .wt-comment-reply-box button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- 结案与其他操作：幽灵按钮，发丝线隔开 ---- */
+.wt-tb-comments .wt-comment-detail .wt-comment-card-actions {
+  gap: 4px;
+  margin: 2px -6px 0;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--wt-rule);
+}
+
+.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: var(--wt-radius-6px);
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-2);
+}
+
+.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button:first-child {
+  color: var(--wt-accent);
+  font-weight: 600;
+}
+
+.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* 确认态：浅红底 + 红字 + 红框（必须压过上面的幽灵按钮） */
+.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button.is-confirming {
+  border: 0.5px solid var(--text-error);
+  background: color-mix(in srgb, var(--text-error) 12%, transparent);
+  color: var(--text-error);
+}
+
+/* ---- 高对比度：Notion 皮肤是平的，选中用暖灰底 + 墨色，不用强调色块 ---- */
+body.wt-theme-contrast .wt-tb-comments .wt-comments-tabs {
+  border: 1px solid var(--wt-rule);
+  border-radius: var(--wt-radius-6px);
+}
+
+body.wt-theme-contrast .wt-tb-comments .wt-comments-tab.is-active {
+  background: var(--wt-hover);
+  color: var(--wt-ink);
+}
+
+body.wt-theme-contrast .wt-tb-comments .wt-comment-reply-box button {
+  background: var(--wt-action);
+  color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wt-tb-comments .wt-comments-tab,
+  .wt-tb-comments .wt-comment-row,
+  .wt-tb-comments .wt-comments-footer button {
+    transition: none;
+  }
 }

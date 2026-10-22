@@ -11,7 +11,7 @@
  * 本模块只做记录与成文，不依赖 Obsidian 运行时状态；需要读库/读缓存的
  * 部分由 main.ts 传进来（见 `buildCommentDiagReport` 的 ctx 参数）。
  */
-import { WtComment, isSidecarPath } from "./comments";
+import { WtComment, commentTurn, isSidecarPath } from "./comments";
 
 /* ---------- 批注痕迹 ---------- */
 
@@ -298,8 +298,8 @@ export function buildCommentDiagReport(ctx: CommentDiagContext): string {
       }`
     );
     if (cached && cached.length > 0) {
-      const pending = cached.filter((c) => c.status === "pending").length;
-      push(`- 其中待处理 ${pending} 条 / 已处理 ${cached.length - pending} 条`);
+      const mine = cached.filter((c) => commentTurn(c) === "author").length;
+      push(`- 其中等作者 ${mine} 条 / 等 Agent ${cached.length - mine} 条`);
     }
   }
 

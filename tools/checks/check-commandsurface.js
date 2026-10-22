@@ -98,18 +98,23 @@ function main() {
   }
 
   r.check(
-    "批注面板接口保留 copyAgentPrompt(docPath?)",
-    /copyAgentPrompt\(docPath\?:\s*string\):\s*void;/.test(commentViewSrc)
+    "批注面板接口保留两份 Agent 指令：copyReviewPrompt / copyReplyPrompt(docPath?)",
+    /copyReviewPrompt\(docPath\?:\s*string\):\s*void;/.test(commentViewSrc) &&
+      /copyReplyPrompt\(docPath\?:\s*string\):\s*void;/.test(commentViewSrc)
   );
   r.check(
-    "批注面板提供「复制处理指令」按钮",
-    commentViewSrc.includes('text: "复制处理指令"')
+    "批注面板提供「复制批注指令」「复制回复指令」按钮（不是命令）",
+    commentViewSrc.includes('text: "复制批注指令"') &&
+      commentViewSrc.includes('text: "复制回复指令"')
   );
   r.check(
     "复制按钮传入面板自己的文档路径",
-    /this\.host\.copyAgentPrompt\(model\.docPath \?\? undefined\)/.test(
+    /this\.host\.copyReviewPrompt\(model\.docPath \?\? undefined\)/.test(
       commentViewSrc
-    )
+    ) &&
+      /this\.host\.copyReplyPrompt\(model\.docPath \?\? undefined\)/.test(
+        commentViewSrc
+      )
   );
 
   return r.finish();

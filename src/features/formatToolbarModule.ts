@@ -17,6 +17,8 @@ const REFRESH_KEY_SET = new Set<SettingsKey>(REFRESH_KEYS);
 
 export interface FormatToolbarModuleOptions {
   onAddComment(view: EditorView): void;
+  /** 是不是移动端：移动端气泡里不给批注按钮（批注只在桌面端用）。 */
+  isMobile?(): boolean;
 }
 
 /**
@@ -77,7 +79,9 @@ export function createFormatToolbarModule(
         buildFormatToolbar({
           isEnabled: () => active && settings?.get().formatToolbarEnabled === true,
           allowsPath: (path) => this.allowsPath(path),
-          commentsEnabled: () => settings?.get().commentsEnabled === true,
+          // 批注只在桌面端用（见 commentsModule 的 isMobile 说明）
+          commentsEnabled: () =>
+            settings?.get().commentsEnabled === true && !options.isMobile?.(),
           commentBubbleEverywhere: () =>
             settings?.get().commentBubbleEverywhere === true,
           onAddComment: options.onAddComment,

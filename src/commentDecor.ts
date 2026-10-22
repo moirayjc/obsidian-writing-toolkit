@@ -10,6 +10,11 @@
  *    由 dispatchCommentRefresh 触发重建；
  * 2. 输入法拼字（composing）期间不能 dispatch，dispatchCommentRefresh
  *    会稍后重试，否则会打断正在输入的拼音。
+ * 3. 作者在编辑器里改正文时，批注位置靠 CodeMirror 的改动映射跟着走
+ *    （anchorField），而不是每次按键都拿「原文」重新全文找——原文一改就找不到了。
+ *    停手一会儿 / 失焦 / 换文件时，把这处现在的文字交给 onAnchorsEdited 写进「现文」；
+ *    整段删掉的记为「原文已删除」。不是用户输入产生的改动（外部改文件后重载）
+ *    不做映射，回到按文字定位。
  */
 import {
   EditorState,
@@ -17,22 +22,29 @@ import {
   Range,
   StateEffect,
   StateField,
+  Transaction,
 } from "@codemirror/state";
 import {
   Decoration,
   DecorationSet,
   EditorView,
   ViewPlugin,
+  ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
 import { editorInfoField } from "obsidian";
 import {
-  COMMENT_STATUS_LABELS,
+  COMMENT_SPEAKER_LABELS,
+  COMMENT_TURN_LABELS,
+  commentTurn,
+  lastMessage,
   LOCATE_VIA_LABELS,
   LocateVia,
+  LocatedComment,
   WtComment,
   isSidecarPath,
   locateAll,
+  paragraphAt,
 } from "./comments";
 import {
   commentBuilt,
@@ -51,7 +63,35 @@ export interface CommentDecorConfig {
   ensureLoaded(path: string): void;
   /** 点击原文标记 / 脚注号：在侧栏批注面板里定位到这张卡片。 */
   onRevealComment(path: string, comment: WtComment): void;
+  /** 作者在编辑器里改动了批注对应的文字（停手后批量交付）。 */
+  onAnchorsEdited?(path: string, edits: AnchorEdit[]): void;
 }
+
+/** 编辑器里跟踪到的一处批注位置变化。 */
+export interface AnchorEdit {
+  id: number;
+  /** 这处现在的文字；gone 时为空 */
+  text: string;
+  /** 原文被整段删掉 */
+  gone: boolean;
+  /** 现在所在（或删除处所在）的整段 */
+  paragraph: string;
+  paragraphHint: number;
+  lineHint: number;
+}
+
+/** 编辑器里正在跟踪的一条批注位置。 */
+interface TrackedAnchor {
+  from: number;
+  to: number;
+  /** 上次同步（按文字定位）时这一处的文字；不同就说明作者改过 */
+  base: string;
+  /** 被整段删掉；at 是删除处 */
+  gone: boolean;
+}
+
+/** 停手多久后把改动写回「现文」 */
+const ANCHOR_FLUSH_DELAY = 1500;
 
 /** 外部数据变化时，用它让打开的编辑器重建标记与脚注号。 */
 export const commentRefreshEffect = StateEffect.define<null>();
@@ -95,13 +135,22 @@ function isMigrated(via: LocateVia): boolean {
 }
 
 function commentTitle(comment: WtComment, via: LocateVia | null): string {
-  const base = `批注 ${comment.id}（${COMMENT_STATUS_LABELS[comment.status]}）：${truncate(
-    comment.content || "（空白注）",
-    90
-  )}`;
+  const last = lastMessage(comment);
+  const base = `批注 ${comment.id}（${COMMENT_TURN_LABELS[commentTurn(comment)]}）${
+    last
+      ? `\n${COMMENT_SPEAKER_LABELS[last.by]}：${truncate(last.text, 90)}`
+      : "：（空白注）"
+  }`;
   return via && isMigrated(via)
     ? `${base}\n${LOCATE_VIA_LABELS[via]}`
     : base;
+}
+
+function sameMessages(a: WtComment, b: WtComment): boolean {
+  if (a.messages.length !== b.messages.length) return false;
+  return a.messages.every(
+    (m, i) => m.by === b.messages[i].by && m.text === b.messages[i].text
+  );
 }
 
 /* ---------- 行尾脚注序号（正文里唯一的批注入口） ---------- */
@@ -118,12 +167,10 @@ class CommentChipWidget extends WidgetType {
   eq(other: CommentChipWidget): boolean {
     return (
       other.comment.id === this.comment.id &&
-      other.comment.status === this.comment.status &&
       other.via === this.via &&
-      // tooltip（title）里含批注内容，所以内容/回复变了必须重建，
+      // tooltip（title）里含最后一条消息、class 由轮到谁决定，对话变了必须重建，
       // 否则续用旧 DOM、悬停看到的还是改前的文字。
-      other.comment.content === this.comment.content &&
-      other.comment.reply === this.comment.reply
+      sameMessages(other.comment, this.comment)
     );
   }
 
@@ -132,7 +179,8 @@ class CommentChipWidget extends WidgetType {
     // 官方审查规则 prefer-create-el 要求别用 document.createElement
     const span = createSpan();
     const classes = ["wt-cnote"];
-    if (this.comment.status === "resolved") classes.push("is-resolved");
+    // 等作者的高亮（is-pending），等 Agent 的变淡（沿用旧「已处理」样式）
+    if (commentTurn(this.comment) === "agent") classes.push("is-resolved");
     else classes.push("is-pending");
     if (isMigrated(this.via)) classes.push("is-migrated");
     span.className = classes.join(" ");
@@ -145,9 +193,101 @@ class CommentChipWidget extends WidgetType {
 
 /* ---------- 装饰集合构建（由状态字段调用） ---------- */
 
-function buildDecorations(
+/** 按文字定位，建立这篇文档的跟踪表（只跟踪真正圈住了一段文字的批注）。 */
+function syncAnchors(
   state: EditorState,
   config: CommentDecorConfig
+): Map<number, TrackedAnchor> {
+  const anchors = new Map<number, TrackedAnchor>();
+  if (!config.enabled()) return anchors;
+  const path = readDocPath(state);
+  if (!path || isSidecarPath(path)) return anchors;
+  const comments = config.getComments(path);
+  if (!comments || comments.length === 0) return anchors;
+  const docText = state.doc.toString();
+  for (const item of locateAll(docText, comments)) {
+    if (item.comment.gone || item.via === "paragraph" || item.to <= item.from) {
+      continue;
+    }
+    anchors.set(item.comment.id, {
+      from: item.from,
+      to: item.to,
+      base: docText.slice(item.from, item.to),
+      gone: false,
+    });
+  }
+  return anchors;
+}
+
+/** 作者亲手造成的改动（打字、删除、粘贴、拖放、撤销……）才做位置映射。 */
+function isUserEdit(tr: Transaction): boolean {
+  return ["input", "delete", "move", "undo", "redo"].some((event) =>
+    tr.isUserEvent(event)
+  );
+}
+
+function mapAnchors(
+  anchors: Map<number, TrackedAnchor>,
+  tr: Transaction
+): Map<number, TrackedAnchor> {
+  const next = new Map<number, TrackedAnchor>();
+  for (const [id, anchor] of anchors) {
+    if (anchor.gone) {
+      const at = tr.changes.mapPos(anchor.from, -1);
+      next.set(id, { ...anchor, from: at, to: at });
+      continue;
+    }
+    // 两头往里收：在原文紧前 / 紧后打的字不算进批注
+    const from = tr.changes.mapPos(anchor.from, 1);
+    const to = tr.changes.mapPos(anchor.to, -1);
+    if (to <= from) {
+      next.set(id, { ...anchor, from, to: from, gone: true });
+    } else {
+      next.set(id, { ...anchor, from, to });
+    }
+  }
+  return next;
+}
+
+/** 跟踪表里和上次同步不一样的那些批注 → 交给宿主写回现文。 */
+function collectAnchorEdits(
+  state: EditorState,
+  anchors: ReadonlyMap<number, TrackedAnchor>
+): AnchorEdit[] {
+  const edits: AnchorEdit[] = [];
+  let docText: string | null = null;
+  for (const [id, anchor] of anchors) {
+    const text = anchor.gone ? "" : state.sliceDoc(anchor.from, anchor.to);
+    if (!anchor.gone && text === anchor.base) continue;
+    docText ??= state.doc.toString();
+    const paragraph = paragraphAt(docText, anchor.from);
+    edits.push({
+      id,
+      text,
+      gone: anchor.gone,
+      paragraph: paragraph?.text.trim() ?? "",
+      paragraphHint: paragraph?.index ?? 0,
+      lineHint: state.doc.lineAt(Math.min(anchor.from, state.doc.length)).number,
+    });
+  }
+  return edits;
+}
+
+/** 最近一次 buildCommentExtensions 建的跟踪表字段（检查脚本读跟踪结果用）。 */
+let currentAnchorField: StateField<Map<number, TrackedAnchor>> | null = null;
+
+/** 这个编辑器状态里，作者改过、还没写回的批注位置（只读，不交付）。 */
+export function pendingAnchorEdits(state: EditorState): AnchorEdit[] {
+  const anchors = currentAnchorField
+    ? state.field(currentAnchorField, false)
+    : undefined;
+  return anchors ? collectAnchorEdits(state, anchors) : [];
+}
+
+function buildDecorations(
+  state: EditorState,
+  config: CommentDecorConfig,
+  anchors?: ReadonlyMap<number, TrackedAnchor>
 ): DecorationSet {
   // 诊断：每条「为什么没走到构建」的判据都记一笔，供内部批注诊断报告使用
   const startedAt = performance.now();
@@ -171,7 +311,26 @@ function buildDecorations(
   if (comments.length === 0) return finish("这篇文档没有批注", Decoration.none);
 
   const docText = state.doc.toString();
-  const located = locateAll(docText, comments);
+  // 正在跟踪的批注用映射后的位置（作者改了字也跟得住），其余照旧按文字定位
+  const untracked = anchors
+    ? comments.filter((c) => !anchors.has(c.id))
+    : comments;
+  const located: LocatedComment[] = locateAll(docText, untracked);
+  if (anchors) {
+    for (const c of comments) {
+      const anchor = anchors.get(c.id);
+      if (!anchor) continue;
+      const at = Math.min(anchor.from, state.doc.length);
+      located.push({
+        comment: c,
+        from: at,
+        to: anchor.gone ? at : Math.min(anchor.to, state.doc.length),
+        via: anchor.gone ? "paragraph" : "present",
+        lineFrom: state.doc.lineAt(at).number,
+        lineTo: state.doc.lineAt(Math.min(anchor.to, state.doc.length)).number,
+      });
+    }
+  }
   if (located.length === 0) {
     return finish(`定位失败：${comments.length} 条批注都没找到锚点`, Decoration.none);
   }
@@ -188,7 +347,7 @@ function buildDecorations(
     viaCount[item.via] = (viaCount[item.via] ?? 0) + 1;
     if (item.to > item.from && item.via !== "paragraph") {
       const classes = ["wt-comment-mark"];
-      if (c.status === "resolved") classes.push("is-resolved");
+      if (commentTurn(c) === "agent") classes.push("is-resolved");
       if (migrated) classes.push("is-migrated");
       ranges.push(
         Decoration.mark({
@@ -222,11 +381,26 @@ function buildDecorations(
 /* ---------- 扩展入口 ---------- */
 
 export function buildCommentExtensions(config: CommentDecorConfig): Extension {
+  // 批注位置跟踪表：数据刷新 / 换文件 / 外部改动时按文字重新同步，作者输入时按改动映射。
+  const anchorField = StateField.define<Map<number, TrackedAnchor>>({
+    create: (state) => syncAnchors(state, config),
+    update(value, tr) {
+      const refresh = tr.effects.some((e) => e.is(commentRefreshEffect));
+      if (refresh || readDocPath(tr.startState) !== readDocPath(tr.state)) {
+        return syncAnchors(tr.state, config);
+      }
+      if (!tr.docChanged) return value;
+      return isUserEdit(tr) ? mapAnchors(value, tr) : syncAnchors(tr.state, config);
+    },
+  });
+
+  currentAnchorField = anchorField;
+
   // 标记 + 脚注号都由状态字段提供，数据变化时由 dispatchCommentRefresh 重建。
   const decorField = StateField.define<DecorationSet>({
     create: (state) => {
       commentDecorDiag.createCalls++;
-      return buildDecorations(state, config);
+      return buildDecorations(state, config, state.field(anchorField, false));
     },
     update(value, tr) {
       const refresh = tr.effects.some((e) => e.is(commentRefreshEffect));
@@ -236,12 +410,95 @@ export function buildCommentExtensions(config: CommentDecorConfig): Extension {
         readDocPath(tr.startState) !== readDocPath(tr.state)
       ) {
         commentDecorDiag.eligible++;
-        return buildDecorations(tr.state, config);
+        return buildDecorations(
+          tr.state,
+          config,
+          tr.state.field(anchorField, false)
+        );
       }
       return value;
     },
     provide: (f) => EditorView.decorations.from(f),
   });
+
+  // 停手 / 失焦 / 换文件 / 关闭时，把作者改过的批注位置交给宿主写回「现文」。
+  const anchorFlusher = ViewPlugin.fromClass(
+    class {
+      private timer = 0;
+      /** 有改动还没交付 */
+      private pending = false;
+      /** 已交付过的结果（id → 文字 / 已删除），避免同样的改动反复写盘 */
+      private sent = new Map<number, string>();
+      constructor(private readonly view: EditorView) {}
+      update(update: ViewUpdate): void {
+        const oldPath = readDocPath(update.startState);
+        if (oldPath !== readDocPath(update.state)) {
+          // 换文件：旧文档的跟踪表在 startState 里，先把它交付掉
+          window.clearTimeout(this.timer);
+          this.flush(update.startState);
+          this.sent.clear();
+          return;
+        }
+        const resynced = update.transactions.some(
+          (tr) =>
+            tr.effects.some((e) => e.is(commentRefreshEffect)) ||
+            (tr.docChanged && !isUserEdit(tr))
+        );
+        if (resynced) {
+          // 跟踪表刚按文字重新同步过：还没交付的改动在 startState 里，先交付再作废去重记录
+          if (this.pending) {
+            window.clearTimeout(this.timer);
+            this.pending = false;
+            this.flush(update.startState);
+          }
+          this.sent.clear();
+        }
+        if (update.docChanged && update.transactions.some(isUserEdit)) {
+          window.clearTimeout(this.timer);
+          this.pending = true;
+          this.timer = window.setTimeout(() => {
+            this.pending = false;
+            this.flush(this.view.state);
+          }, ANCHOR_FLUSH_DELAY);
+        }
+      }
+      flushNow(): void {
+        window.clearTimeout(this.timer);
+        this.pending = false;
+        this.flush(this.view.state);
+      }
+      destroy(): void {
+        window.clearTimeout(this.timer);
+        this.flush(this.view.state);
+      }
+      private flush(state: EditorState): void {
+        if (!config.onAnchorsEdited) return;
+        const path = readDocPath(state);
+        if (!path || isSidecarPath(path)) return;
+        const anchors = state.field(anchorField, false);
+        if (!anchors || anchors.size === 0) return;
+        const edits = collectAnchorEdits(state, anchors).filter((edit) => {
+          const key = edit.gone ? "\u0000gone" : edit.text;
+          if (this.sent.get(edit.id) === key) return false;
+          this.sent.set(edit.id, key);
+          return true;
+        });
+        if (edits.length === 0) return;
+        try {
+          config.onAnchorsEdited(path, edits);
+        } catch (error) {
+          commentError("onAnchorsEdited", error);
+        }
+      }
+    },
+    {
+      eventHandlers: {
+        blur() {
+          this.flushNow();
+        },
+      },
+    }
+  );
 
   // 不产出装饰的小插件，只做两件事：
   //  - 预加载当前文档的批注（加载完成后 main 会刷新）；
@@ -303,7 +560,7 @@ export function buildCommentExtensions(config: CommentDecorConfig): Extension {
     },
   });
 
-  return [decorField, loaderPlugin, handlers];
+  return [anchorField, decorField, anchorFlusher, loaderPlugin, handlers];
 }
 
 function commentIdFromEvent(target: EventTarget | null): number | null {

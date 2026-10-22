@@ -1,10 +1,12 @@
 /**
  * 批注：数据模型、批注文件（`文档名.批注.md`）的解析与序列化、原文定位。
  *
- * 设计背景：Maureen 的创作流程是「Agent 写稿 → 她在文档上批注 → Agent
- * 读批注改稿」。批注存放在库根 `.wt-comments/` 下的独立伴随文件里（镜像
- * 正文的相对路径），正文一个字都不动。旧版同目录 `文档名.批注.md` 会自动
- * 迁移过来，读取时仍兼容旧位置。
+ * 设计背景：Maureen 的创作流程是「Agent 通读稿子发起一批批注 → 她在
+ * 面板里逐条回复 → Agent 再回一轮 → …… → 她逐条点已解决 / 不采纳」。
+ * 每条批注是一串对话，作者与 Agent 都能发起；结案只能由作者在面板里点。
+ * 批注存放在库根 `.wt-comments/` 下的独立伴随文件里（镜像正文的相对路径），
+ * 正文一个字都不动。旧版同目录 `文档名.批注.md` 会自动迁移过来，读取时
+ * 仍兼容旧位置。
  *
  * 定位（Agent 改稿后「原文」往往已经不在了）按四层来：
  *   1. 现文——Agent 改完写回的当前文字（协议见文件抬头，最可靠）；
@@ -16,13 +18,26 @@
  * 本模块是纯逻辑（不依赖 Obsidian API），方便单测。
  */
 
-/** 批注状态：待处理 / 已处理 */
-export type CommentStatus = "pending" | "resolved";
+/** 说话人：作者 / Agent */
+export type CommentSpeaker = "author" | "agent";
+
+/** 对话里的一条消息 */
+export interface CommentMessage {
+  by: CommentSpeaker;
+  text: string;
+}
+
+/**
+ * 轮到谁：由最后一条消息的说话人推出（文件里没有状态字段，Agent 改不了）。
+ * 最后是 Agent → 等作者；最后是作者（或还没有消息）→ 等 Agent。
+ */
+export type CommentTurn = "author" | "agent";
 
 export interface WtComment {
   /** 批注编号（文件内唯一，从 1 起；删除后不重排，新批注取最大号 + 1） */
   id: number;
-  status: CommentStatus;
+  /** 谁发起的（只用于显示） */
+  origin: CommentSpeaker;
   /** 引用的原文（建立批注时选中的文字） */
   quote: string;
   /** 建立时所在的整段（空行分隔的块；她的稿子基本一段一行） */
@@ -33,14 +48,102 @@ export interface WtComment {
   lineHint: number;
   /** 建立时间 "YYYY-MM-DD HH:mm" */
   createdAt: string;
-  /** 批注内容 */
-  content: string;
-  /** 写批注的人（预留，暂只用不上） */
-  author?: string;
-  /** Agent 的回复（处理完后由 Agent 写入） */
-  reply: string;
-  /** 现文：Agent 改稿后写回的「改完后对应位置的文字」 */
+  /** 对话：按文件里出现的顺序 */
+  messages: CommentMessage[];
+  /**
+   * 现文：这处原文现在的样子。作者在编辑器里改正文时由插件自动写回，
+   * Agent 改稿后也要写回；定位时最优先。
+   */
   current: string;
+  /**
+   * 原文已被作者整段删掉（编辑器里跟踪到的）：只按「段落」定位到删除处，
+   * 不再拿原文去全文找（同样的字可能出现在别处，会指错地方）。
+   */
+  gone?: boolean;
+}
+
+/** 批注文件的全部内容：进行中的批注 + 作者否决过的意见（给 Agent 看，别再提）。 */
+export interface CommentFileData {
+  comments: WtComment[];
+  rejected: string[];
+}
+
+export const COMMENT_SPEAKER_LABELS: Record<CommentSpeaker, string> = {
+  author: "作者",
+  agent: "Agent",
+};
+
+export const COMMENT_TURN_LABELS: Record<CommentTurn, string> = {
+  author: "等你",
+  agent: "等 Agent",
+};
+
+export function commentTurn(comment: WtComment): CommentTurn {
+  const last = comment.messages[comment.messages.length - 1];
+  return last?.by === "agent" ? "author" : "agent";
+}
+
+/** 最后一条消息（没有消息时为 null）。 */
+export function lastMessage(comment: WtComment): CommentMessage | null {
+  return comment.messages[comment.messages.length - 1] ?? null;
+}
+
+/**
+ * 批注文件被外部改写后，找出越权的改动：条目消失（只有作者能结案），
+ * 或已有消息被改 / 删（对话只许往后追加）。追加消息、新开批注、改现文都算正常。
+ */
+export interface CommentTamperReport {
+  /** 消失的条目（改写前的版本） */
+  removed: WtComment[];
+  /** 已有消息被改动的条目（改写前的版本） */
+  altered: WtComment[];
+}
+
+export function detectCommentTampering(
+  before: readonly WtComment[],
+  after: readonly WtComment[]
+): CommentTamperReport {
+  const afterById = new Map(after.map((c) => [c.id, c]));
+  const removed: WtComment[] = [];
+  const altered: WtComment[] = [];
+  for (const old of before) {
+    const next = afterById.get(old.id);
+    if (!next) {
+      removed.push(old);
+      continue;
+    }
+    const kept =
+      next.messages.length >= old.messages.length &&
+      old.messages.every(
+        (m, i) => next.messages[i].by === m.by && next.messages[i].text === m.text
+      );
+    if (!kept) altered.push(old);
+  }
+  return { removed, altered };
+}
+
+/** 按报告把越权改动恢复成改写前的样子；其余（Agent 正常追加的内容）保留。 */
+export function restoreTamperedComments(
+  current: readonly WtComment[],
+  report: CommentTamperReport
+): WtComment[] {
+  const restore = new Map(
+    [...report.removed, ...report.altered].map((c) => [c.id, c])
+  );
+  const next = current.map((c) => restore.get(c.id) ?? c);
+  for (const c of report.removed) {
+    if (!next.some((item) => item.id === c.id)) next.push(c);
+  }
+  return next.sort((a, b) => a.id - b.id);
+}
+
+/** 「已否决」区的一行：原文 + 首条意见，压成一行。 */
+export function rejectedLine(comment: WtComment): string {
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+  const quote = flat(comment.quote);
+  const first = flat(comment.messages[0]?.text ?? "");
+  const brief = first.length > 60 ? first.slice(0, 60) + "…" : first;
+  return brief ? `「${quote}」：${brief}` : `「${quote}」`;
 }
 
 /** 一条批注是怎么定到的位（界面据此区分「精确命中」和「上下文迁移」） */
@@ -54,11 +157,6 @@ export interface LocateSpan {
   /** 定位方式；exact / present 算精确命中，其余属于「迁移定位」 */
   via: LocateVia;
 }
-
-export const COMMENT_STATUS_LABELS: Record<CommentStatus, string> = {
-  pending: "待处理",
-  resolved: "已处理",
-};
 
 /** 定位方式的中文说明（面板 / 弹层共用）。 */
 export const LOCATE_VIA_LABELS: Record<LocateVia, string> = {
@@ -316,6 +414,11 @@ export class AnchorLocator {
       if (span) return { from: span.from, to: span.to, via: "present" };
     }
 
+    // 原文已被作者删掉：直接落到删除处所在的段落
+    if (comment.gone) {
+      return this.locateParagraph(comment, hintCompact);
+    }
+
     // 2) 原文：精确 → 忽略空白
     const quote = comment.quote.trim();
     if (quote) {
@@ -531,16 +634,24 @@ export function locateAll(
 
 /* ---------- 批注文件：序列化 ---------- */
 
-/** 批注文件抬头：写给 Agent 的处理说明（HTML 注释，阅读视图不显示）。 */
+/**
+ * 批注文件抬头：写给 Agent 的协议（HTML 注释，阅读视图不显示）。
+ * ⚠️ 与 parseCommentFileData 必须同改；多行示例不能删（历史上两者脱节导致整条批注被静默丢弃）。
+ */
 const SIDECAR_HELP_HEADER = [
   "<!-- 写作工具箱 · 批注文件",
-  "这是作者写给「负责修改本文档的 Agent」的批注。",
+  "这是作者与 Agent 针对源文档的逐条讨论。每条批注 = 一处原文 + 一串对话，对话一行一条：「- 作者：……」或「- Agent：……」，按出现顺序就是先后顺序。",
+  "多于一行的消息，从第二行起每行缩进两格，例如：",
+  "- Agent：第一点",
+  "  第二点",
   "",
-  "给 Agent 的处理方式：",
-  "1. 逐条阅读下方批注，对照每条里的「原文」在源文档中找到对应位置，按「批注」的要求修改源文档；",
-  "2. 每条处理完后，只修改该条批注的这些地方——「状态」改为：已处理；在「回复」后写明你做了什么改动（回复多于一行时，从第二行起每行都缩进两格，例如：- 回复：第一点\\n  第二点）；",
-  "3. 如果你改写了「原文」对应的文字（哪怕只是挪了位置），就把改完后该处现在的文字照抄进「现文」（新增一行：- 现文：……，不要加引号、不要换行）；如果原文一个字都没动，可以不写；",
-  "4. 其余文字（包括本说明）请勿改动，也不要删除批注条目。",
+  "给 Agent 的规则：",
+  "1. 发起批注：在文件末尾（「## 已否决」之前）新增「### 批注 N」（N 取现有最大编号 + 1），依次写「- 发起：Agent」「- 原文：……」「- 段落：……」「- 位置：第 X 段 · 约第 Y 行」「- 创建：YYYY-MM-DD HH:mm」「- Agent：你的意见」。「原文」必须从源文档逐字复制，取一句里有区分度的短片段；「段落」照抄原文所在的整段。同一处已有批注时，在那条里追加消息，不要新开；不要重复提出「已否决」里的意见。",
+  "2. 找位置：先在源文档里找「现文」（作者改正文时插件会自动写回），没有现文或找不到再找「原文」。都找不到就在回复里说明，绝不要改写「原文」「段落」去指向别的句子。有「- 原文已删除：是」的，说明作者已经删掉了那句，按「段落」理解上下文。",
+  "3. 回复：只回复最后一条消息是「作者」的批注，在该条末尾追加一行「- Agent：……」。不要修改或删除任何已有消息，不要删除批注条目，不要改「已否决」。",
+  "4. 改正文：讨论中只在消息里给改写方案，不要动源文档；作者在消息里明确要求改（如「改」「就这样改」）时，才修改源文档，并把改完后该处现在的文字照抄进「现文」（- 现文：……，不加引号、不换行；已有就覆盖），再追加一条 Agent 消息说明改了什么。",
+  "5. 批注是否解决只由作者在插件里决定：没有状态字段，不要自己添加，也不要删除条目来表示解决。",
+  "6. 其余文字（包括本说明）请勿改动。",
   "-->",
 ].join("\n");
 
@@ -557,10 +668,11 @@ function writeField(lines: string[], label: string, value: string): void {
   }
 }
 
-/** 把批注列表序列化成批注文件全文。 */
+/** 把批注列表（和「已否决」区）序列化成批注文件全文。 */
 export function serializeCommentFile(
   docPath: string,
-  comments: readonly WtComment[]
+  comments: readonly WtComment[],
+  rejected: readonly string[] = []
 ): string {
   const base = docBaseName(docPath);
   const title = base.replace(/\.md$/i, "");
@@ -571,10 +683,11 @@ export function serializeCommentFile(
   for (const c of comments) {
     lines.push("");
     lines.push(`### 批注 ${c.id}`);
-    writeField(lines, "状态", COMMENT_STATUS_LABELS[c.status]);
+    writeField(lines, "发起", COMMENT_SPEAKER_LABELS[c.origin]);
     writeField(lines, "原文", c.quote);
     if (c.paragraph.trim()) writeField(lines, "段落", c.paragraph);
     if (c.current.trim()) writeField(lines, "现文", c.current);
+    if (c.gone) writeField(lines, "原文已删除", "是");
     writeField(
       lines,
       "位置",
@@ -583,8 +696,17 @@ export function serializeCommentFile(
         : `约第 ${c.lineHint} 行`
     );
     writeField(lines, "创建", c.createdAt);
-    writeField(lines, "内容", c.content);
-    writeField(lines, "回复", c.reply);
+    for (const m of c.messages) {
+      writeField(lines, COMMENT_SPEAKER_LABELS[m.by], m.text);
+    }
+  }
+  const rejectedLines = rejected
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (rejectedLines.length > 0) {
+    lines.push("");
+    lines.push("## 已否决");
+    for (const line of rejectedLines) lines.push(`- ${line}`);
   }
   lines.push("");
   return lines.join("\n");
@@ -593,12 +715,17 @@ export function serializeCommentFile(
 /* ---------- 批注文件：解析 ---------- */
 
 const HEADER_RE = /^\s*(?:#{2,6}\s*|\*\*\s*)批注\s*(\d+)/;
+/** 「已否决」区标题；必须在条目解析之前判断，否则会被当成上一条的续行。 */
+const REJECTED_HEAD_RE = /^\s*#{1,6}\s*已否决/;
+const LIST_ITEM_RE = /^\s*[-*+]\s+(.*)$/;
 const FIELD_RE = /^\s*[-*+]\s*\**\s*([^：:*]+?)\s*\**\s*[：:]\s?(.*)$/;
 const KNOWN_LABELS = new Set([
+  "发起",
   "状态",
   "原文",
   "段落",
   "现文",
+  "原文已删除",
   "位置",
   "创建",
   "时间",
@@ -606,6 +733,13 @@ const KNOWN_LABELS = new Set([
   "批注",
   "回复",
 ]);
+
+/** 消息标签 → 说话人；不是消息标签返回 null。 */
+function speakerOf(label: string): CommentSpeaker | null {
+  if (label === "作者") return "author";
+  if (/^(agent|ai|助手)$/i.test(label)) return "agent";
+  return null;
+}
 
 /** 续行去掉开头的缩进（两个以上空格或 Tab）；无缩进的行原样保留。 */
 function stripIndent(raw: string): string {
@@ -617,24 +751,32 @@ function trimLineBreaks(value: string): string {
   return value.replace(/^\n+/, "").replace(/\n+$/, "");
 }
 
-/** 状态文字 → 待处理 / 已处理；认不出来的一律当待处理，宁可多看一眼也不漏。 */
-function parseStatus(value: string): WtComment["status"] {
-  if (/未|待|pending|todo/i.test(value)) return "pending";
-  if (/已|完成|解决|改完|改好|改了|resolved|done/i.test(value)) return "resolved";
-  return "pending";
+type ContinuableField =
+  | "quote"
+  | "paragraph"
+  | "current"
+  | "message"
+  | "legacyContent"
+  | "legacyReply";
+
+interface ParsingComment extends WtComment {
+  /** 旧格式「内容」：转成第一条消息 */
+  legacyContent: string;
+  /** 旧格式「回复」：转成一条 Agent 消息 */
+  legacyReply: string;
 }
 
-type ContinuableField = "quote" | "paragraph" | "current" | "content" | "reply";
-
 /**
- * 解析批注文件全文。刻意容错：字段顺序、列表符号（- * +）、
- * Agent 改过的「状态」「回复」「现文」、未知字段、多余说明都能接受。
+ * 解析批注文件全文。刻意容错：字段顺序、列表符号（- * +）、未知字段、多余说明都能接受。
+ * 旧格式（状态 / 内容 / 回复）读进来转成对话：内容 → 第一条消息，回复 → Agent 消息，状态忽略。
  */
-export function parseCommentFile(text: string): WtComment[] {
+export function parseCommentFileData(text: string): CommentFileData {
   const comments: WtComment[] = [];
+  const rejected: string[] = [];
   const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
-  let current: WtComment | null = null;
+  let current: ParsingComment | null = null;
   let lastField: ContinuableField | null = null;
+  let inRejected = false;
 
   const appendTo = (field: ContinuableField, value: string) => {
     if (!current) return;
@@ -648,11 +790,16 @@ export function parseCommentFile(text: string): WtComment[] {
       case "current":
         current.current += value;
         break;
-      case "content":
-        current.content += value;
+      case "message": {
+        const last = current.messages[current.messages.length - 1];
+        if (last) last.text += value;
         break;
-      case "reply":
-        current.reply += value;
+      }
+      case "legacyContent":
+        current.legacyContent += value;
+        break;
+      case "legacyReply":
+        current.legacyReply += value;
         break;
     }
   };
@@ -660,17 +807,34 @@ export function parseCommentFile(text: string): WtComment[] {
   const flush = () => {
     if (!current) return;
     // 块与块之间的空行会被当作续行计入，收尾时清掉末尾多余换行
-    current.quote = trimLineBreaks(current.quote);
-    current.paragraph = trimLineBreaks(current.paragraph);
-    current.current = trimLineBreaks(current.current);
-    current.content = trimLineBreaks(current.content);
-    current.reply = trimLineBreaks(current.reply);
+    const c = current;
+    const messages: CommentMessage[] = [];
+    const legacyContent = trimLineBreaks(c.legacyContent);
+    if (legacyContent.trim()) messages.push({ by: c.origin, text: legacyContent });
+    for (const m of c.messages) {
+      const text = trimLineBreaks(m.text);
+      if (text.trim()) messages.push({ by: m.by, text });
+    }
+    const legacyReply = trimLineBreaks(c.legacyReply);
+    if (legacyReply.trim()) messages.push({ by: "agent", text: legacyReply });
+    const comment: WtComment = {
+      id: c.id,
+      origin: c.origin,
+      quote: trimLineBreaks(c.quote),
+      paragraph: trimLineBreaks(c.paragraph),
+      paragraphHint: c.paragraphHint,
+      lineHint: c.lineHint,
+      createdAt: c.createdAt,
+      messages,
+      current: trimLineBreaks(c.current),
+      ...(c.gone ? { gone: true } : {}),
+    };
     if (
-      current.quote.trim() !== "" ||
-      current.content.trim() !== "" ||
-      current.paragraph.trim() !== ""
+      comment.quote.trim() !== "" ||
+      comment.paragraph.trim() !== "" ||
+      messages.length > 0
     ) {
-      comments.push(current);
+      comments.push(comment);
     }
     current = null;
     lastField = null;
@@ -680,30 +844,57 @@ export function parseCommentFile(text: string): WtComment[] {
     const header = HEADER_RE.exec(raw);
     if (header) {
       flush();
+      inRejected = false;
       current = {
         id: Number(header[1]),
-        status: "pending",
+        origin: "author",
         quote: "",
         paragraph: "",
         paragraphHint: 0,
         lineHint: 0,
         createdAt: "",
-        content: "",
-        reply: "",
+        messages: [],
         current: "",
+        legacyContent: "",
+        legacyReply: "",
       };
+      continue;
+    }
+    if (REJECTED_HEAD_RE.test(raw)) {
+      flush();
+      inRejected = true;
+      continue;
+    }
+    if (inRejected) {
+      const item = LIST_ITEM_RE.exec(raw);
+      if (item) {
+        const line = item[1].trim();
+        if (line) rejected.push(line);
+      } else if (raw.trim() && /^(?: {2,}|\t+)/.test(raw) && rejected.length > 0) {
+        // 缩进续行：拼回上一行（「已否决」每条只占一行）
+        rejected[rejected.length - 1] += " " + raw.trim();
+      }
       continue;
     }
     if (!current) continue;
 
     const field = FIELD_RE.exec(raw);
     const label = field?.[1].trim() ?? "";
+    const speaker = field ? speakerOf(label) : null;
+    if (field && speaker) {
+      current.messages.push({ by: speaker, text: field[2] ?? "" });
+      lastField = "message";
+      continue;
+    }
     if (field && KNOWN_LABELS.has(label)) {
       const value = field[2] ?? "";
       lastField = null;
       switch (label) {
+        case "发起":
+          current.origin = speakerOf(value.trim()) ?? "author";
+          break;
         case "状态":
-          current.status = parseStatus(value);
+          // 旧格式字段：轮到谁由对话推出，这里忽略
           break;
         case "原文":
           current.quote = value;
@@ -716,6 +907,9 @@ export function parseCommentFile(text: string): WtComment[] {
         case "现文":
           current.current = value;
           lastField = "current";
+          break;
+        case "原文已删除":
+          current.gone = /是|true|yes/i.test(value);
           break;
         case "位置": {
           const para = /第\s*(\d+)\s*段/.exec(value);
@@ -730,12 +924,12 @@ export function parseCommentFile(text: string): WtComment[] {
           break;
         case "内容":
         case "批注":
-          current.content = value;
-          lastField = "content";
+          current.legacyContent = value;
+          lastField = "legacyContent";
           break;
         case "回复":
-          current.reply = value;
-          lastField = "reply";
+          current.legacyReply = value;
+          lastField = "legacyReply";
           break;
       }
       continue;
@@ -752,31 +946,55 @@ export function parseCommentFile(text: string): WtComment[] {
   flush();
 
   comments.sort((a, b) => a.id - b.id);
-  return comments;
+  return { comments, rejected };
+}
+
+/** 只要批注列表时用（定位、诊断等）。 */
+export function parseCommentFile(text: string): WtComment[] {
+  return parseCommentFileData(text).comments;
 }
 
 /* ---------- 给 Agent 的现成指令 ---------- */
 
 /**
- * 工具箱批注面板「复制处理指令」按钮用的话术。
- * 传入当前文档的批注统计后，指令里会写明待处理条数，避免 Agent 重复处理。
+ * 「复制批注指令」：请 Agent 通读全文、发起批注。
+ * 文章已有批注时同样适用，Agent 只补新的。
  */
-export function buildAgentPrompt(
+export function buildReviewPrompt(
   docPath: string,
-  counts?: { pending: number; resolved: number }
+  counts?: { open: number; rejected: number }
 ): string {
   const base = docBaseName(docPath);
   const sidecar = sidecarPathFor(docPath);
-  const scope = counts
-    ? `（目前待处理 ${counts.pending} 条；已处理 ${counts.resolved} 条不用重复处理）`
-    : "";
+  const existing =
+    counts && (counts.open > 0 || counts.rejected > 0)
+      ? `批注文件里已有 ${counts.open} 条进行中的批注${
+          counts.rejected > 0 ? `、${counts.rejected} 条已否决的意见` : ""
+        }：同一处已有批注的，在那条里追加消息，不要新开；已否决的意见不要再提。`
+      : "";
   return [
-    `请处理《${base}》里的批注${scope}。`,
+    `请通读《${base}》，把你的修改意见逐条写成批注，写进「${sidecar}」（没有就新建）。`,
     ``,
-    `打开「${sidecar}」，里面每条批注都有「原文 / 段落 / 状态 / 回复」几项。请逐条来：`,
-    `1. 对照每条批注的「原文」，在《${base}》里找到对应位置，按「批注」的要求修改；`,
-    `2. 改完后，把该条批注的「状态」改为「已处理」，并在「回复」里写明你做了什么改动；`,
-    `3. 如果你改写了「原文」对应的文字，请把改完后该处现在的文字照抄进「现文」（新增一行：- 现文：……）。这样作者回到正文时，批注能跟到新的位置上；`,
-    `4. 请保留批注的编号与格式，不要删除任何批注条目。`,
+    `格式和规则以批注文件开头的说明为准（新建文件时照下面写）：`,
+    `1. 每处意见一条：「### 批注 N」下依次写「- 发起：Agent」「- 原文：……」「- 段落：……」「- 位置：第 X 段 · 约第 Y 行」「- 创建：YYYY-MM-DD HH:mm」「- Agent：意见」；`,
+    `2. 「原文」必须从《${base}》逐字复制，取一句里有区分度的短片段；「段落」照抄所在整段；`,
+    `3. 这一轮只提意见，不要修改《${base}》；`,
+    `4. 已有批注定位时先找「现文」，找不到再找「原文」；都找不到也不要改写它们；`,
+    ...(existing ? [`5. ${existing}`] : []),
+  ].join("\n");
+}
+
+/** 「复制回复指令」：请 Agent 回复所有轮到它的批注。 */
+export function buildReplyPrompt(docPath: string, waiting: number): string {
+  const base = docBaseName(docPath);
+  const sidecar = sidecarPathFor(docPath);
+  return [
+    `请处理「${sidecar}」里轮到你的批注（目前 ${waiting} 条：最后一条消息是「作者」的那些）。`,
+    ``,
+    `1. 只回复这些批注，在每条末尾追加一行「- Agent：……」；其他批注、已有消息、「已否决」一律不动；`,
+    `2. 讨论中只在消息里给改写方案，不要修改《${base}》；`,
+    `3. 作者明确要求改（如「改」「就这样改」）的，修改《${base}》，把改完后该处的文字覆盖进「现文」，再追加一条 Agent 消息说明改了什么；`,
+    `4. 定位时先找「现文」（作者自己改过的地方插件会写回），找不到再找「原文」；都找不到就在回复里说明，不要改写「原文」「段落」去指向别的句子；`,
+    `5. 不要新开批注，不要删除批注条目，不要添加状态字段。`,
   ].join("\n");
 }

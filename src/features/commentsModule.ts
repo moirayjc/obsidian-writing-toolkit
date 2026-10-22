@@ -12,7 +12,10 @@ import {
   AnchorLocator,
   LOCATE_VIA_LABELS,
   WtComment,
-  buildAgentPrompt,
+  buildReplyPrompt,
+  buildReviewPrompt,
+  commentTurn,
+  detectCommentTampering,
   docPathForSidecar,
   formatTimestamp,
   isSidecarPath,
@@ -20,11 +23,15 @@ import {
   locateAll,
   nextCommentId,
   paragraphAt,
+  rejectedLine,
+  restoreTamperedComments,
   sidecarPathFor,
+  type CommentFileData,
 } from "../comments";
 import {
   buildCommentExtensions,
   dispatchCommentRefresh,
+  type AnchorEdit,
 } from "../commentDecor";
 import {
   CommentPanelBody,
@@ -41,10 +48,7 @@ import type {
   FeatureModule,
 } from "../host/pluginHost";
 import { isInternalPath } from "../project";
-import {
-  CommentDraftModal,
-  ConfirmModal,
-} from "../promptModal";
+import { CommentDraftModal } from "../promptModal";
 import { UI_SLOT_SIDEBAR_COMMENTS } from "../uiSlots";
 
 export interface CommentPanelHandle {
@@ -60,7 +64,14 @@ export interface CommentStoreAdapter {
   ensureLoaded(docPath: string): void;
   invalidate(docPath: string): void;
   invalidatePrefix(prefix: string): void;
-  save(docPath: string, comments: readonly WtComment[]): Promise<void>;
+  /** rejected 省略时沿用最近一次读到的「已否决」区。 */
+  save(
+    docPath: string,
+    comments: readonly WtComment[],
+    rejected?: readonly string[]
+  ): Promise<void>;
+  /** 最近一次读到的「已否决」区（可选，测试桩可省略，视为空）。 */
+  getRejected?(docPath: string): string[];
   handleModified(path: string): string | null;
   handleDeleted(path: string): string | null;
   handleRenamed(oldPath: string, newPath: string): string[];
@@ -100,6 +111,11 @@ export interface CommentsModuleOptions {
   isFormatScopeAllowed(path: string): boolean;
   /** 数据变化后通知 UI Shell 更新徽标等外围信息。 */
   onChanged?(): void;
+  /**
+   * 是不是移动端。批注只在桌面端用：批注文件在隐藏目录 `.wt-comments/`，作者的同步方案
+   * 不同步它，手机上写的批注会孤立在手机里；移动端不画批注痕迹、不给添加入口。
+   */
+  isMobile?(): boolean;
 }
 
 type CommentPanelFactory = (
@@ -165,8 +181,6 @@ export function createCommentsModule(
   const buildExtensions = factories.buildExtensions ?? buildCommentExtensions;
   const refreshDecor = factories.refreshDecor ?? dispatchCommentRefresh;
   const createDraft = factories.createDraft ?? ((...args) => new CommentDraftModal(...args));
-  const createConfirm =
-    factories.createConfirm ?? ((...args) => new ConfirmModal(...args));
 
   let active = false;
   let acceptingCalls = false;
@@ -301,16 +315,29 @@ export function createCommentsModule(
       });
   }
 
-  async function mutateComments(
+  function rejectedOf(docPath: string): string[] {
+    return requireRuntime().store.getRejected?.(docPath) ?? [];
+  }
+
+  /**
+   * 读盘 → 改 → 写回整份批注文件（批注 + 「已否决」区）。
+   * 写前一定重读：内存里的列表可能是 Agent 改写之前的，拿它整份覆盖会冲掉 Agent 的回复。
+   */
+  async function mutateFile(
     docPath: string,
-    mutator: (list: WtComment[]) => WtComment[]
+    mutator: (data: CommentFileData) => CommentFileData
   ): Promise<boolean> {
     const runtime = requireRuntime();
     try {
       await enqueueMutation(async () => {
+        const before = runtime.store.getCached(docPath);
         const list = await runtime.store.reload(docPath);
-        const next = mutator([...list]);
-        await runtime.store.save(docPath, next);
+        if (before) checkTampering(docPath, before, list);
+        const next = mutator({
+          comments: [...list],
+          rejected: rejectedOf(docPath),
+        });
+        await runtime.store.save(docPath, next.comments, next.rejected);
       });
       onCommentsChanged(docPath);
       return true;
@@ -319,6 +346,59 @@ export function createCommentsModule(
       new Notice("批注保存失败（详见控制台）");
       return false;
     }
+  }
+
+  function mutateComments(
+    docPath: string,
+    mutator: (list: WtComment[]) => WtComment[]
+  ): Promise<boolean> {
+    return mutateFile(docPath, (data) => ({
+      ...data,
+      comments: mutator(data.comments),
+    }));
+  }
+
+  /**
+   * 批注文件被外部改写后检查越权：条目消失（只有作者能结案）或已有消息被改。
+   * 只提示并给「恢复」，不自动回滚。
+   */
+  function checkTampering(
+    docPath: string,
+    before: readonly WtComment[],
+    after: readonly WtComment[]
+  ): void {
+    const report = detectCommentTampering(before, after);
+    if (report.removed.length === 0 && report.altered.length === 0) return;
+    const ids = (list: readonly WtComment[]) =>
+      list.map((c) => `#${c.id}`).join("、");
+    const parts: string[] = [];
+    if (report.removed.length > 0) parts.push(`删除了批注 ${ids(report.removed)}`);
+    if (report.altered.length > 0) {
+      parts.push(`改动了批注 ${ids(report.altered)} 的已有消息`);
+    }
+    showActionNotice(
+      `批注文件被外部${parts.join("，")}（只有你能结案）`,
+      "恢复",
+      15000,
+      () => {
+        if (!acceptingCalls) return;
+        void mutateComments(docPath, (list) =>
+          restoreTamperedComments(list, report)
+        ).then((ok) => {
+          if (ok) new Notice("已恢复");
+        });
+      }
+    );
+  }
+
+  /** 外部改写后重读并检查越权（回到窗口、vault modify 时用）。 */
+  async function reloadAndCheck(docPath: string): Promise<void> {
+    const runtime = requireRuntime();
+    const before = runtime.store.getCached(docPath);
+    const after = await runtime.store.reload(docPath);
+    if (!active) return;
+    if (before) checkTampering(docPath, before, after);
+    onCommentsChanged(docPath);
   }
 
   async function readDocTextForLocate(
@@ -344,7 +424,13 @@ export function createCommentsModule(
     const runtime = requireRuntime();
     const docPath = activeCommentDocPath();
     if (!docPath) {
-      return { docPath: null, docName: null, loading: false, items: [] };
+      return {
+        docPath: null,
+        docName: null,
+        loading: false,
+        items: [],
+        rejectedCount: 0,
+      };
     }
     const activeFile = runtime.app.workspace.getActiveFile();
     const base = (docPath.split("/").pop() ?? docPath).replace(/\.md$/i, "");
@@ -374,124 +460,154 @@ export function createCommentsModule(
       const hit = byId.get(comment.id);
       return {
         id: comment.id,
-        status: comment.status,
+        origin: comment.origin,
         quote: comment.quote,
-        content: comment.content,
-        reply: comment.reply,
+        messages: comment.messages.map((m) => ({ ...m })),
+        turn: commentTurn(comment),
+        gone: comment.gone === true,
         lineHint: comment.lineHint,
         createdAt: comment.createdAt,
         locatedLine: hit ? hit.lineFrom : null,
         via: hit ? hit.via : null,
       };
     });
-    return { docPath, docName, loading, items };
+    return {
+      docPath,
+      docName,
+      loading,
+      items,
+      rejectedCount: rejectedOf(docPath).length,
+    };
   }
 
+  /** 编辑作者自己的最后一条消息；Agent 已回复（最后一条不是作者）时不能改。 */
   function openCommentEditor(path: string, comment: WtComment): void {
     const runtime = requireRuntime();
+    const index = comment.messages.length - 1;
+    const last = comment.messages[index];
+    if (!last || last.by !== "author") {
+      new Notice("Agent 已经回复，前面的消息不能再改了；有补充请直接回复");
+      return;
+    }
     createDraft(
       runtime.app,
-      `批注 ${comment.id}`,
-      comment.content,
-      (content) => {
+      `批注 ${comment.id} · 修改你的消息`,
+      last.text,
+      (text) => {
         if (!acceptingCalls) return;
+        const trimmed = text.trim();
+        if (!trimmed && comment.messages.length === 1) {
+          new Notice("这是唯一一条消息，不能清空；不需要这条批注就点「已解决」");
+          return;
+        }
         void mutateComments(path, (list) =>
-          list.map((item) =>
-            item.id === comment.id ? { ...item, content } : item
-          )
+          list.map((item) => {
+            if (item.id !== comment.id) return item;
+            // 写盘前已重读：只在最后一条仍是这条作者消息时才改，免得改到 Agent 刚追加的回复
+            const at = item.messages.length - 1;
+            const current = item.messages[at];
+            if (at !== index || current?.by !== "author") return item;
+            const messages = trimmed
+              ? item.messages.map((m, k) => (k === at ? { ...m, text } : m))
+              : item.messages.slice(0, at);
+            return { ...item, messages };
+          })
         );
       }
     ).open();
   }
 
-  async function toggleCommentResolvedFor(
+  async function replyToComment(
     path: string,
-    id: number
-  ): Promise<void> {
-    await mutateComments(path, (list) =>
-      list.map((comment) =>
-        comment.id === id
-          ? {
-              ...comment,
-              status:
-                comment.status === "resolved" ? "pending" : "resolved",
-            }
-          : comment
-      )
+    id: number,
+    text: string
+  ): Promise<boolean> {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    let found = false;
+    const ok = await mutateComments(path, (list) =>
+      list.map((item) => {
+        if (item.id !== id) return item;
+        found = true;
+        return {
+          ...item,
+          messages: [...item.messages, { by: "author", text: trimmed }],
+        };
+      })
     );
+    if (ok && !found) {
+      new Notice(`批注 #${id} 已经不在了（可能刚被改动），回复没有保存`);
+      return false;
+    }
+    return ok;
   }
 
-  function showUndoNotice(text: string, onUndo: () => void): void {
+  function showActionNotice(
+    text: string,
+    buttonText: string,
+    duration: number,
+    onClick: () => void
+  ): void {
     const fragment = createFragment();
     const label = createSpan({ text });
-    const undoBtn = createEl("button", {
+    const actionBtn = createEl("button", {
       cls: "wt-notice-undo",
-      text: "撤销",
+      text: buttonText,
     });
-    fragment.append(label, undoBtn);
-    const notice = new Notice(fragment, 6000);
-    // 按钮寿命 = Notice 节点寿命（6 秒后整体回收），用 onclick 避免登记一个
+    fragment.append(label, actionBtn);
+    const notice = new Notice(fragment, duration);
+    // 按钮寿命 = Notice 节点寿命（到时整体回收），用 onclick 避免登记一个
     // 脱离 EventScope 的全局监听器。
-    undoBtn.onclick = () => {
+    actionBtn.onclick = () => {
       notice.hide();
-      onUndo();
+      onClick();
     };
   }
 
-  async function deleteCommentById(path: string, id: number): Promise<void> {
+  /**
+   * 结案：已解决 = 整条删除（不归档）；不采纳 = 删除并在「已否决」区追加一行。
+   * 两者都给 6 秒撤销（撤销只存在内存里）。
+   */
+  async function closeComment(
+    path: string,
+    id: number,
+    reject: boolean
+  ): Promise<void> {
     let removed: WtComment | null = null;
     let removedIndex = 0;
-    const ok = await mutateComments(path, (list) => {
-      const index = list.findIndex((comment) => comment.id === id);
-      if (index < 0) return list;
+    let line = "";
+    const ok = await mutateFile(path, (data) => {
+      const index = data.comments.findIndex((comment) => comment.id === id);
+      if (index < 0) return data;
       removedIndex = index;
-      removed = list[index];
-      return list.filter((comment) => comment.id !== id);
+      removed = data.comments[index];
+      line = reject ? rejectedLine(removed) : "";
+      return {
+        comments: data.comments.filter((comment) => comment.id !== id),
+        rejected: reject ? [...data.rejected, line] : data.rejected,
+      };
     });
     if (!ok || !removed) return;
-    const deleted = removed;
-    showUndoNotice(`已删除批注 #${id}`, () => {
-      void mutateComments(path, (list) => {
-        if (list.some((comment) => comment.id === id)) return list;
-        const next = [...list];
-        next.splice(Math.min(removedIndex, next.length), 0, deleted);
-        return next;
-      });
-    });
-  }
-
-  async function runClearResolvedComments(
-    docPath?: string
-  ): Promise<void> {
-    const runtime = requireRuntime();
-    const path = docPath || activeCommentDocPath();
-    if (!path) {
-      new Notice("先打开一篇文档");
-      return;
-    }
-    const list = await runtime.store.load(path);
-    const resolved = list.filter(
-      (comment) => comment.status === "resolved"
-    ).length;
-    if (resolved === 0) {
-      new Notice("这篇文档还没有已处理的批注");
-      return;
-    }
-    createConfirm(
-      runtime.app,
-      "清除已处理的批注",
-      `将删除这篇文档里的 ${resolved} 条已处理批注（Agent 的回复会一起删掉），正文不受影响。此操作不能撤销。`,
-      "清除",
+    const closed = removed;
+    showActionNotice(
+      reject ? `批注 #${id} 不采纳，已记进「已否决」` : `批注 #${id} 已解决`,
+      "撤销",
+      6000,
       () => {
         if (!acceptingCalls) return;
-        void mutateComments(path, (comments) =>
-          comments.filter((comment) => comment.status !== "resolved")
-        ).then((ok) => {
-          if (ok) new Notice(`已清除 ${resolved} 条已处理批注`);
+        void mutateFile(path, (data) => {
+          if (data.comments.some((comment) => comment.id === id)) return data;
+          const comments = [...data.comments];
+          comments.splice(Math.min(removedIndex, comments.length), 0, closed);
+          let rejected = data.rejected;
+          if (reject) {
+            const at = rejected.lastIndexOf(line);
+            if (at >= 0) rejected = rejected.filter((_, k) => k !== at);
+          }
+          return { comments, rejected };
         });
-      },
-      true
-    ).open();
+      }
+    );
   }
 
   async function revealCommentInDoc(
@@ -559,6 +675,7 @@ export function createCommentsModule(
   async function addCommentForView(view: EditorView): Promise<void> {
     const runtime = requireRuntime();
     const settings = runtime.services.settings.get();
+    if (options.isMobile?.()) return;
     if (!settings.commentsEnabled) {
       new Notice("批注功能已关闭（设置 → 写作 → 批注）");
       return;
@@ -585,14 +702,13 @@ export function createCommentsModule(
         ...list,
         {
           id,
-          status: "pending",
+          origin: "author",
           quote,
           paragraph: paragraph?.text.trim() ?? "",
           paragraphHint: paragraph?.index ?? 0,
           lineHint,
           createdAt: formatTimestamp(),
-          content: "",
-          reply: "",
+          messages: [],
           current: "",
         },
       ];
@@ -605,10 +721,17 @@ export function createCommentsModule(
       "",
       (content) => {
         if (!acceptingCalls) return;
+        const text = content.trim();
         void mutateComments(path, (list) =>
-          list.map((comment) =>
-            comment.id === id ? { ...comment, content } : comment
-          )
+          text
+            ? list.map((comment) =>
+                comment.id === id
+                  ? { ...comment, messages: [{ by: "author", text }] }
+                  : comment
+              )
+            : list.filter(
+                (comment) => comment.id !== id || comment.messages.length > 0
+              )
         );
         new Notice(`批注已保存到「${sidecarPath}」`);
       },
@@ -616,12 +739,37 @@ export function createCommentsModule(
         if (!acceptingCalls) return;
         void mutateComments(path, (list) =>
           list.filter(
-            (comment) =>
-              comment.id !== id || comment.content.trim() !== ""
+            (comment) => comment.id !== id || comment.messages.length > 0
           )
         );
       }
     ).open();
+  }
+
+  /**
+   * 作者在编辑器里改了批注对应的文字：把现在的文字写进「现文」并更新段落；
+   * 整段删掉的标「原文已删除」，定位到删除处所在的段落。「原文」保持不动，
+   * 留给 Agent 看当初说的是哪句。
+   */
+  function applyAnchorEdits(path: string, edits: readonly AnchorEdit[]): void {
+    if (!acceptingCalls || edits.length === 0) return;
+    const byId = new Map(edits.map((edit) => [edit.id, edit]));
+    void mutateComments(path, (list) =>
+      list.map((item) => {
+        const edit = byId.get(item.id);
+        if (!edit) return item;
+        const next: WtComment = {
+          ...item,
+          current: edit.gone ? "" : edit.text,
+          paragraph: edit.paragraph || item.paragraph,
+          paragraphHint: edit.paragraphHint || item.paragraphHint,
+          lineHint: edit.lineHint || item.lineHint,
+        };
+        if (edit.gone) next.gone = true;
+        else delete next.gone;
+        return next;
+      })
+    );
   }
 
   function rebindComment(docPath: string | null, id: number): void {
@@ -658,6 +806,7 @@ export function createCommentsModule(
               paragraphHint: paragraph?.index ?? 0,
               lineHint,
               current: "",
+              gone: undefined,
             }
           : item
       )
@@ -665,7 +814,10 @@ export function createCommentsModule(
     new Notice(`已把批注 #${id} 重新绑定到选中的文字`);
   }
 
-  function copyAgentPrompt(docPath?: string): void {
+  function copyPrompt(
+    docPath: string | undefined,
+    build: (path: string, list: WtComment[]) => { text: string; done: string } | null
+  ): void {
     const runtime = requireRuntime();
     const path = docPath || activeCommentDocPath();
     if (!path) {
@@ -673,24 +825,12 @@ export function createCommentsModule(
       return;
     }
     void runtime.store
-      .load(path)
+      .reload(path)
       .then((list) => {
-        const pending = list.filter(
-          (comment) => comment.status === "pending"
-        ).length;
-        if (pending === 0) {
-          new Notice("这篇文档没有待处理的批注");
-          return;
-        }
-        const prompt = buildAgentPrompt(path, {
-          pending,
-          resolved: list.length - pending,
-        });
-        navigator.clipboard.writeText(prompt).then(
-          () =>
-            new Notice(
-              `已复制处理指令（${pending} 条待处理）：发给 Agent，它会按批注文件改稿`
-            ),
+        const prompt = build(path, list);
+        if (!prompt) return;
+        navigator.clipboard.writeText(prompt.text).then(
+          () => new Notice(prompt.done),
           () => new Notice("复制到剪贴板失败")
         );
       })
@@ -698,6 +838,30 @@ export function createCommentsModule(
         console.error("[Writing Toolkit:comments] 读取批注失败", error);
         new Notice("读取批注失败（详见控制台）");
       });
+  }
+
+  function copyReviewPrompt(docPath?: string): void {
+    copyPrompt(docPath, (path, list) => ({
+      text: buildReviewPrompt(path, {
+        open: list.length,
+        rejected: rejectedOf(path).length,
+      }),
+      done: "已复制批注指令：发给 Agent，它会通读全文、把意见写成批注",
+    }));
+  }
+
+  function copyReplyPrompt(docPath?: string): void {
+    copyPrompt(docPath, (path, list) => {
+      const waiting = list.filter((c) => commentTurn(c) === "agent").length;
+      if (waiting === 0) {
+        new Notice("没有等 Agent 回复的批注");
+        return null;
+      }
+      return {
+        text: buildReplyPrompt(path, waiting),
+        done: `已复制回复指令（${waiting} 条等 Agent）：发给 Agent，它会逐条回复`,
+      };
+    });
   }
 
   async function pathExists(path: string): Promise<boolean> {
@@ -776,8 +940,25 @@ export function createCommentsModule(
   function handleSidecarChanged(path: string): void {
     if (!active) return;
     const runtime = requireRuntime();
-    const docPath = runtime.store.handleModified(path);
-    if (docPath) onCommentsChanged(docPath);
+    if (!isSidecarPath(path)) return;
+    const docPath = docPathForSidecar(path);
+    const before = runtime.store.getCached(docPath);
+    runtime.store.handleModified(path);
+    if (!before) {
+      onCommentsChanged(docPath);
+      return;
+    }
+    void runtime.store
+      .load(docPath)
+      .then((after) => {
+        if (!active) return;
+        checkTampering(docPath, before, after);
+        onCommentsChanged(docPath);
+      })
+      .catch((error) => {
+        console.error("[Writing Toolkit:comments] 重读批注文件失败", error);
+        onCommentsChanged(docPath);
+      });
   }
 
   function handleSidecarDeleted(path: string): void {
@@ -949,10 +1130,11 @@ export function createCommentsModule(
             void revealCommentInDoc(file, comment);
           }
         },
-        toggleCommentResolved(docPath, id) {
+        replyToComment(docPath, id, text) {
           assertAcceptingCalls();
           const path = docPath || activeCommentDocPath();
-          if (path) void toggleCommentResolvedFor(path, id);
+          if (!path) return Promise.resolve(false);
+          return replyToComment(path, id, text);
         },
         editComment(docPath, id) {
           assertAcceptingCalls();
@@ -963,22 +1145,27 @@ export function createCommentsModule(
           );
           if (comment) openCommentEditor(path, comment);
         },
-        deleteComment(docPath, id) {
+        resolveComment(docPath, id) {
           assertAcceptingCalls();
           const path = docPath || activeCommentDocPath();
-          if (path) void deleteCommentById(path, id);
+          if (path) void closeComment(path, id, false);
+        },
+        rejectComment(docPath, id) {
+          assertAcceptingCalls();
+          const path = docPath || activeCommentDocPath();
+          if (path) void closeComment(path, id, true);
         },
         rebindComment(docPath, id) {
           assertAcceptingCalls();
           rebindComment(docPath, id);
         },
-        copyAgentPrompt(docPath) {
+        copyReviewPrompt(docPath) {
           assertAcceptingCalls();
-          copyAgentPrompt(docPath);
+          copyReviewPrompt(docPath);
         },
-        clearResolvedComments(docPath) {
+        copyReplyPrompt(docPath) {
           assertAcceptingCalls();
-          void runClearResolvedComments(docPath);
+          copyReplyPrompt(docPath);
         },
       };
 
@@ -1022,7 +1209,7 @@ export function createCommentsModule(
 
       context.events.onWorkspace("editor-menu", (menu, editor) => {
         const settings = context.services.settings.get();
-        if (!settings.commentsEnabled) return;
+        if (!settings.commentsEnabled || options.isMobile?.()) return;
         const view = context.services.editor.getViewForEditor(editor);
         if (!view) return;
         const path = context.services.editor.getFilePath(view);
@@ -1070,12 +1257,7 @@ export function createCommentsModule(
           if (!active) return;
           const docPath = activeCommentDocPath();
           if (!docPath) return;
-          void localStore
-            .reload(docPath)
-            .then(() => {
-              if (!active) return;
-              onCommentsChanged(docPath);
-            })
+          void reloadAndCheck(docPath)
             .catch((error) => {
               console.error("[Writing Toolkit:comments] 重读批注文件失败", error);
             });
@@ -1084,12 +1266,15 @@ export function createCommentsModule(
 
       context.registrations.registerEditorExtension(
         buildExtensions({
-          enabled: () => context.services.settings.get().commentsEnabled,
+          enabled: () =>
+            context.services.settings.get().commentsEnabled &&
+            !options.isMobile?.(),
           getComments: (path) => localStore.getCached(path),
           ensureLoaded: (path) => primeComments(path),
           onRevealComment: (path, comment) => {
             if (acceptingCalls) void revealInPanel(path, comment.id);
           },
+          onAnchorsEdited: (path, edits) => applyAnchorEdits(path, edits),
         })
       );
 

@@ -121,8 +121,8 @@ async function main() {
     const { vault, app } = makeVault();
     const store = new CommentStore(app);
     await store.save(DOC, [{
-      id: 1, status: "pending", quote: "原文", paragraph: "", paragraphHint: 0,
-      lineHint: 1, createdAt: "2026-10-16 10:00", content: "内容", reply: "", current: "",
+      id: 1, origin: "author", quote: "原文", paragraph: "", paragraphHint: 0,
+      lineHint: 1, createdAt: "2026-10-16 10:00", messages: [{ by: "author", text: "内容" }], current: "",
     }]);
     r.check("批注文件已创建", vault.files.has(SIDECAR));
     r.check("读回 1 条", (await store.load(DOC)).length === 1);
@@ -182,14 +182,13 @@ async function main() {
     try {
       await store.save(DOC, [{
         id: 9,
-        status: "pending",
+        origin: "author",
         quote: "未落盘",
         paragraph: "",
         paragraphHint: 0,
         lineHint: 1,
         createdAt: "2026-10-16 10:00",
-        content: "不应留在缓存",
-        reply: "",
+        messages: [{ by: "author", text: "不应留在缓存" }],
         current: "",
       }]);
     } catch {
@@ -262,14 +261,13 @@ async function main() {
     const store = new CommentStore(app);
     const next = [{
       id: 9,
-      status: "pending",
+      origin: "author",
       quote: "新内容",
       paragraph: "",
       paragraphHint: 0,
       lineHint: 1,
       createdAt: "2026-10-17 12:00",
-      content: "只保留新缓存",
-      reply: "",
+      messages: [{ by: "author", text: "只保留新缓存" }],
       current: "",
     }];
     const save = store.save(DOC, next);
@@ -394,13 +392,141 @@ async function main() {
     };
     const store = new CommentStore(app);
     await store.save(DOC, [{
-      id: 1, status: "pending", quote: "原文", paragraph: "", paragraphHint: 0,
-      lineHint: 1, createdAt: "2026-10-18 10:00", content: "内容", reply: "", current: "",
+      id: 1, origin: "author", quote: "原文", paragraph: "", paragraphHint: 0,
+      lineHint: 1, createdAt: "2026-10-18 10:00", messages: [{ by: "author", text: "内容" }], current: "",
     }]);
     const target = ".wt-comments/正文/第1章.批注.md";
     r.check("新批注写入 .wt-comments 走 adapter", disk.has(target));
     store.invalidate(DOC);
     r.check("从隐藏目录读回批注", (await store.load(DOC)).length === 1);
+  }
+
+  // 15) 新格式：对话往返（序列化 → 解析一致），多行消息、发起人、现文、「已否决」区
+  {
+    const item = {
+      id: 3, origin: "agent", quote: "雨下到第七天", paragraph: "雨下到第七天，渡口的船都歇了。",
+      paragraphHint: 2, lineHint: 5, createdAt: "2026-10-22 14:00",
+      messages: [
+        { by: "agent", text: "开头节奏偏慢。\n建议直接进人物动作。" },
+        { by: "author", text: "同意，但别删「第七天」" },
+        { by: "agent", text: "改写方案：……" },
+      ],
+      current: "雨下到第七天，他把船拴紧了。",
+    };
+    const rejected = ["「船都歇了」：换成更具体的声音", "「渡口」：改个地名"];
+    const text = comments.serializeCommentFile(DOC, [item], rejected);
+    const data = comments.parseCommentFileData(text);
+    r.check(
+      "对话往返：消息顺序、说话人、多行内容都一致",
+      data.comments.length === 1 &&
+        JSON.stringify(data.comments[0]) === JSON.stringify(item),
+      JSON.stringify(data.comments[0])
+    );
+    r.check(
+      "「已否决」区往返一致，且不被当成批注条目或上一条的续行",
+      JSON.stringify(data.rejected) === JSON.stringify(rejected) &&
+        data.comments[0].messages[2].text === "改写方案：……"
+    );
+    r.check("新格式不写「状态」字段", !/- 状态：/.test(text));
+    r.check(
+      "轮到谁由最后一条推出：最后是 Agent → 等作者",
+      comments.commentTurn(data.comments[0]) === "author" &&
+        comments.commentTurn({ ...item, messages: item.messages.slice(0, 2) }) === "agent"
+    );
+    r.check("协议抬头保留多行缩进示例", text.includes("- Agent：第一点\n  第二点"));
+  }
+
+  // 16) 旧格式：内容 → 第一条消息，回复 → Agent 消息，状态忽略
+  {
+    const legacy = [
+      "# 批注 · 第1章",
+      "",
+      "### 批注 1",
+      "- 状态：已处理",
+      "- 原文：他把灯放下",
+      "- 内容：动作顺序别扭",
+      "- 回复：已调整",
+      "  第二行说明",
+      "",
+      "### 批注 2",
+      "- 状态：待处理",
+      "- 原文：门开了",
+      "- 内容：加一点声音",
+      "- 回复：",
+      "",
+    ].join("\n");
+    const [a, b] = comments.parseCommentFile(legacy);
+    r.check(
+      "旧格式已处理的条目：作者意见 + Agent 回复，变成等作者",
+      a.messages.length === 2 &&
+        a.messages[0].by === "author" && a.messages[0].text === "动作顺序别扭" &&
+        a.messages[1].by === "agent" && a.messages[1].text === "已调整\n第二行说明" &&
+        comments.commentTurn(a) === "author",
+      JSON.stringify(a)
+    );
+    r.check(
+      "旧格式空回复不产生空消息，仍等 Agent",
+      b.messages.length === 1 && comments.commentTurn(b) === "agent"
+    );
+    const resaved = comments.serializeCommentFile(DOC, [a, b]);
+    r.check(
+      "旧格式下次保存写成新格式",
+      !resaved.includes("- 内容：") && !resaved.includes("- 回复：") &&
+        resaved.includes("- 作者：动作顺序别扭") && resaved.includes("- Agent：已调整")
+    );
+  }
+
+  // 17) 保存时没传「已否决」：沿用读到的，不被批注操作冲掉；批注清空但仍有否决记录时不删文件
+  {
+    const { vault, app } = makeVault();
+    vault.files.set(SIDECAR, SAMPLE + "\n## 已否决\n- 「他走了」：别改\n");
+    const store = new CommentStore(app);
+    await store.load(DOC);
+    await store.save(DOC, []);
+    r.check(
+      "批注清空但有「已否决」：文件保留且否决记录还在",
+      vault.files.has(SIDECAR) &&
+        comments.parseCommentFileData(vault.files.get(SIDECAR)).rejected.length === 1 &&
+        store.getRejected(DOC).length === 1
+    );
+    await store.save(DOC, [], []);
+    r.check("批注与「已否决」都清空才删文件", !vault.files.has(SIDECAR));
+  }
+
+  // 18) 越权检测：删条目 / 改已有消息算越权；追加消息、新开批注、改现文不算
+  {
+    const base = comments.parseCommentFile(SAMPLE);
+    const ok = [
+      { ...base[0], current: "新现文", messages: [...base[0].messages, { by: "agent", text: "回复" }] },
+      { ...base[0], id: 2 },
+    ];
+    const clean = comments.detectCommentTampering(base, ok);
+    r.check("追加消息 / 新开批注 / 改现文不算越权", clean.removed.length === 0 && clean.altered.length === 0);
+    const gone = comments.detectCommentTampering(base, []);
+    const edited = comments.detectCommentTampering(base, [
+      { ...base[0], messages: [{ by: "author", text: "被改了" }] },
+    ]);
+    r.check(
+      "删条目、改已有消息都算越权",
+      gone.removed.length === 1 && edited.altered.length === 1
+    );
+    const restored = comments.restoreTamperedComments([], gone);
+    r.check("恢复把被删条目放回", restored.length === 1 && restored[0].id === 1);
+  }
+
+  // 19) 给 Agent 的两份指令
+  {
+    const review = comments.buildReviewPrompt(DOC, { open: 2, rejected: 1 });
+    const reply = comments.buildReplyPrompt(DOC, 3);
+    r.check(
+      "批注指令：要求逐字复制原文、不改正文，并提醒已有批注与已否决",
+      review.includes("逐字复制") && review.includes("不要修改") &&
+        review.includes("已否决") && review.includes(SIDECAR)
+    );
+    r.check(
+      "回复指令：只回轮到 Agent 的、写明条数、要求改正文时更新现文",
+      reply.includes("3 条") && reply.includes("现文") && reply.includes("不要删除批注条目")
+    );
   }
 
   // 顺手确认编译出来的是真实现（防止抽样到空模块）

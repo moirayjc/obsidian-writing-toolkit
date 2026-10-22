@@ -4,22 +4,32 @@
  * 渲染逻辑在 CommentPanelBody 里，挂在工具箱侧栏的「批注」标签上
  * （标签上有计数徽标）。批注面板不单独做视图：入口统一在工具箱里。
  *
+ * 两层：列表页（「等你 / 等 Agent / 全部」标签 + 每条一行，点一行跳正文并进详情）
+ * 与单条详情页（原文、完整对话、回复框、结案按钮；内容可选中复制，点了不跳转）。
+ * 结案只有两种，都只能在详情页点：「已解决」（整条删掉）与「不采纳」
+ * （删掉并记进「已否决」区，让 Agent 别再提）。
+ *
  * 与 main 之间通过 CommentPanelHost 接口对接（避免循环 import）。
  */
-import { setIcon } from "obsidian";
 import {
-  COMMENT_STATUS_LABELS,
-  CommentStatus,
+  COMMENT_SPEAKER_LABELS,
+  COMMENT_TURN_LABELS,
+  CommentMessage,
+  CommentSpeaker,
+  CommentTurn,
   LOCATE_VIA_LABELS,
   LocateVia,
 } from "./comments";
 
 export interface CommentPanelItem {
   id: number;
-  status: CommentStatus;
+  origin: CommentSpeaker;
   quote: string;
-  content: string;
-  reply: string;
+  messages: CommentMessage[];
+  /** 轮到谁（由最后一条消息推出） */
+  turn: CommentTurn;
+  /** 原文已被作者删掉 */
+  gone: boolean;
   lineHint: number;
   createdAt: string;
   /** 当前定位到的行号；null 表示找不到原文 */
@@ -34,6 +44,8 @@ export interface CommentPanelModel {
   /** 批注还在异步读取中 */
   loading: boolean;
   items: CommentPanelItem[];
+  /** 「已否决」区的条数 */
+  rejectedCount: number;
 }
 
 /**
@@ -49,17 +61,20 @@ export interface CommentPanelHost {
   /** 读当前活动文档的批注（异步，含定位信息）。 */
   getCommentPanelModel(): Promise<CommentPanelModel>;
   jumpToComment(docPath: string, id: number): void;
-  toggleCommentResolved(docPath: string, id: number): void;
-  /** 编辑某条批注（屏幕居中的输入框）。 */
+  /** 作者在某条批注下追加一条消息；保存成功返回 true。 */
+  replyToComment(docPath: string, id: number, text: string): Promise<boolean>;
+  /** 编辑作者自己的最后一条消息（屏幕居中的输入框）；Agent 回复后不能再改。 */
   editComment(docPath: string, id: number): void;
-  /** 删除某条批注（删掉后可在提示里撤销）。 */
-  deleteComment(docPath: string, id: number): void;
+  /** 已解决：整条删除（不归档，6 秒内可撤销）。 */
+  resolveComment(docPath: string, id: number): void;
+  /** 不采纳：整条删除并记进「已否决」区（6 秒内可撤销）。 */
+  rejectComment(docPath: string, id: number): void;
   /** 锚点失效的批注：进入「重新绑定」流程（在正文里选中新位置）。 */
   rebindComment(docPath: string, id: number): void;
-  /** 复制该文档给 Agent 的处理指令；docPath 省略时作用于当前活动文档。 */
-  copyAgentPrompt(docPath?: string): void;
-  /** 清除已处理批注；docPath 省略时作用于当前活动文档。 */
-  clearResolvedComments(docPath?: string): void;
+  /** 复制「请 Agent 通读并发起批注」的指令；docPath 省略时作用于当前活动文档。 */
+  copyReviewPrompt(docPath?: string): void;
+  /** 复制「请 Agent 回复轮到它的批注」的指令；docPath 省略时作用于当前活动文档。 */
+  copyReplyPrompt(docPath?: string): void;
 }
 
 function truncate(text: string, max: number): string {
@@ -67,40 +82,64 @@ function truncate(text: string, max: number): string {
   return flat.length > max ? flat.slice(0, max) + "…" : flat;
 }
 
-/**
- * 面板展示顺序：待处理在前、已处理垫底；组内按正文位置排（找不到原文的排最后），
- * 同一位置按编号。只影响面板展示，批注文件里仍按编号排列。
- */
-function byDisplayOrder(a: CommentPanelItem, b: CommentPanelItem): number {
+/** 列表页的标签：等你 / 等 Agent / 全部 */
+type ListTab = "author" | "agent" | "all";
+
+const TAB_LABELS: Record<ListTab, string> = {
+  author: "等你",
+  agent: "等 Agent",
+  all: "全部",
+};
+
+/** 列表顺序：按正文位置排（找不到原文的排最后），同一位置按编号。 */
+function byPosition(a: CommentPanelItem, b: CommentPanelItem): number {
   const la = a.locatedLine ?? Number.MAX_SAFE_INTEGER;
   const lb = b.locatedLine ?? Number.MAX_SAFE_INTEGER;
   return la !== lb ? la - lb : a.id - b.id;
 }
 
+/** 这一条在列表 / 详情里的位置说明。 */
+function locationText(item: CommentPanelItem): string {
+  if (item.gone) {
+    return `原文已删除${
+      item.locatedLine === null ? "" : ` · 第 ${item.locatedLine} 行附近`
+    } · 改完了就点「已解决」`;
+  }
+  if (item.locatedLine === null) return "无法定位（原文对不上）";
+  return `第 ${item.locatedLine} 行附近${
+    item.via && item.via !== "exact" ? ` · ${LOCATE_VIA_LABELS[item.via]}` : ""
+  }`;
+}
+
 /**
- * 批注面板渲染体：往给定容器里画「标题 + 计数 + 卡片列表 + 底部按钮」。
- * 数据一律经 host 获取；独立视图与工具箱标签都复用它。
+ * 批注面板渲染体：列表页或单条详情页。数据一律经 host 获取。
  */
 export class CommentPanelBody {
   /** 渲染代数：异步读取晚到时，若已有更新的渲染启动就丢弃本次结果 */
   private renderSeq = 0;
   /**
    * 最近一次渲染的内容签名：内容没变时跳过重绘。
-   * 焦点切换、切回侧栏都会触发刷新，但数据往往没变；重建 DOM 会把用户
-   * 正点着的卡片从文档里换掉，吃掉这次点击（表现为「要点两次才跳」）。
+   * 焦点切换、切回侧栏都会触发刷新，但数据往往没变；重建 DOM 会吃掉正在进行的点击、
+   * 打断选中复制，也会把正在写的回复框清空。
    */
   private lastSig: string | null = null;
-
-  /** 「只看待处理」筛选（面板实例级状态，重建面板后复位） */
-  private pendingOnly = false;
-  /** 「已处理」分组是否折叠：默认折叠，把已处理项沉到底部 */
-  private resolvedCollapsed = true;
   /**
    * 最近一次渲染对应的文档路径。
    * 面板上的所有操作都带这个路径回传给宿主，**不依赖「当前活动文档」**——
    * 否则焦点一飘走（侧栏、别的标签页）就可能操作到另一篇文档的批注。
    */
   private docPath: string | null = null;
+  /** 没发出去的回复草稿（键：文档路径 + 批注号）；数据变化重绘时填回去 */
+  private readonly drafts = new Map<string, string>();
+  /** 列表页选中的标签；null = 还没选过，按「有等你的就等你，否则全部」 */
+  private tab: ListTab | null = null;
+  /** 正在看的那条批注；null = 列表页 */
+  private detailId: number | null = null;
+  /**
+   * 正文里点标记打开详情：那篇文档往往刚成为活动文档（面板还显示着上一篇），
+   * 这一次渲染不能按「换了文档」把详情冲掉。
+   */
+  private keepDetailOnDocChange = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -129,33 +168,18 @@ export class CommentPanelBody {
     return this.docPath;
   }
 
-  /**
-   * 滚动到某条批注的卡片并闪一下（正文里点标记 / 脚注号时用）。
-   * 卡片可能被「只看待处理」或「已处理」折叠挡住，先把这些过滤放开。
-   */
-  async revealCard(id: number, scroller?: HTMLElement | null): Promise<void> {
-    let needsRender = false;
-    if (this.pendingOnly) {
-      this.pendingOnly = false;
-      needsRender = true;
-    }
-    if (this.resolvedCollapsed) {
-      // 已处理的项可能就藏在这个折叠分组里，先把它展开
-      this.resolvedCollapsed = false;
-      needsRender = true;
-    }
-    if (needsRender) await this.renderAsync();
+  private draftKey(id: number): string {
+    return `${this.docPath ?? ""}\u0001${id}`;
+  }
 
-    const card = this.root.querySelector<HTMLElement>(`[data-wt-cid="${id}"]`);
-    if (!card) return;
-    card.scrollIntoView({ block: "nearest" });
-    void scroller?.scrollHeight;
-    card.addClass("is-revealed");
-    card.addEventListener(
-      "animationend",
-      () => card.removeClass("is-revealed"),
-      { once: true }
-    );
+  /** 打开某条批注的详情页（正文里点标记 / 脚注号时用）。 */
+  async revealCard(id: number, _scroller?: HTMLElement | null): Promise<void> {
+    this.detailId = id;
+    this.keepDetailOnDocChange = true;
+    // 新的一次渲染必须重画（视图状态变了），别被签名挡掉
+    this.lastSig = null;
+    await this.renderAsync();
+    this.scrollContainer()?.scrollTo({ top: 0 });
   }
 
   /** 让还在路上的异步渲染失效（视图关闭 / 容器重建时调用）。 */
@@ -163,16 +187,27 @@ export class CommentPanelBody {
     this.renderSeq++;
   }
 
-  /** 面板内容签名：文档路径 / 名称 / 读取状态 + 每条批注的全部展示字段。 */
+  private openDetail(id: number): void {
+    this.detailId = id;
+    this.refresh();
+  }
+
+  private backToList(): void {
+    this.detailId = null;
+    this.refresh();
+  }
+
+  /** 面板内容签名：文档路径 / 名称 / 读取状态 / 视图状态 + 每条批注的全部展示字段。 */
   private modelSignature(model: CommentPanelModel): string {
     const itemSig = model.items
       .map((i) =>
         [
           i.id,
-          i.status,
+          i.origin,
+          i.turn,
+          i.gone ? "g" : "-",
           i.quote,
-          i.content,
-          i.reply,
+          i.messages.map((m) => `${m.by}:${m.text}`).join("\u0004"),
           i.locatedLine === null ? "x" : i.locatedLine,
           i.via ?? "none",
         ].join("\u0001")
@@ -182,8 +217,9 @@ export class CommentPanelBody {
       model.docPath ?? "",
       model.docName ?? "",
       model.loading ? "1" : "0",
-      this.pendingOnly ? "p" : "-",
-      this.resolvedCollapsed ? "c" : "-",
+      model.rejectedCount,
+      this.tab ?? "",
+      this.detailId ?? "",
       itemSig,
     ].join("\u0003");
   }
@@ -195,18 +231,44 @@ export class CommentPanelBody {
       model = await this.host.getCommentPanelModel();
     } catch (error) {
       console.error("写作工具箱：批注面板读取失败", error);
-      model = { docPath: null, docName: null, loading: false, items: [] };
+      model = {
+        docPath: null,
+        docName: null,
+        loading: false,
+        items: [],
+        rejectedCount: 0,
+      };
     }
     if (seq !== this.renderSeq) return;
     const root = this.root;
+    // 换了文档：回到列表、标签重新按默认选
+    if (model.docPath !== this.docPath) {
+      if (!this.keepDetailOnDocChange) this.detailId = null;
+      this.tab = null;
+    }
+    this.keepDetailOnDocChange = false;
     // 先记住本次渲染对应的文档：即使下面因签名相同而跳过重绘，
     // 后续操作的 docPath 也必须是新的（签名里含 docPath，换文档不会命中同一签名）。
     this.docPath = model.docPath;
+    const detail =
+      this.detailId === null
+        ? null
+        : model.items.find((i) => i.id === this.detailId) ?? null;
+    // 正在看的那条已经不在了（结案 / 被删）：回列表
+    if (this.detailId !== null && !detail && !model.loading) this.detailId = null;
+
     const sig = this.modelSignature(model);
     if (sig === this.lastSig && root.children.length > 0) return;
     this.lastSig = sig;
     const scroller = this.scrollContainer();
     const keepTop = scroller?.scrollTop ?? 0;
+    // 详情页原地刷新时保住回复框的焦点与光标
+    const focused = root.ownerDocument.activeElement;
+    const hadReplyFocus =
+      focused instanceof HTMLTextAreaElement &&
+      focused.hasClass("wt-comment-reply-input") &&
+      root.contains(focused);
+    const caret = hadReplyFocus ? focused.selectionStart : 0;
     root.empty();
 
     if (!model.docPath) {
@@ -218,109 +280,207 @@ export class CommentPanelBody {
       return;
     }
 
-    const pending = model.items
-      .filter((i) => i.status === "pending")
-      .sort(byDisplayOrder);
-    const resolved = model.items
-      .filter((i) => i.status === "resolved")
-      .sort(byDisplayOrder);
-    const head = root.createDiv({ cls: "wt-comments-head" });
-    head.createDiv({ cls: "wt-comments-title", text: model.docName ?? "" });
-    head.createDiv({
-      cls: "wt-comments-sub",
-      text: model.loading
-        ? "读取中…"
-        : `共 ${model.items.length} 条 · 待处理 ${pending.length} · 已处理 ${
-            resolved.length
-          }`,
-    });
-
-    if (!model.loading && model.items.length === 0) {
-      root.createDiv({
-        cls: "wt-comments-empty",
-        text: "还没有批注。选中文字后点气泡上的批注按钮，或右键「添加批注」。",
-      });
-    }
-
-    // 「只看待处理」筛选：有已处理项时才给这个开关
-    if (!model.loading && resolved.length > 0) {
-      const tools = root.createDiv({ cls: "wt-comments-tools" });
-      const filterBtn = tools.createEl("button", {
-        cls: "wt-comments-filter",
-        text: this.pendingOnly ? "显示全部" : "只看待处理",
-      });
-      filterBtn.addEventListener("click", () => {
-        this.pendingOnly = !this.pendingOnly;
-        this.refresh();
-      });
-    }
-
-    // 待处理在前（组内按正文位置）；已处理收进底部折叠分组
-    if (!model.loading && model.items.length > 0) {
-      if (pending.length === 0) {
-        root.createDiv({
-          cls: "wt-comments-empty is-small",
-          text: this.pendingOnly
-            ? "没有待处理的批注（已处理项已隐藏）。"
-            : "没有待处理的批注。",
-        });
-      } else {
-        for (const item of pending) {
-          this.renderCard(root, item);
+    if (detail) {
+      this.renderDetail(root, detail);
+      if (hadReplyFocus) {
+        const input = root.querySelector<HTMLTextAreaElement>(
+          ".wt-comment-reply-input"
+        );
+        if (input) {
+          input.focus();
+          const pos = Math.min(caret ?? input.value.length, input.value.length);
+          input.setSelectionRange(pos, pos);
         }
       }
+      this.restoreScroll(scroller, keepTop);
+      return;
     }
 
-    if (!this.pendingOnly && resolved.length > 0) {
-      this.renderResolvedGroup(root, resolved);
-    }
-
-    // 底部工具行：有待处理项时可复制 Agent 指令，有已处理项时可清理。
-    if (pending.length > 0 || resolved.length > 0) {
-      const foot = root.createDiv({ cls: "wt-comments-footer" });
-      if (pending.length > 0) {
-        const copyBtn = foot.createEl("button", { text: "复制处理指令" });
-        copyBtn.addEventListener("click", () =>
-          this.host.copyAgentPrompt(model.docPath ?? undefined)
-        );
-      }
-      if (resolved.length > 0) {
-        const clearBtn = foot.createEl("button", { text: "清除已处理" });
-        clearBtn.addEventListener("click", () =>
-          // 传面板自己的文档路径：不能让它去猜「当前活动文档」（可能已经飘到别处）
-          this.host.clearResolvedComments(model.docPath ?? undefined)
-        );
-      }
-    }
+    this.renderList(root, model);
     this.restoreScroll(scroller, keepTop);
   }
 
-  /** 已处理分组：标题带数量、点击展开 / 收起（默认折叠）。 */
-  private renderResolvedGroup(
-    root: HTMLElement,
-    items: readonly CommentPanelItem[]
-  ): void {
-    const group = root.createDiv({ cls: "wt-comments-group" });
-    if (this.resolvedCollapsed) group.addClass("is-collapsed");
-    const head = group.createDiv({
-      cls: "wt-comments-group-head",
-      attr: { title: "展开 / 收起已处理的批注" },
-    });
-    setIcon(
-      head.createSpan({ cls: "wt-comments-group-chevron" }),
-      "wt-chevron-down"
+  /* ---------- 列表页 ---------- */
+
+  private renderList(root: HTMLElement, model: CommentPanelModel): void {
+    const items = [...model.items].sort(byPosition);
+    const counts: Record<ListTab, number> = {
+      author: items.filter((i) => i.turn === "author").length,
+      agent: items.filter((i) => i.turn === "agent").length,
+      all: items.length,
+    };
+    const tab = this.tab ?? (counts.author > 0 ? "author" : "all");
+
+    const head = root.createDiv({ cls: "wt-comments-head" });
+    head.createDiv({ cls: "wt-comments-title", text: model.docName ?? "" });
+    if (model.loading) {
+      head.createDiv({ cls: "wt-comments-sub", text: "读取中…" });
+      return;
+    }
+    if (model.rejectedCount > 0) {
+      head.createDiv({
+        cls: "wt-comments-sub",
+        text: `已否决 ${model.rejectedCount}`,
+        attr: { title: "不采纳的意见记在批注文件末尾，Agent 不会再提" },
+      });
+    }
+
+    if (items.length === 0) {
+      root.createDiv({
+        cls: "wt-comments-empty",
+        text: "还没有批注。选中文字后点气泡上的批注按钮、右键「添加批注」，或点下方「复制批注指令」请 Agent 来批注。",
+      });
+    } else {
+      const tabs = root.createDiv({ cls: "wt-comments-tabs" });
+      for (const key of ["author", "agent", "all"] as const) {
+        const btn = tabs.createEl("button", {
+          cls: key === tab ? "wt-comments-tab is-active" : "wt-comments-tab",
+          text: `${TAB_LABELS[key]} ${counts[key]}`,
+        });
+        btn.addEventListener("click", () => {
+          this.tab = key;
+          this.refresh();
+        });
+      }
+
+      const shown =
+        tab === "all" ? items : items.filter((i) => i.turn === tab);
+      if (shown.length === 0) {
+        root.createDiv({
+          cls: "wt-comments-empty is-small",
+          text: tab === "author" ? "没有等你回复的批注。" : "没有等 Agent 回复的批注。",
+        });
+      }
+      const list = root.createDiv({ cls: "wt-comments-list" });
+      for (const item of shown) this.renderRow(list, item);
+    }
+
+    // 底部工具行：随时可请 Agent 批注；有等 Agent 的条目时可请它回复。
+    const foot = root.createDiv({ cls: "wt-comments-footer" });
+    const reviewBtn = foot.createEl("button", { text: "复制批注指令" });
+    reviewBtn.addEventListener("click", () =>
+      this.host.copyReviewPrompt(model.docPath ?? undefined)
     );
+    if (counts.agent > 0) {
+      const replyBtn = foot.createEl("button", { text: "复制回复指令" });
+      replyBtn.addEventListener("click", () =>
+        // 传面板自己的文档路径：不能让它去猜「当前活动文档」（可能已经飘到别处）
+        this.host.copyReplyPrompt(model.docPath ?? undefined)
+      );
+    }
+  }
+
+  /** 列表里的一行：点了跳到正文并进详情。 */
+  private renderRow(list: HTMLElement, item: CommentPanelItem): void {
+    const row = list.createDiv({
+      cls: item.turn === "agent" ? "wt-comment-row is-agent-turn" : "wt-comment-row",
+      attr: {
+        role: "button",
+        tabindex: "0",
+        title: "跳到正文这一处，并打开这条批注",
+        "data-wt-cid": String(item.id),
+      },
+    });
+    const head = row.createDiv({ cls: "wt-comment-row-head" });
+    head.createSpan({ cls: "wt-comment-row-id", text: `#${item.id}` });
     head.createSpan({
-      cls: "wt-comments-group-title",
-      text: `已处理 ${items.length} 条`,
+      cls: "wt-comment-row-quote",
+      text: `「${truncate(item.quote, 40)}」`,
     });
-    head.addEventListener("click", () => {
-      this.resolvedCollapsed = !this.resolvedCollapsed;
-      group.toggleClass("is-collapsed", this.resolvedCollapsed);
+    if (item.gone || item.locatedLine === null) {
+      head.createSpan({
+        cls: "wt-comment-row-flag",
+        text: item.gone ? "已删" : "失效",
+        attr: { title: locationText(item) },
+      });
+    }
+    const last = item.messages[item.messages.length - 1];
+    if (last) {
+      row.createDiv({
+        cls: "wt-comment-row-last",
+        text: `${COMMENT_SPEAKER_LABELS[last.by]}：${truncate(last.text, 60)}`,
+      });
+    }
+    const open = () => {
+      this.host.jumpToComment(this.requireDocPath(), item.id);
+      this.openDetail(item.id);
+    };
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        open();
+      }
     });
-    const body = group.createDiv({ cls: "wt-comments-group-body" });
-    for (const item of items) {
-      this.renderCard(body, item);
+  }
+
+  /* ---------- 详情页 ---------- */
+
+  /** 单条详情：内容可选中复制，点了不跳转；跳转只走「定位」按钮。 */
+  private renderDetail(root: HTMLElement, item: CommentPanelItem): void {
+    const box = root.createDiv({
+      cls: "wt-comment-detail",
+      attr: { "data-wt-cid": String(item.id) },
+    });
+    const bar = box.createDiv({ cls: "wt-comment-detail-bar" });
+    const backBtn = bar.createEl("button", {
+      cls: "wt-comment-detail-back",
+      text: "← 返回",
+    });
+    backBtn.addEventListener("click", () => this.backToList());
+    bar.createSpan({ cls: "wt-comment-card-id", text: `#${item.id}` });
+    bar.createSpan({
+      cls:
+        item.turn === "agent" ? "wt-comment-chip is-resolved" : "wt-comment-chip",
+      text: item.gone ? "原文已删除" : COMMENT_TURN_LABELS[item.turn],
+    });
+    const locateBtn = bar.createEl("button", {
+      cls: "wt-comment-detail-locate",
+      text: "定位",
+      attr: { title: "回到正文里的这一处" },
+    });
+    locateBtn.addEventListener("click", () =>
+      this.host.jumpToComment(this.requireDocPath(), item.id)
+    );
+
+    box.createDiv({
+      cls: "wt-comment-card-loc",
+      text: `${item.origin === "agent" ? "Agent 发起 · " : ""}${locationText(item)}`,
+    });
+    box.createDiv({ cls: "wt-comment-quote", text: item.quote });
+
+    const thread = box.createDiv({ cls: "wt-comment-thread" });
+    for (const message of item.messages) this.renderMessage(thread, message);
+
+    this.renderReplyBox(box, item);
+
+    const row = box.createDiv({ cls: "wt-comment-card-actions" });
+    this.confirmButton(row, "已解决", "再点一次：删除这条批注", () => {
+      this.host.resolveComment(this.requireDocPath(), item.id);
+      this.backToList();
+    });
+    this.confirmButton(row, "不采纳", "再点一次：删除并记进「已否决」", () => {
+      this.host.rejectComment(this.requireDocPath(), item.id);
+      this.backToList();
+    });
+    if (item.messages[item.messages.length - 1]?.by === "author") {
+      const editBtn = row.createEl("button", {
+        text: "编辑",
+        attr: { title: "修改你的最后一条消息（Agent 回复后就不能改了）" },
+      });
+      editBtn.addEventListener("click", () =>
+        this.host.editComment(this.requireDocPath(), item.id)
+      );
+    }
+    if (item.locatedLine === null || item.gone) {
+      const rebindBtn = row.createEl("button", {
+        cls: "mod-cta",
+        text: "重新绑定",
+        attr: { title: "先在正文里选中这条批注现在对应的文字，再点这里" },
+      });
+      rebindBtn.addEventListener("click", () =>
+        this.host.rebindComment(this.requireDocPath(), item.id)
+      );
     }
   }
 
@@ -343,131 +503,99 @@ export class CommentPanelBody {
     el.scrollTop = top;
   }
 
-  private renderCard(root: HTMLElement, item: CommentPanelItem): void {
-    const resolved = item.status === "resolved";
-    const card = root.createDiv({
-      cls: resolved ? "wt-comment-card is-resolved" : "wt-comment-card",
-      attr: {
-        title: "点击跳到正文里的这条批注位置",
-        // 正文里点批注标记时靠它找到这张卡片
-        "data-wt-cid": String(item.id),
-      },
-    });
-    // 整卡可点：引用、内容……任意位置都跳到正文对应位置
-    card.addEventListener("click", () => this.host.jumpToComment(this.requireDocPath(), item.id));
-    const head = card.createDiv({ cls: "wt-comment-card-head" });
-    head.createSpan({
-      cls: resolved ? "wt-comment-chip is-resolved" : "wt-comment-chip",
-      text: COMMENT_STATUS_LABELS[item.status],
-    });
-    head.createSpan({
-      cls: "wt-comment-card-loc",
-      text:
-        item.locatedLine === null
-          ? "锚点失效（原文已大改）"
-          : `第 ${item.locatedLine} 行附近${
-              item.via && item.via !== "exact"
-                ? ` · ${LOCATE_VIA_LABELS[item.via]}`
-                : ""
-            }`,
-    });
-    head.createSpan({ cls: "wt-comment-card-id", text: `#${item.id}` });
-
-    card.createDiv({
-      cls: "wt-comment-quote",
-      text: `「${truncate(item.quote, 80)}」`,
-    });
-
-    card.createDiv({ cls: "wt-comment-content", text: item.content });
-    if (item.reply.trim()) {
-      this.renderReply(card, item.reply.trim());
-    }
-
-    // 卡片操作：标记已处理 / 重新打开、编辑、删除（编辑复用正文标记那套弹层，
-    // 所以「找不到原文」的批注也能在面板里改）。点按钮不触发整卡的跳转。
-    const row = card.createDiv({ cls: "wt-comment-card-actions" });
-    const toggleBtn = row.createEl("button", {
-      text: resolved ? "重新打开" : "标记已处理",
-    });
-    toggleBtn.addEventListener("click", (ev) => {
-      // 吃掉冒泡，免得连带触发整卡的「跳转」
-      ev.stopPropagation();
-      this.host.toggleCommentResolved(this.requireDocPath(), item.id);
-    });
-
-    const editBtn = row.createEl("button", { text: "编辑" });
-    editBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      this.host.editComment(this.requireDocPath(), item.id);
-    });
-
-    const deleteBtn = row.createEl("button", {
-      cls: "mod-warning",
-      text: "删除",
-    });
+  /**
+   * 「一次确认」按钮：第一次只把文案换成「确认」，3 秒内再点一次才执行；
+   * 执行后由宿主给 6 秒撤销（不叠弹窗）。
+   */
+  private confirmButton(
+    row: HTMLElement,
+    label: string,
+    confirmTitle: string,
+    onConfirm: () => void
+  ): void {
+    const btn = row.createEl("button", { text: label });
     let confirming = false;
     let resetTimer = 0;
-    deleteBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
+    const reset = () => {
+      confirming = false;
+      btn.setText(label);
+      btn.removeClass("is-confirming");
+      btn.setAttr("title", "");
+    };
+    btn.addEventListener("click", () => {
       if (!confirming) {
-        // 第一次：只把文案换成同样两个字的「确认」（宽度不变），
-        // 再点一次才删；3 秒不动手就自动退回「删除」。
         confirming = true;
-        deleteBtn.setText("确认");
-        deleteBtn.addClass("is-confirming");
-        deleteBtn.setAttr("title", "再点一次删除这条批注");
-        resetTimer = window.setTimeout(() => {
-          confirming = false;
-          deleteBtn.setText("删除");
-          deleteBtn.removeClass("is-confirming");
-          deleteBtn.setAttr("title", "");
-        }, 3000);
+        btn.setText("确认");
+        btn.addClass("is-confirming");
+        btn.setAttr("title", confirmTitle);
+        resetTimer = window.setTimeout(reset, 3000);
         return;
       }
       window.clearTimeout(resetTimer);
-      confirming = false;
-      deleteBtn.setText("删除");
-      deleteBtn.removeClass("is-confirming");
-      this.host.deleteComment(this.requireDocPath(), item.id);
+      reset();
+      onConfirm();
     });
-
-    if (item.locatedLine === null) {
-      const rebindBtn = row.createEl("button", {
-        cls: "mod-cta",
-        text: "重新绑定",
-        attr: { title: "在正文里选中这条批注现在对应的位置" },
-      });
-      rebindBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        this.host.rebindComment(this.requireDocPath(), item.id);
-      });
-    }
   }
 
-  /** Agent 的回复：太长时先折起来，避免一条长回复把面板撑得没法扫。 */
-  private renderReply(card: HTMLElement, reply: string): void {
-    const limit = 140;
-    const replyEl = card.createDiv({ cls: "wt-comment-reply" });
-    const textEl = replyEl.createSpan();
-    if (reply.length <= limit) {
-      textEl.setText(`回复：${reply}`);
-      return;
-    }
-    let expanded = false;
-    const render = () =>
-      textEl.setText(expanded ? `回复：${reply}` : `回复：${reply.slice(0, limit)}…`);
-    render();
-    const moreBtn = replyEl.createEl("button", {
-      cls: "wt-comment-reply-more",
-      text: "展开",
+  /** 一条消息：作者 / Agent 用不同底色区分；详情页里完整显示，可选中复制。 */
+  private renderMessage(thread: HTMLElement, message: CommentMessage): void {
+    const el = thread.createDiv({
+      cls: `wt-comment-msg is-${message.by}`,
     });
-    moreBtn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      expanded = !expanded;
-      moreBtn.setText(expanded ? "收起" : "展开");
-      render();
+    el.createDiv({
+      cls: "wt-comment-msg-who",
+      text: COMMENT_SPEAKER_LABELS[message.by],
     });
+    el.createDiv({ cls: "wt-comment-msg-text", text: message.text });
+  }
+
+  /** 回复框：多行输入，回车换行，⌘/Ctrl + 回车或「发送」按钮发出。 */
+  private renderReplyBox(parent: HTMLElement, item: CommentPanelItem): void {
+    const box = parent.createDiv({ cls: "wt-comment-reply-box" });
+    const key = this.draftKey(item.id);
+    const input = box.createEl("textarea", {
+      cls: "wt-comment-reply-input",
+      attr: {
+        rows: "3",
+        placeholder: "回复…（⌘/Ctrl + 回车发送）",
+      },
+    });
+    input.value = this.drafts.get(key) ?? "";
+    const sendBtn = box.createEl("button", {
+      cls: "mod-cta",
+      text: "发送",
+    });
+    let sending = false;
+    const send = async () => {
+      const text = input.value.trim();
+      if (!text || sending) return;
+      sending = true;
+      sendBtn.disabled = true;
+      const ok = await this.host.replyToComment(
+        this.requireDocPath(),
+        item.id,
+        text
+      );
+      sending = false;
+      sendBtn.disabled = false;
+      // 只在保存成功后清草稿；失败时留着，免得白写
+      if (ok) {
+        this.drafts.delete(key);
+        if (input.isConnected) input.value = "";
+      }
+    };
+    input.addEventListener("input", () => {
+      if (input.value) this.drafts.set(key, input.value);
+      else this.drafts.delete(key);
+    });
+    input.addEventListener("keydown", (ev) => {
+      // 输入法拼字中的回车是选词，不能当发送
+      if (ev.isComposing) return;
+      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+        ev.preventDefault();
+        void send();
+      }
+    });
+    sendBtn.addEventListener("click", () => void send());
   }
 }
-
-/** 独立侧栏视图「批注」：本体只是把 CommentPanelBody 挂到视图容器上。 */

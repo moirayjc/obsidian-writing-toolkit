@@ -15,7 +15,7 @@ import {
   isLegacySidecarPath,
   isSidecarPath,
   legacySidecarPathFor,
-  parseCommentFile,
+  parseCommentFileData,
   serializeCommentFile,
   sidecarPathFor,
 } from "./comments";
@@ -35,6 +35,8 @@ function parentFolder(path: string): string {
 
 export class CommentStore {
   private cache = new Map<string, WtComment[]>();
+  /** 「已否决」区：随批注一起读入；保存时没指定就原样写回，不会被批注操作冲掉 */
+  private rejected = new Map<string, string[]>();
   /** 读取中的任务：同一文档并发 load 时复用（标记与面板可能同时触发） */
   private inflight = new Map<string, Promise<WtComment[]>>();
   /** 代数：写入/失效使其 +1，迟到的旧读取结果不再回写缓存 */
@@ -45,6 +47,11 @@ export class CommentStore {
   /** 已缓存的批注（尚未加载过返回 undefined）。 */
   getCached(docPath: string): WtComment[] | undefined {
     return this.cache.get(docPath);
+  }
+
+  /** 最近一次读到 / 写下的「已否决」区（未加载过返回空列表）。 */
+  getRejected(docPath: string): string[] {
+    return [...(this.rejected.get(docPath) ?? [])];
   }
 
   /** 绕过缓存，从磁盘重新读取（写入前用，避免覆盖 Agent 刚写下的改动）。 */
@@ -77,10 +84,13 @@ export class CommentStore {
     const t0 = performance.now();
     const sidecar = await this.resolveSidecarPath(docPath);
     const text = await this.readText(sidecar);
-    const comments = text === null ? [] : parseCommentFile(text);
+    const data =
+      text === null ? { comments: [], rejected: [] } : parseCommentFileData(text);
+    const comments = data.comments;
     // 等待期间批注被改写/保存过（代数变了）：不要用旧结果覆盖缓存
     if ((this.generation.get(docPath) ?? 0) === gen) {
       this.cache.set(docPath, comments);
+      this.rejected.set(docPath, data.rejected);
     }
     commentLoaded(docPath, comments.length, performance.now() - t0, text !== null);
     return comments;
@@ -113,15 +123,23 @@ export class CommentStore {
     }
   }
 
-  /** 把批注列表写回批注文件；列表为空时删除批注文件。 */
-  async save(docPath: string, comments: readonly WtComment[]): Promise<void> {
+  /**
+   * 把批注列表写回批注文件；批注与「已否决」都为空时删除批注文件。
+   * rejected 省略时沿用最近一次读到的「已否决」区（调用方应先 reload）。
+   */
+  async save(
+    docPath: string,
+    comments: readonly WtComment[],
+    rejected?: readonly string[]
+  ): Promise<void> {
+    const rejectedToWrite = [...(rejected ?? this.rejected.get(docPath) ?? [])];
     const t0 = performance.now();
     this.inflight.delete(docPath);
     const startedAt = (this.generation.get(docPath) ?? 0) + 1;
     this.generation.set(docPath, startedAt);
     try {
       const sidecar = await this.resolveSidecarPath(docPath);
-      if (comments.length === 0) {
+      if (comments.length === 0 && rejectedToWrite.length === 0) {
         // 新、旧两个位置都清掉，避免迁移失败留下的旧文件把批注“复活”。
         for (const path of new Set([sidecar, legacySidecarPathFor(docPath)])) {
           if (await this.exists(path)) {
@@ -134,16 +152,18 @@ export class CommentStore {
           // 写盘期间启动的读取拿到的是旧内容，提升代数让它们不能回写缓存。
           this.generation.set(docPath, startedAt + 1);
           this.cache.set(docPath, []);
+          this.rejected.set(docPath, []);
         }
         return;
       }
-      const text = serializeCommentFile(docPath, comments);
+      const text = serializeCommentFile(docPath, comments, rejectedToWrite);
       await this.writeText(sidecar, text);
       // 写盘期间若收到外部 modify 或另一次写入，代数会变化；
       // 此时不能拿本次结果覆盖更新的缓存。
       if ((this.generation.get(docPath) ?? 0) === startedAt) {
         this.generation.set(docPath, startedAt + 1);
         this.cache.set(docPath, [...comments]);
+        this.rejected.set(docPath, rejectedToWrite);
       }
       commentWrote(docPath, performance.now() - t0);
     } catch (error) {

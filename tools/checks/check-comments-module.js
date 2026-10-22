@@ -36,10 +36,32 @@ async function main() {
     }
   }
 
+  const notices = [];
   class Notice {
-    constructor() {}
+    constructor(message) {
+      notices.push(message);
+    }
     hide() {}
   }
+  // Obsidian 的全局 DOM 小工具：撤销 / 恢复提示用到
+  global.createFragment = () => ({
+    children: [],
+    append(...nodes) {
+      this.children.push(...nodes);
+    },
+  });
+  global.createSpan = (opts) => ({ text: opts?.text ?? "" });
+  global.createEl = (tag, opts) => ({ tag, text: opts?.text ?? "", onclick: null });
+  /** 最近一条带按钮的提示：返回 { text, click } */
+  const lastActionNotice = () => {
+    for (let i = notices.length - 1; i >= 0; i--) {
+      const n = notices[i];
+      if (n && Array.isArray(n.children)) {
+        return { text: n.children[0].text, click: () => n.children[1].onclick() };
+      }
+    }
+    return null;
+  };
 
   class Modal {
     constructor() {}
@@ -169,7 +191,12 @@ async function main() {
   const vaultHandlers = new Map();
   const cached = new Map();
   const disk = new Map();
-  const clone = (items) => items.map((item) => ({ ...item }));
+  const rejectedDisk = new Map();
+  const clone = (items) =>
+    items.map((item) => ({
+      ...item,
+      messages: (item.messages ?? []).map((m) => ({ ...m })),
+    }));
 
   const store = {
     getCached(docPath) {
@@ -199,10 +226,14 @@ async function main() {
         if (key === prefix || key.startsWith(prefix + "/")) cached.delete(key);
       }
     },
-    async save(docPath, comments) {
+    getRejected(docPath) {
+      return [...(rejectedDisk.get(docPath) ?? [])];
+    },
+    async save(docPath, comments, rejected) {
       savesInFlight++;
       calls.maxParallelSaves = Math.max(calls.maxParallelSaves, savesInFlight);
       await new Promise((resolve) => setTimeout(resolve, 2));
+      if (rejected) rejectedDisk.set(docPath, [...rejected]);
       disk.set(docPath, clone(comments));
       cached.set(docPath, clone(comments));
       savesInFlight--;
@@ -372,7 +403,8 @@ async function main() {
   );
 
   async function settle() {
-    await new Promise((resolve) => setImmediate(resolve));
+    // 外部修改后的重读不进写入队列（桩的 load 要等 1ms 计时器），这里多等一下
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await module.operations.flush();
     await new Promise((resolve) => setImmediate(resolve));
   }
@@ -391,14 +423,13 @@ async function main() {
   disk.set(chapterFile.path, [
     {
       id: 1,
-      status: "pending",
+      origin: "author",
       quote: "第一段正文",
       paragraph: "第一段正文。",
       paragraphHint: 1,
       lineHint: 1,
       createdAt: "2026-10-17 10:00",
-      content: "检查这一段",
-      reply: "",
+      messages: [{ by: "author", text: "检查这一段" }],
       current: "",
     },
   ]);
@@ -437,29 +468,51 @@ async function main() {
       model.docName === "第一章" &&
       model.items.length === 1 &&
       model.items[0].locatedLine === 1 &&
-      model.items[0].via === "exact"
+      model.items[0].via === "exact" &&
+      model.items[0].turn === "agent" &&
+      model.rejectedCount === 0
   );
 
-  await panelHost.toggleCommentResolved(chapterFile.path, 1);
+  const replied = await panelHost.replyToComment(chapterFile.path, 1, "  再看看  ");
   await settle();
   r.check(
-    "标记已处理走统一读改写队列",
-    disk.get(chapterFile.path)[0].status === "resolved"
+    "回复走统一读改写队列，追加一条作者消息",
+    replied === true &&
+      disk.get(chapterFile.path)[0].messages.length === 2 &&
+      disk.get(chapterFile.path)[0].messages[1].by === "author" &&
+      disk.get(chapterFile.path)[0].messages[1].text === "再看看"
   );
 
   await panelHost.editComment(chapterFile.path, 1);
   r.check(
-    "编辑卡片打开模块注入的居中输入框",
-    calls.drafts === 1 && lastDraft.title === "批注 1" && lastDraft.opens === 1
+    "编辑打开模块注入的居中输入框，初值是自己的最后一条消息",
+    calls.drafts === 1 &&
+      lastDraft.title.startsWith("批注 1") &&
+      lastDraft.initial === "再看看" &&
+      lastDraft.opens === 1
   );
-  lastDraft.onSave("修改后的批注");
+  lastDraft.onSave("修改后的回复");
   await settle();
   r.check(
-    "编辑内容写回同一文档且刷新装饰与面板",
-    disk.get(chapterFile.path)[0].content === "修改后的批注" &&
+    "编辑内容只改最后一条且刷新装饰与面板",
+    disk.get(chapterFile.path)[0].messages[0].text === "检查这一段" &&
+      disk.get(chapterFile.path)[0].messages[1].text === "修改后的回复" &&
       calls.decorRefreshes > 0 &&
       calls.panelRefreshes > 0
   );
+
+  // Agent 在外部追加了回复：轮到作者，且作者之前的消息不能再改
+  const withAgent = clone(disk.get(chapterFile.path));
+  withAgent[0].messages.push({ by: "agent", text: "已给出改写方案" });
+  disk.set(chapterFile.path, withAgent);
+  cached.delete(chapterFile.path);
+  const agentModel = await panelHost.getCommentPanelModel();
+  r.check(
+    "最后一条是 Agent → 面板显示等作者",
+    agentModel.items[0].turn === "author"
+  );
+  await panelHost.editComment(chapterFile.path, 1);
+  r.check("Agent 回复后不再打开编辑框", calls.drafts === 1);
 
   const cmView = {
     state: {
@@ -486,15 +539,15 @@ async function main() {
       lastDraft.title === "添加批注" &&
       lastDraft.opens === 1 &&
       disk.get(chapterFile.path).some(
-        (item) => item.id === 2 && item.content === ""
+        (item) => item.id === 2 && item.messages.length === 0
       )
   );
   lastDraft.onSave("新批注");
   await settle();
   r.check(
     "新增批注保存内容",
-    disk.get(chapterFile.path).find((item) => item.id === 2)?.content ===
-      "新批注"
+    disk.get(chapterFile.path).find((item) => item.id === 2)?.messages[0]
+      ?.text === "新批注"
   );
 
   panelHost.addCommentForView(cmView);
@@ -507,21 +560,123 @@ async function main() {
       disk.get(chapterFile.path).some((item) => item.id === 2)
   );
 
-  const firstToggle = panelHost.toggleCommentResolved(
-    chapterFile.path,
-    2
-  );
-  const secondToggle = panelHost.toggleCommentResolved(
-    chapterFile.path,
-    2
-  );
+  const firstReply = panelHost.replyToComment(chapterFile.path, 2, "甲");
+  const secondReply = panelHost.replyToComment(chapterFile.path, 2, "乙");
+  await Promise.all([firstReply, secondReply]);
   await settle();
   r.check(
-    "同一文档的并发修改串行写盘",
-    calls.maxParallelSaves === 1
+    "同一文档的并发修改串行写盘，两条回复都在",
+    calls.maxParallelSaves === 1 &&
+      disk
+        .get(chapterFile.path)
+        .find((item) => item.id === 2)
+        ?.messages.map((m) => m.text)
+        .join("|") === "新批注|甲|乙"
   );
-  void firstToggle;
-  void secondToggle;
+
+  panelHost.resolveComment(chapterFile.path, 2);
+  await settle();
+  const resolvedNotice = lastActionNotice();
+  r.check(
+    "已解决：整条删除且不进「已否决」",
+    !disk.get(chapterFile.path).some((item) => item.id === 2) &&
+      (rejectedDisk.get(chapterFile.path) ?? []).length === 0 &&
+      resolvedNotice?.text.includes("已解决")
+  );
+  resolvedNotice.click();
+  await settle();
+  r.check(
+    "已解决可撤销：原样放回",
+    disk.get(chapterFile.path).find((item) => item.id === 2)?.messages.length === 3
+  );
+
+  panelHost.rejectComment(chapterFile.path, 2);
+  await settle();
+  const rejectedNotice = lastActionNotice();
+  const rejectedLines = rejectedDisk.get(chapterFile.path) ?? [];
+  r.check(
+    "不采纳：整条删除并在「已否决」追加一行（含原文与首条意见）",
+    !disk.get(chapterFile.path).some((item) => item.id === 2) &&
+      rejectedLines.length === 1 &&
+      rejectedLines[0].includes("第一段") &&
+      rejectedLines[0].includes("新批注") &&
+      (await panelHost.getCommentPanelModel()).rejectedCount === 1
+  );
+  rejectedNotice.click();
+  await settle();
+  r.check(
+    "不采纳可撤销：条目放回、「已否决」那一行撤掉",
+    disk.get(chapterFile.path).some((item) => item.id === 2) &&
+      (rejectedDisk.get(chapterFile.path) ?? []).length === 0
+  );
+
+  // 外部（Agent）删掉一条、改掉一条已有消息：提示并可恢复
+  await panelHost.getCommentPanelModel();
+  const tampered = clone(disk.get(chapterFile.path))
+    .filter((item) => item.id !== 2)
+    .map((item) =>
+      item.id === 1
+        ? {
+            ...item,
+            messages: [
+              { by: "author", text: "被改掉的消息" },
+              ...item.messages.slice(1),
+              { by: "agent", text: "新追加" },
+            ],
+          }
+        : item
+    );
+  disk.set(chapterFile.path, tampered);
+  const noticesBefore = notices.length;
+  vaultHandlers.get("modify")(sidecarFile);
+  await settle();
+  const tamperNotice = lastActionNotice();
+  r.check(
+    "外部删除 / 改写已有消息时提示",
+    notices.length > noticesBefore &&
+      tamperNotice?.text.includes("删除了批注 #2") &&
+      tamperNotice?.text.includes("改动了批注 #1")
+  );
+  tamperNotice.click();
+  await settle();
+  r.check(
+    "点「恢复」放回被删条目、还原被改消息",
+    disk.get(chapterFile.path).some((item) => item.id === 2) &&
+      disk.get(chapterFile.path).find((item) => item.id === 1)?.messages[0]
+        .text === "检查这一段"
+  );
+
+  // 作者在编辑器里改了批注对应的文字：写回现文 / 标原文已删除，原文不动
+  extensionConfig.onAnchorsEdited(chapterFile.path, [
+    { id: 1, text: "第一段改过的正文", gone: false, paragraph: "第一段改过的正文。", paragraphHint: 1, lineHint: 1 },
+    { id: 2, text: "", gone: true, paragraph: "第二段正文。", paragraphHint: 2, lineHint: 3 },
+  ]);
+  await settle();
+  const afterEdit = disk.get(chapterFile.path);
+  const c1 = afterEdit.find((item) => item.id === 1);
+  const c2 = afterEdit.find((item) => item.id === 2);
+  r.check(
+    "编辑器改动写回「现文」与段落，原文保持不动",
+    c1.current === "第一段改过的正文" && c1.quote === "第一段正文" &&
+      c1.paragraph === "第一段改过的正文。" && !c1.gone
+  );
+  r.check(
+    "整段删掉的标「原文已删除」，清空现文",
+    c2.gone === true && c2.current === "" && c2.paragraph === "第二段正文。"
+  );
+  r.check(
+    "面板显示原文已删除",
+    (await panelHost.getCommentPanelModel()).items.find((i) => i.id === 2)?.gone === true
+  );
+
+  // Agent 正常追加回复：不提示
+  const appended = clone(disk.get(chapterFile.path));
+  appended[0].messages.push({ by: "agent", text: "正常回复" });
+  disk.set(chapterFile.path, appended);
+  const noticesBeforeAppend = notices.length;
+  vaultHandlers.get("modify")(sidecarFile);
+  await settle();
+  r.check("Agent 只追加消息时不提示", notices.length === noticesBeforeAppend);
 
   vaultHandlers.get("modify")(sidecarFile);
   await settle();
@@ -700,6 +855,17 @@ async function main() {
       /onVault\("modify"/.test(moduleSource) &&
       /onVault\("rename"/.test(moduleSource) &&
       /registerPanel/.test(moduleSource)
+  );
+  const toolbarModuleSource = fs.readFileSync(
+    path.join(H.ROOT, "src/features/formatToolbarModule.ts"),
+    "utf8"
+  );
+  r.check(
+    "移动端不提供批注：痕迹、右键入口、选区添加、工具条按钮、工具箱批注页都按 isMobile 关掉",
+    (moduleSource.match(/options\.isMobile\?\.\(\)/g) || []).length >= 3 &&
+      /commentsEnabled === true && !options\.isMobile\?\.\(\)/.test(toolbarModuleSource) &&
+      /Platform\?\.isMobile[\s\S]{0,200}title === "批注"[\s\S]{0,80}splice/.test(sidebarSource) &&
+      (mainSource.match(/isMobile: \(\) => Platform\.isMobile/g) || []).length === 2
   );
   r.check(
     "UI 插槽常量集中声明批注入口",

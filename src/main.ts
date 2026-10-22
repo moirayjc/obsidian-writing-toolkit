@@ -524,6 +524,7 @@ export default class WritingToolkitPlugin extends Plugin {
     this.formatToolbarModule = createFormatToolbarModule({
       onAddComment: (view) =>
         this.commentsModule.operations.addCommentForView(view),
+      isMobile: () => Platform.isMobile,
     });
     this.commentsModule = createCommentsModule({
       getRecentMarkdownPath: () => this.lastKnownPath,
@@ -531,6 +532,7 @@ export default class WritingToolkitPlugin extends Plugin {
       isFormatScopeAllowed: (path) =>
         this.formatToolbarModule.allowsPath(path),
       onChanged: () => this.refreshCommentBadges(),
+      isMobile: () => Platform.isMobile,
     });
     this.pomodoroModule = this.buildPomodoroModule();
     this.calendarModule = createCalendarModule({
@@ -1641,28 +1643,32 @@ export default class WritingToolkitPlugin extends Plugin {
     this.commentsModule.operations.jumpToComment(docPath, id);
   }
 
-  toggleCommentResolved(docPath: string, id: number): void {
-    this.commentsModule.operations.toggleCommentResolved(docPath, id);
+  replyToComment(docPath: string, id: number, text: string): Promise<boolean> {
+    return this.commentsModule.operations.replyToComment(docPath, id, text);
   }
 
   editComment(docPath: string, id: number): void {
     this.commentsModule.operations.editComment(docPath, id);
   }
 
-  deleteComment(docPath: string, id: number): void {
-    this.commentsModule.operations.deleteComment(docPath, id);
+  resolveComment(docPath: string, id: number): void {
+    this.commentsModule.operations.resolveComment(docPath, id);
+  }
+
+  rejectComment(docPath: string, id: number): void {
+    this.commentsModule.operations.rejectComment(docPath, id);
   }
 
   rebindComment(docPath: string, id: number): void {
     this.commentsModule.operations.rebindComment(docPath, id);
   }
 
-  copyAgentPrompt(docPath?: string): void {
-    this.commentsModule.operations.copyAgentPrompt(docPath);
+  copyReviewPrompt(docPath?: string): void {
+    this.commentsModule.operations.copyReviewPrompt(docPath);
   }
 
-  clearResolvedComments(docPath?: string): void {
-    this.commentsModule.operations.clearResolvedComments(docPath);
+  copyReplyPrompt(docPath?: string): void {
+    this.commentsModule.operations.copyReplyPrompt(docPath);
   }
 
   /** 批注模块变化后只刷新工具箱标签徽标；列表由插槽自行刷新。 */
