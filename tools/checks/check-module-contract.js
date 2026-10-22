@@ -46,7 +46,7 @@ const SNAPSHOT_SETTING_KEYS = [
 const DATA_KEYS = [
   "settings", "dailyHistory", "dailyDurationHistory",
   "projectHistory", "projectDurationHistory",
-  "dailyPomodoroHistory", "pomodoroSession", "dailyFileDeltas", "dailyTypedHistory", "chapterStatus", "workbenchProject",
+  "dailyPomodoroHistory", "pomodoroSession", "dailyFileDeltas", "dailyTypedHistory", "workbenchProject",
   "workbenchMode", "workbenchStatus", "hiddenProjects", "homePage",
   "projectCovers", "libraryView", "fileBaselines", "baselinesAt",
 ];
@@ -197,7 +197,7 @@ function main() {
       .matchAll(/^\s{2}([A-Za-z][A-Za-z0-9_]*):/gm),
   ].map((match) => match[1]);
   r.check(
-    "persistPluginData + prefs 快照拼出 data.json 的 20 个顶层键",
+    "persistPluginData + prefs 快照拼出 data.json 的 19 个顶层键",
     /this\.prefs\.forPersistence\(\)/.test(persistBlock) &&
       sameSet(persistedKeys, DATA_KEYS.filter((key) => !PREFS_KEYS.includes(key))) &&
       sameSet(prefsSnapshotKeys, PREFS_KEYS),

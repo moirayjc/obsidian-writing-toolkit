@@ -1,4 +1,4 @@
-import { stripInlineFormatting } from "./formatWrap";
+import { stripFrontmatter, stripInlineFormatting } from "./formatWrap";
 
 export type WordCountMode = 'webnovel' | 'standard' | 'native';
 
@@ -6,20 +6,6 @@ const HAN_CHAR = /\p{Script=Han}/u;
 const LETTER_OR_NUMBER = /[\p{L}\p{N}]/u;
 const WORD = /[\p{L}\p{N}]+/gu;
 
-/**
- * 剥离前导 YAML frontmatter：章纲等元数据不应计入正文字数。
- * frontmatter 必须严格位于文件开头（第一行 ---，闭合行也必须是行首 ---）。
- */
-export function stripFrontmatter(text: string): string {
-  if (!text.startsWith("---")) return text;
-  const lines = text.split(/\r?\n/);
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i] === "---") {
-      return lines.slice(i + 1).join("\n");
-    }
-  }
-  return text; // 没有闭合的 ---：按普通文本处理
-}
 
 function isCJK(char: string): boolean {
   return HAN_CHAR.test(char);

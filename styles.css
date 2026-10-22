@@ -8401,10 +8401,19 @@ body.theme-dark .modal.wt-phone-modal {
   color: var(--wt-phone-sub);
 }
 
-/* ===== 章节定稿锁：编辑器顶部提示条 =====
-   挂在 CodeMirror 的顶部面板里（不随正文滚动）。编辑器不在四个页面之内，
-   取不到 --wt-* 令牌，所以只用 Obsidian 自带变量，跟随当前主题。 */
-.wt-lock-panel {
+/* ===== 章节定稿锁：「本章已定稿」提示条 =====
+   挂在笔记视图外壳（.workspace-leaf-content）里、标题栏与正文区之间，不随正文滚动；
+   不放 CodeMirror 面板（手机端不显示）。笔记视图不在四个页面之内，取不到 --wt-* 令牌，
+   只用 Obsidian 自带变量，跟随当前主题。 */
+.workspace-leaf-content.wt-has-lock-banner > .view-content {
+  /* 外壳是纵向 flex：正文区原本按「100% - 标题栏」定高，挂了提示条要让出这一截 */
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
+
+.wt-lock-banner {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -8415,22 +8424,22 @@ body.theme-dark .modal.wt-phone-modal {
   font-size: var(--font-ui-small);
 }
 
-.wt-lock-panel-icon {
+.wt-lock-banner-icon {
   display: inline-flex;
   color: var(--text-muted);
 }
 
-.wt-lock-panel-icon svg {
+.wt-lock-banner-icon svg {
   width: 14px;
   height: 14px;
 }
 
-.wt-lock-panel-text {
+.wt-lock-banner-text {
   flex: 1;
   min-width: 0;
 }
 
-.wt-lock-panel-btn {
+.wt-lock-banner-btn {
   flex: none;
   padding: 2px 10px;
   font-size: var(--font-ui-small);
@@ -8438,7 +8447,7 @@ body.theme-dark .modal.wt-phone-modal {
 }
 
 /* 编辑被拦下时闪一下，告诉作者为什么打字没反应 */
-.wt-lock-panel.is-flash {
+.wt-lock-banner.is-flash {
   animation: wt-lock-flash 0.6s ease-out;
 }
 
@@ -8454,12 +8463,12 @@ body.theme-dark .modal.wt-phone-modal {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wt-lock-panel.is-flash {
+  .wt-lock-banner.is-flash {
     animation: none;
   }
 }
 
-body.wt-mobile .wt-lock-panel-btn {
+body.wt-mobile .wt-lock-banner-btn {
   min-height: 32px;
   padding: 4px 14px;
 }

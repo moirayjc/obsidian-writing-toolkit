@@ -336,11 +336,31 @@ export function stripInlineFormatting(text: string): string {
 }
 
 /**
- * 「交稿载荷」处理：去掉每行行尾空白、收尾多余空行。
+ * 剥离前导 YAML frontmatter：章纲、定稿状态等元数据不是正文。
+ * 字数统计、交稿载荷、定稿锁的正文指纹都用它。
+ * frontmatter 必须严格位于文件开头（第一行 ---，闭合行也必须是行首 ---）。
+ */
+export function stripFrontmatter(text: string): string {
+  if (!text.startsWith("---")) return text;
+  const lines = text.split(/\r?\n/);
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === "---") {
+      return lines.slice(i + 1).join("\n");
+    }
+  }
+  return text; // 没有闭合的 ---：按普通文本处理
+}
+
+/**
+ * 「交稿载荷」处理：去掉 frontmatter、每行行尾空白、收尾多余空行。
  *
  * 「一键复制纯净正文」（复制 → 粘贴到平台后台）与「读者手机预览」共用这一份处理，
  * 保证**预览到的就是粘出去的**；两处各写一套清洗逻辑迟早会漂移。
+ * frontmatter 里可能有章纲、定稿状态（`wt-status`），绝不能粘到平台上。
  */
 export function cleanChapterText(text: string): string {
-  return text.replace(/[ \t]+$/gm, "").replace(/\n{3,}$/g, "\n");
+  return stripFrontmatter(text)
+    .replace(/^\n+/, "")
+    .replace(/[ \t]+$/gm, "")
+    .replace(/\n{3,}$/g, "\n");
 }

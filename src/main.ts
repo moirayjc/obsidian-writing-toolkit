@@ -76,7 +76,6 @@ import {
 } from "./features/calendarModule";
 import {
   createChapterStatusModule,
-  type ChapterStatusMap,
   type ChapterStatusModule,
 } from "./features/chapterStatusModule";
 import { DefaultDiagnosticsService } from "./services/diagnosticsService";
@@ -180,8 +179,11 @@ export default class WritingToolkitPlugin extends Plugin {
   dailyFileDeltas: Record<string, DailyHistory> = {};
   /** 每日写下的字：手动输入的正增量累计（时速的分子），删除不抵减、粘贴不计 */
   dailyTypedHistory: DailyHistory = {};
-  /** 章节定稿状态：路径 → "final"（草稿不存）；读写规则见 chapterStatusModule */
-  chapterStatus: ChapterStatusMap = {};
+  /**
+   * 旧版存在 data.json 的章节定稿表（2026-10-22 起状态改存章节 frontmatter）。
+   * 只读：启动后由定稿模块搬进 frontmatter，搬完置空，data.json 里随之删掉该键。
+   */
+  private legacyChapterStatus: Record<string, unknown> | null = null;
   /** 阶段 6：界面偏好 Service（主页 / 书架 / 编辑台的界面记忆）。 */
   private prefs!: WorkspacePrefsService;
   /** 阶段 6：统计读模型与状态栏更新广播。 */
@@ -532,8 +534,12 @@ export default class WritingToolkitPlugin extends Plugin {
       projectDuration: (key) => this.projectDurationHistory[key] || {},
     });
     this.chapterStatusModule = createChapterStatusModule({
-      finals: () => this.chapterStatus,
-      onChanged: () => void this.savePluginData(),
+      legacyFinals: () => this.legacyChapterStatus,
+      clearLegacy: () => {
+        if (!this.legacyChapterStatus) return;
+        this.legacyChapterStatus = null;
+        void this.savePluginData();
+      },
     });
     await this.host.activateModules([
       this.typographyModule,
@@ -2356,12 +2362,8 @@ export default class WritingToolkitPlugin extends Plugin {
         this.projectDurationHistory = asRecord<Record<string, DailyHistory>>(data.projectDurationHistory) ?? {};
         this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
         this.dailyTypedHistory = asRecord<DailyHistory>(data.dailyTypedHistory) ?? {};
-        // 只认值为 "final" 的条目；草稿不存，认不出的值当草稿处理
-        this.chapterStatus = Object.fromEntries(
-          Object.entries(asRecord<Record<string, unknown>>(data.chapterStatus) ?? {}).filter(
-            ([, value]) => value === "final"
-          )
-        ) as ChapterStatusMap;
+        // 旧版定稿表：留着等定稿模块搬进 frontmatter（搬完前写盘也原样带回）
+        this.legacyChapterStatus = asRecord<Record<string, unknown>>(data.chapterStatus);
         this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
         this.loadedPomodoroSession = data.pomodoroSession ?? null;
         this.prefs.load(data);
@@ -2460,9 +2462,10 @@ export default class WritingToolkitPlugin extends Plugin {
       projectDurationHistory: this.projectDurationHistory,
       dailyFileDeltas: this.dailyFileDeltas,
       dailyTypedHistory: this.dailyTypedHistory,
-      chapterStatus: this.chapterStatus,
       dailyPomodoroHistory: this.dailyPomodoroHistory,
       pomodoroSession: this.pomodoroSessionForPersistence(),
+      // 旧版定稿表搬进 frontmatter 之前原样带回，免得搬完前写盘把它丢了
+      ...(this.legacyChapterStatus ? { chapterStatus: this.legacyChapterStatus } : {}),
       ...this.prefs.forPersistence(),
       fileBaselines: this.fileBaselines,
       baselinesAt: this.baselinesAt,

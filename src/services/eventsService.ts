@@ -1,5 +1,6 @@
 import type {
   App,
+  CachedMetadata,
   Editor,
   EventRef,
   MarkdownFileInfo,
@@ -20,6 +21,12 @@ export interface VaultEventMap {
   modify: [TAbstractFile];
   delete: [TAbstractFile];
   rename: [TAbstractFile, string];
+}
+
+/** 元数据缓存事件：frontmatter 等解析结果更新（含同步软件改了文件之后）。 */
+export interface MetadataEventMap {
+  changed: [TFile, string, CachedMetadata];
+  resolved: [];
 }
 
 export interface WorkspaceEventMap {
@@ -46,6 +53,10 @@ export interface EventScope {
   onWorkspace<K extends keyof WorkspaceEventMap>(
     event: K,
     listener: (...args: WorkspaceEventMap[K]) => unknown
+  ): Disposable;
+  onMetadata<K extends keyof MetadataEventMap>(
+    event: K,
+    listener: (...args: MetadataEventMap[K]) => unknown
   ): Disposable;
   onDom<K extends keyof DocumentEventMap>(
     target: Document,
@@ -155,6 +166,26 @@ export class DefaultEventScope implements EventScope {
     } catch (error) {
       this.logger.error(
         `[Writing Toolkit] ${this.owner} 订阅 Workspace 事件失败：${String(event)}`,
+        error
+      );
+      return noop;
+    }
+  }
+
+  onMetadata<K extends keyof MetadataEventMap>(
+    event: K,
+    listener: (...args: MetadataEventMap[K]) => unknown
+  ): Disposable {
+    if (this.disposed) return noop;
+    const source = this.app.metadataCache as unknown as ObservableEventSource;
+    const wrapped = (...args: unknown[]): unknown =>
+      this.invoke(`metadata:${String(event)}`, listener, args);
+    try {
+      const ref = source.on(String(event), wrapped);
+      return this.addDisposer(() => source.offref(ref));
+    } catch (error) {
+      this.logger.error(
+        `[Writing Toolkit] ${this.owner} 订阅元数据事件失败：${String(event)}`,
         error
       );
       return noop;
