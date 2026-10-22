@@ -32,7 +32,7 @@ function asRecord<T extends object>(value: unknown): T | null {
 }
 
 function normalizeHomePage(value: unknown): HomePage {
-  return value === "library" || value === "stats" || value === "docs"
+  return value === "board" || value === "library" || value === "stats" || value === "docs"
     ? value
     : "desk";
 }

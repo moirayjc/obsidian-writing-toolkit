@@ -3,6 +3,7 @@ import type { WordCountMode } from "./wordcount";
 import { DEFAULT_CHAPTER_EXCLUDE_NAMES } from "./outlineText";
 import { setupSelectArrows, setupSliderFills } from "./settingControls";
 import { WORD_COUNT_MODE_LABELS } from "./uiShellShared";
+import { resolvePlanBoardPath } from "./planBoard";
 import {
   DEFAULT_SETTINGS,
   type DailyDisplayMode,
@@ -569,6 +570,24 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   .onChange(async (val) => {
                     this.wt.settings.sharedLibraryFolder =
                       val.trim() || DEFAULT_SETTINGS.sharedLibraryFolder;
+                    await this.wt.saveSettings();
+                  })
+              );
+          });
+          this.group("看板", section, (el) => {
+            new Setting(el)
+              .setName("看板文件")
+              .setDesc(
+                "主页「看板」页读写的 Markdown 文件（相对仓库根目录）；留空则放在「写作」文件夹根目录"
+              )
+              .addText((text) =>
+                text
+                  .setPlaceholder(
+                    resolvePlanBoardPath("", this.wt.settings.sharedLibraryFolder)
+                  )
+                  .setValue(this.wt.settings.planBoardFile ?? "")
+                  .onChange(async (val) => {
+                    this.wt.settings.planBoardFile = val.trim();
                     await this.wt.saveSettings();
                   })
               );

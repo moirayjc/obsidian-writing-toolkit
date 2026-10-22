@@ -59,6 +59,8 @@ export interface WritingToolkitSettings extends SnapshotSettings {
   newProjectFolder: string;
   /** 共用资料库目录（仓库相对路径）：工作台「资料库」页展示 */
   sharedLibraryFolder: string;
+  /** 写作计划看板文件（仓库相对路径）；空 = 「写作」文件夹根目录（共用资料库的上一级）的 写作看板.md */
+  planBoardFile: string;
 }
 
 export const DEFAULT_SETTINGS: WritingToolkitSettings = {
@@ -96,4 +98,5 @@ export const DEFAULT_SETTINGS: WritingToolkitSettings = {
   outlineStorageMode: "sidecar",
   newProjectFolder: "写作/新作品",
   sharedLibraryFolder: "写作/资料库",
+  planBoardFile: "",
 };

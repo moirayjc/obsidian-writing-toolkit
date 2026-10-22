@@ -45,6 +45,16 @@ export const WT_ICONS: Record<string, string> = {
     `<path d="M7.2 15.6 10.7 11 14.1 13.4 18 8"/>` +
     `<circle cx="18" cy="8" r="1.35" fill="currentColor" stroke="none"/>`,
   ),
+  // 看板：三栏卡片，高低错落，第一张落墨
+  "wt-board": icon(
+    `<rect x="3.6" y="4.2" width="16.8" height="15.6" rx="1.8"/>` +
+    `<path d="M9.2 4.2v15.6"/>` +
+    `<path d="M14.8 4.2v15.6"/>` +
+    `<rect x="5.2" y="6.6" width="2.4" height="3.2" rx=".5" fill="currentColor" stroke="none"/>` +
+    `<path d="M10.8 7.6h2.4"/>` +
+    `<path d="M10.8 10.6h2.4"/>` +
+    `<path d="M16.4 7.6h2.4"/>`,
+  ),
   // 资料库：档案盒 + 三张目录片
   "wt-archive": icon(
     `<rect x="3.4" y="9.6" width="17.2" height="10.6" rx="1.6"/>` +
@@ -340,6 +350,22 @@ export const WT_ICONS: Record<string, string> = {
   "wt-color": icon(
     `<path d="M12 3.8c3.4 4.3 5.8 7.2 5.8 10.4a5.8 5.8 0 0 1-11.6 0C6.2 11 8.6 8.1 12 3.8z"/>` +
     `<circle cx="12" cy="14.2" r="1.5" fill="currentColor" stroke="none"/>`,
+  ),
+
+  // ---- 看板 ----
+  // 更多：三个落墨点
+  "wt-more": icon(
+    `<circle cx="6" cy="12" r="1.5" fill="currentColor" stroke="none"/>` +
+    `<circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>` +
+    `<circle cx="18" cy="12" r="1.5" fill="currentColor" stroke="none"/>`,
+  ),
+  // 截止日：台历 + 圈出的一天
+  "wt-calendar": icon(
+    `<rect x="4" y="5.4" width="16" height="14.6" rx="1.8"/>` +
+    `<path d="M4 9.8h16"/>` +
+    `<path d="M8.4 3.6v3.4"/>` +
+    `<path d="M15.6 3.6v3.4"/>` +
+    `<circle cx="12" cy="14.8" r="1.4" fill="currentColor" stroke="none"/>`,
   ),
 
   // ---- 章节状态 ----

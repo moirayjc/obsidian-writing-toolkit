@@ -2037,7 +2037,8 @@ body.wt-heading-style .markdown-rendered p {
     radial-gradient(900px 500px at -10% 110%, rgba(181, 69, 47, 0.07), transparent 60%),
     repeating-linear-gradient(0deg, transparent 0 27px, rgba(120, 90, 50, 0.035) 27px 28px),
     var(--wt-paper);
-  container-type: inline-size;
+  /* 主页所有断点（导航列收起、书桌、看板）都量这个宽度，只朝一个方向变，拖动时不来回跳 */
+  container: wt-home / inline-size;
 }
 
 .theme-dark .wt-home {
@@ -2692,23 +2693,46 @@ body.wt-heading-style .markdown-rendered p {
   color: var(--wt-ink-2);
 }
 
-.wt-desk-top {
+/* 书桌断点量整个主页的宽度（@container wt-home，见文件末尾），与导航列收起同一把尺子 */
+.wt-desk-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  /* 右列（今日 / 计划）随主页宽度在 272–300px 间连续收窄（cqi 基准是 .wt-home） */
+  grid-template-columns: minmax(0, 1fr) clamp(272px, calc(28cqi - 20px), 300px);
   gap: 16px;
+  align-items: stretch;
 }
 
-.wt-desk-top > .wt-card + .wt-card {
+/* 宽屏两列时「正在写」卡的大封面随主页宽度在 120–150px 间轻微缩放（主页 940 → 1100px），
+   主页 940px 时右侧正文仍放得下两个按钮；单列时在下方断点里设回固定尺寸 */
+.wt-desk-hero-cover .wt-cover.is-lg {
+  width: clamp(120px, calc(18.75cqi - 56px), 150px);
+}
+
+/* 左右两列各自往下排，互不按行对齐；每列最后一张卡撑满，两列底边齐平 */
+.wt-desk-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.wt-desk-col > :last-child {
+  flex: 1;
+}
+
+.wt-desk-grid .wt-card + .wt-card {
   margin-top: 0;
 }
 
-.wt-desk-top + .wt-card {
-  margin-top: 16px;
+/* 「其他在写的书」放最后、占一整行 */
+.wt-desk-grid > .wt-desk-others {
+  grid-column: 1 / -1;
 }
 
 .wt-desk-hero {
   display: flex;
-  gap: 26px;
+  /* 宽屏两列时随主页宽度在 18–26px 间收窄；单列在 @container wt-home (max-width: 940px) 里恢复 26px */
+  gap: clamp(18px, calc(4.5cqi - 27px), 26px);
   padding: 24px 26px;
   background:
     radial-gradient(500px 260px at 100% 0%, var(--wt-accent-soft), transparent 70%),
@@ -2716,8 +2740,76 @@ body.wt-heading-style .markdown-rendered p {
 }
 
 .wt-desk-hero-cover {
+  display: flex;
   flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
   padding-top: 2px;
+}
+
+/* 封面下的「换一本」：小号文字按钮，不和写作按钮抢眼 */
+.wt-home .wt-desk-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--wt-radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--wt-ink-3);
+  font-size: var(--wt-fs-12px);
+  cursor: pointer;
+  transition: background var(--wt-dur-hover) ease, color var(--wt-dur-hover) ease;
+}
+
+.wt-home .wt-desk-swap:hover {
+  background: var(--wt-wash);
+  color: var(--wt-ink);
+}
+
+.wt-desk-swap-icon {
+  display: inline-flex;
+}
+
+.wt-desk-swap-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* 统计一行：12.3 万字 · 86 章 */
+.wt-desk-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-top: -4px;
+  color: var(--wt-ink-3);
+}
+
+.wt-desk-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.wt-desk-stat-num {
+  font-family: var(--wt-num);
+  font-size: var(--wt-fs-18px);
+  font-weight: 600;
+  color: var(--wt-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.wt-desk-stat-unit {
+  font-size: var(--wt-fs-12px);
+}
+
+.wt-desk-stat-sep {
+  opacity: 0.6;
 }
 
 .wt-desk-hero-cover .wt-cover {
@@ -3047,6 +3139,699 @@ body.wt-heading-style .markdown-rendered p {
   margin-top: 2px;
   font-size: var(--wt-fs-12px);
   color: var(--wt-ink-3);
+}
+
+/* ---- 计划看板：书桌「计划」卡 + 看板页 ---- */
+
+.wt-desk-plan {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wt-plan-rows {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.wt-plan-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 2px;
+  border-bottom: 0.5px dashed var(--wt-rule);
+  transition: opacity 200ms ease;
+}
+
+.wt-plan-row:last-of-type {
+  border-bottom: 0;
+}
+
+.wt-plan-row-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--wt-fs-13px);
+  color: var(--wt-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wt-plan-row-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.wt-plan-row.is-leaving,
+.wt-plan-card.is-leaving {
+  opacity: 0.35;
+}
+
+.wt-plan-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: var(--wt-fs-13px);
+  line-height: 1.7;
+  color: var(--wt-ink-3);
+}
+
+.wt-desk-plan .wt-plan-more {
+  align-self: flex-end;
+  margin-top: 8px;
+}
+
+/* 勾选框：未完成是空心圆圈，完成后实心带勾。
+   选择器带 .wt-home：Obsidian 的 button:not(.clickable-icon) 优先级更高，
+   会把颜色 / 背景盖回默认按钮样式 */
+.wt-home .wt-plan-check {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-pill);
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  transition: border-color var(--wt-dur-hover) ease, background var(--wt-dur-hover) ease;
+}
+
+.wt-home .wt-plan-check svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 3;
+}
+
+.wt-home .wt-plan-check:hover {
+  border-color: var(--wt-jade);
+  background: color-mix(in srgb, var(--wt-jade) 12%, transparent);
+}
+
+.wt-home .wt-plan-check.is-done {
+  border-color: var(--wt-jade);
+  background: var(--wt-jade);
+  color: var(--wt-card-bg);
+}
+
+/* 日期小标签 */
+.wt-plan-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: auto;
+  padding: 1px 7px;
+  border: 0;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-wash);
+  box-shadow: none;
+  color: var(--wt-ink-3);
+  font-size: var(--wt-fs-11px);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wt-plan-due:hover {
+  background: var(--wt-wash);
+  color: var(--wt-ink);
+}
+
+.wt-plan-due-icon {
+  display: inline-flex;
+}
+
+.wt-plan-due-icon svg {
+  width: 11px;
+  height: 11px;
+}
+
+.wt-plan-due.is-overdue {
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
+  font-weight: 600;
+}
+
+.wt-plan-due.is-today {
+  background: color-mix(in srgb, var(--wt-amber) 16%, transparent);
+  color: var(--wt-amber);
+  font-weight: 600;
+}
+
+.wt-plan-due.is-soon {
+  color: var(--wt-ink-2);
+}
+
+.wt-plan-due.is-done {
+  background: transparent;
+  padding: 0;
+  cursor: default;
+}
+
+/* 看板页（仅桌面端）：与其他页同宽、撑满主区高度，每列自己滚动；
+   三列随宽度等分收窄，主页窄到导航列收起的同一刻改成上下叠放（见下方 @container wt-home） */
+.wt-home-page.wt-board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 420px;
+}
+
+.wt-board .wt-home-head {
+  flex: none;
+  margin-bottom: 14px;
+}
+
+.wt-board-filters {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.wt-board-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--wt-ink-2);
+  font-size: var(--wt-fs-12px);
+  cursor: pointer;
+}
+
+.wt-board-filter:hover {
+  background: var(--wt-wash);
+  color: var(--wt-ink);
+}
+
+.wt-board-filter.is-active {
+  border-color: var(--wt-ink);
+  background: var(--wt-ink);
+  color: var(--wt-paper);
+}
+
+.wt-board-filter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--wt-radius-pill);
+}
+
+.wt-board-cols {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.wt-board-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 0.5px solid var(--wt-rule);
+  border-radius: var(--wt-radius-14px);
+  background: color-mix(in srgb, var(--wt-paper-2) 78%, transparent);
+  transition: border-color var(--wt-dur-hover) ease, background var(--wt-dur-hover) ease;
+}
+
+.wt-board-col.is-drop {
+  border-color: color-mix(in srgb, var(--wt-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--wt-accent-soft) 60%, var(--wt-paper-2));
+}
+
+.wt-board-col-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 10px;
+}
+
+.wt-board-col-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-ink-3);
+}
+
+.wt-board-col.is-doing .wt-board-col-dot {
+  background: var(--wt-accent);
+}
+
+.wt-board-col.is-done .wt-board-col-dot {
+  background: var(--wt-jade);
+}
+
+.wt-board-col-label {
+  font-family: var(--wt-serif);
+  font-size: var(--wt-fs-15px);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--wt-ink);
+}
+
+.wt-board-col-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-wash);
+  font-size: var(--wt-fs-11px);
+  line-height: 18px;
+  text-align: center;
+  color: var(--wt-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.wt-board-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 2px 10px 12px;
+  overflow-y: auto;
+}
+
+/* 拖动落点：一条朱砂色插入线 */
+.wt-board-drop-line {
+  flex: none;
+  height: 3px;
+  margin: -2px 2px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-accent);
+  pointer-events: none;
+}
+
+.wt-board-tail {
+  display: none;
+}
+
+.wt-plan-card {
+  flex: none;
+  padding: 11px 10px 10px 12px;
+  border: 0.5px solid var(--wt-rule);
+  border-radius: var(--wt-radius-10px);
+  background: var(--wt-card-bg);
+  box-shadow: 0 1px 2px rgba(40, 25, 10, 0.06);
+  cursor: pointer;
+  transition: border-color var(--wt-dur-hover) ease, box-shadow var(--wt-dur-hover) ease,
+    opacity 200ms ease;
+}
+
+.wt-plan-card:hover {
+  border-color: var(--wt-rule-strong);
+  box-shadow: 0 4px 14px -6px rgba(40, 25, 10, 0.25);
+}
+
+.wt-plan-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.wt-plan-card.is-dragging {
+  opacity: 0.35;
+}
+
+.wt-plan-card.is-overdue {
+  box-shadow: inset 3px 0 0 var(--wt-accent);
+}
+
+.wt-plan-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.wt-plan-card .wt-plan-check {
+  margin-top: 2px;
+}
+
+.wt-plan-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.wt-plan-card-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--wt-fs-14px);
+  line-height: 1.55;
+  color: var(--wt-ink);
+  overflow-wrap: anywhere;
+}
+
+.wt-plan-card-notes {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: var(--wt-fs-12px);
+  line-height: 1.55;
+  color: var(--wt-ink-3);
+}
+
+.wt-plan-card.is-done .wt-plan-card-text {
+  color: var(--wt-ink-3);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--wt-ink-3) 60%, transparent);
+}
+
+.wt-plan-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0 28px;
+}
+
+.wt-plan-book {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  font-size: var(--wt-fs-11px);
+  color: var(--wt-ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wt-plan-book-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--wt-radius-2px);
+}
+
+.wt-plan-chapter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: auto;
+  padding: 1px 7px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--wt-ink-2);
+  font-size: var(--wt-fs-11px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.wt-plan-chapter:hover {
+  border-color: var(--wt-accent);
+  background: transparent;
+  color: var(--wt-accent);
+}
+
+.wt-plan-chapter.is-missing {
+  border-style: dashed;
+  color: var(--wt-ink-3);
+  cursor: default;
+}
+
+.wt-plan-chapter-icon {
+  display: inline-flex;
+}
+
+.wt-plan-chapter-icon svg {
+  width: 11px;
+  height: 11px;
+}
+
+.wt-plan-more-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--wt-radius-6px);
+  background: transparent;
+  box-shadow: none;
+  color: var(--wt-ink-3);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--wt-dur-hover) ease;
+}
+
+.wt-plan-more-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.wt-plan-card:hover .wt-plan-more-btn,
+.wt-plan-more-btn:focus-visible {
+  opacity: 1;
+}
+
+.wt-plan-more-btn:hover {
+  background: var(--wt-wash);
+  color: var(--wt-ink);
+}
+
+.wt-board-empty {
+  padding: 18px 8px;
+  border: 0.5px dashed var(--wt-rule-strong);
+  border-radius: var(--wt-radius-10px);
+  font-size: var(--wt-fs-12px);
+  line-height: 1.6;
+  text-align: center;
+  color: var(--wt-ink-3);
+}
+
+.wt-board-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--wt-radius-8px);
+  background: transparent;
+  box-shadow: none;
+  color: var(--wt-ink-3);
+  font-size: var(--wt-fs-13px);
+  cursor: pointer;
+}
+
+.wt-board-add-btn:hover {
+  background: var(--wt-wash);
+  color: var(--wt-ink);
+}
+
+.wt-board-add-icon {
+  display: inline-flex;
+}
+
+.wt-board-add-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.wt-board-add-input {
+  width: 100%;
+  min-height: 60px;
+  padding: 9px 11px;
+  border: 0.5px solid var(--wt-accent);
+  border-radius: var(--wt-radius-10px);
+  background: var(--wt-card-bg);
+  color: var(--wt-ink);
+  font-size: var(--wt-fs-14px);
+  line-height: 1.5;
+  resize: none;
+}
+
+.wt-board-fold {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--wt-ink-3);
+  font-size: var(--wt-fs-12px);
+  cursor: pointer;
+}
+
+.wt-board-fold:hover {
+  background: transparent;
+  color: var(--wt-ink);
+}
+
+.wt-board-fold-chevron {
+  display: inline-flex;
+}
+
+.wt-board-fold-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+.wt-board-older {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wt-board-older.is-hidden {
+  display: none;
+}
+
+/* 看板变窄：与导航列收起同一个断点（主页 ≤720px）一次性改成上下叠放，
+   只切这一次，不再分档收间距——分档会和导航列的跳变叠在一起来回闪 */
+@container wt-home (max-width: 720px) {
+  /* 叠放：每列按内容高，三列一起在看板区里上下滚动 */
+  .wt-board-cols {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    align-content: start;
+    overflow-y: auto;
+  }
+
+  .wt-board-list {
+    overflow: visible;
+  }
+
+  .wt-plan-card-tags {
+    margin-left: 0;
+  }
+}
+
+/* 卡片详情窗 */
+.wt-plan-detail {
+  width: min(560px, 92vw);
+}
+
+.wt-plan-detail-title {
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 0.5px solid var(--background-modifier-border);
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--wt-fs-18px);
+  font-weight: 600;
+  line-height: 1.45;
+  resize: none;
+}
+
+.wt-plan-detail-title:focus {
+  box-shadow: none;
+  border-bottom-color: var(--interactive-accent);
+}
+
+.wt-plan-detail-grid {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 14px;
+  margin: 16px 0 6px;
+}
+
+.wt-plan-detail-label {
+  font-size: var(--wt-fs-13px);
+  color: var(--text-muted);
+}
+
+.wt-plan-detail-label.is-block {
+  margin: 12px 0 6px;
+}
+
+.wt-plan-detail-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wt-plan-detail-value select {
+  width: 100%;
+  max-width: 100%;
+}
+
+.wt-plan-detail-date {
+  flex: 1;
+}
+
+.wt-plan-detail-notes {
+  width: 100%;
+  min-height: 110px;
+  font-size: var(--wt-fs-14px);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.wt-plan-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.wt-plan-detail-spacer {
+  flex: 1;
+}
+
+/* 删除后的「撤销」 */
+.wt-notice-undo {
+  margin-left: 12px;
+  padding: 2px 10px;
+  height: auto;
+  font-size: var(--wt-fs-12px);
+}
+
+/* 截止日期弹窗 */
+.wt-plan-date-for {
+  margin: -6px 0 14px;
+  color: var(--text-muted);
+  font-size: var(--wt-fs-13px);
+  overflow-wrap: anywhere;
+}
+
+.wt-plan-date-input {
+  width: 100%;
+  height: 38px;
+  font-size: var(--wt-fs-15px);
+}
+
+.wt-plan-date-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 /* ---- ① 书架 ---- */
@@ -3790,10 +4575,6 @@ body.wt-heading-style .markdown-rendered p {
 /* ---- 窄屏 ---- */
 
 @container (max-width: 860px) {
-  .wt-desk-top {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .wt-figures.is-wide {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -3850,15 +4631,6 @@ body.wt-heading-style .markdown-rendered p {
     width: auto;
   }
 
-  .wt-desk-hero {
-    flex-direction: column;
-    gap: 18px;
-  }
-
-  .wt-desk-hero-cover .wt-cover.is-lg {
-    width: 110px;
-  }
-
   .wt-lib-row {
     grid-template-columns: minmax(0, 1fr) auto 24px;
     row-gap: 4px;
@@ -3913,10 +4685,6 @@ body.wt-heading-style .markdown-rendered p {
     padding: 18px 14px 30px;
   }
 
-  .wt-desk-hello {
-    font-size: var(--wt-fs-23px);
-  }
-
   .wt-shelf-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 22px 16px;
@@ -3926,14 +4694,6 @@ body.wt-heading-style .markdown-rendered p {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .wt-week {
-    gap: 6px;
-  }
-
-  .wt-week-val {
-    display: none;
-  }
-
   .wt-doc-meta {
     gap: 4px;
     font-size: var(--wt-fs-11px);
@@ -3941,6 +4701,176 @@ body.wt-heading-style .markdown-rendered p {
 
   .wt-fold-desc {
     display: none;
+  }
+}
+
+/* ---- 书桌：按整个主页宽度分四档（与导航列收起量同一个容器，拖动时只朝一个方向变）----
+   宽（>940）：左「在写 / 七天」| 右「今日 / 计划」（大封面随宽度在 120–150px 间轻微缩放）
+   中（≤940）：单列；今日改成「圆环在左、明细在右」的横卡，不再竖着拉长
+   窄（≤600）：封面、圆环、字号整体缩一档；柱顶数字隐藏（导航列 720 已收起，不会再弹回）
+   极窄（≤380）：今日卡回到竖排，在写卡封面再缩（手机竖屏落在「窄」档） */
+
+.wt-desk-week {
+  display: flex;
+  flex-direction: column;
+}
+
+.wt-desk-week .wt-week {
+  flex: 1;
+  min-height: 168px;
+  height: auto;
+}
+
+@container wt-home (max-width: 940px) {
+  .wt-desk-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 单列：间距复位（两列时随宽度收窄；封面在下面单独设） */
+  .wt-desk-hero {
+    gap: 26px;
+  }
+
+  /* 两列拆开，卡片直接排进单列网格：在写 → 今日 → 计划 → 七天 → 其他书 */
+  .wt-desk-col {
+    display: contents;
+  }
+
+  .wt-desk-hero {
+    order: 1;
+  }
+
+  .wt-desk-today {
+    order: 2;
+  }
+
+  .wt-desk-plan {
+    order: 3;
+  }
+
+  .wt-desk-week {
+    order: 4;
+  }
+
+  .wt-desk-others {
+    order: 5;
+  }
+
+  .wt-desk-hero-cover .wt-cover.is-lg {
+    width: 120px;
+  }
+
+  .wt-desk-today {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr);
+    column-gap: 28px;
+    align-items: center;
+  }
+
+  .wt-desk-today > .wt-card-label {
+    grid-column: 1 / -1;
+    margin-bottom: 10px;
+  }
+
+  .wt-desk-today .wt-ring {
+    grid-row: 2 / span 2;
+    width: 132px;
+    height: 132px;
+    margin: 0;
+  }
+
+  .wt-desk-today .wt-today-rows {
+    grid-column: 2;
+    align-self: end;
+  }
+
+  .wt-desk-today .wt-link {
+    grid-column: 2;
+    align-self: start;
+    justify-self: end;
+  }
+
+  .wt-desk-others .wt-mini-books {
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  }
+}
+
+@container wt-home (max-width: 600px) {
+  .wt-desk-greet {
+    margin-bottom: 18px;
+  }
+
+  .wt-desk-hello {
+    font-size: var(--wt-fs-23px);
+  }
+
+  .wt-desk-grid {
+    gap: 12px;
+  }
+
+  .wt-desk-hero {
+    gap: 16px;
+    padding: 18px;
+  }
+
+  .wt-desk-hero-cover .wt-cover.is-lg {
+    width: 84px;
+  }
+
+  .wt-desk-hero-title {
+    margin: 6px 0 12px;
+    font-size: var(--wt-fs-22px);
+  }
+
+  .wt-desk-stat-num {
+    font-size: var(--wt-fs-16px);
+  }
+
+  .wt-desk-resume {
+    margin: 14px 0 12px;
+  }
+
+  .wt-desk-today {
+    grid-template-columns: 104px minmax(0, 1fr);
+    column-gap: 18px;
+  }
+
+  .wt-desk-today .wt-ring {
+    width: 104px;
+    height: 104px;
+  }
+
+  .wt-desk-today .wt-ring-num {
+    font-size: var(--wt-fs-22px);
+  }
+
+  .wt-week {
+    gap: 6px;
+  }
+
+  .wt-week-val {
+    display: none;
+  }
+}
+
+@container wt-home (max-width: 380px) {
+  .wt-desk-hero-cover .wt-cover.is-lg {
+    width: 64px;
+  }
+
+  .wt-desk-today {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wt-desk-today .wt-ring {
+    grid-row: auto;
+    justify-self: center;
+    margin-bottom: 12px;
+  }
+
+  .wt-desk-today .wt-today-rows,
+  .wt-desk-today .wt-link {
+    grid-column: 1;
   }
 }
 

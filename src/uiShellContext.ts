@@ -26,6 +26,13 @@ import type { WorkbenchMode } from "./workbench";
 import type { WorkbenchStatus } from "./uiShellShared";
 import type { CalendarHandle } from "./services/uiTypes";
 import type { OutlineChange, OutlineLoadResult } from "./features/outlineModule";
+import type {
+  PlanColumn,
+  PlanItem,
+  PlanItemPatch,
+  PlanPlacement,
+  RemovedPlanItem,
+} from "./planBoard";
 
 /** 日历只暴露窄句柄类型，Shell 不 import 日历模块实现。 */
 export type { CalendarHandle } from "./services/uiTypes";
@@ -113,6 +120,18 @@ export interface UiShellCapabilities {
   chapterStatus: {
     isFinal(path: string): boolean;
     setFinal(path: string, final: boolean): void;
+    subscribe(listener: () => void): () => void;
+  };
+  /** 写作计划看板（数据在库里的一份 Markdown）。 */
+  planBoard: {
+    path(): string;
+    load(): Promise<PlanItem[]>;
+    add(column: PlanColumn, text: string, extra?: { due?: string | null; book?: string | null }): Promise<void>;
+    move(key: string, column: PlanColumn, place?: PlanPlacement): Promise<void>;
+    edit(key: string, patch: PlanItemPatch): Promise<void>;
+    remove(key: string): Promise<RemovedPlanItem | null>;
+    restore(removed: RemovedPlanItem): Promise<void>;
+    openFile(): Promise<void>;
     subscribe(listener: () => void): () => void;
   };
   pomodoro: {

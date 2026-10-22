@@ -78,6 +78,10 @@ import {
   createChapterStatusModule,
   type ChapterStatusModule,
 } from "./features/chapterStatusModule";
+import {
+  createPlanBoardModule,
+  type PlanBoardModule,
+} from "./features/planBoardModule";
 import { DefaultDiagnosticsService } from "./services/diagnosticsService";
 import { DefaultEditorService } from "./services/editorService";
 import {
@@ -223,6 +227,7 @@ export default class WritingToolkitPlugin extends Plugin {
   private calendarModule!: CalendarModule;
   /** 章节定稿锁：草稿 / 定稿状态、编辑器锁定与临时解锁。 */
   private chapterStatusModule!: ChapterStatusModule;
+  private planBoardModule!: PlanBoardModule;
   private immersiveHintEl: HTMLElement | null = null;
   private hintHideTimer: TimerHandle | null = null;
   // 最近一次活动的文件信息：侧栏获得焦点时 workspace.getActiveFile() 会返回 null，
@@ -358,6 +363,7 @@ export default class WritingToolkitPlugin extends Plugin {
           subscribe: (listener) =>
             this.chapterStatusModule.operations.subscribe(listener),
         },
+        planBoard: this.planBoardModule.operations,
         pomodoro: {
           getPomodoroState: () => this.getPomodoroState(),
           getTodayPomodoroSummary: () => this.getTodayPomodoroSummary(),
@@ -533,14 +539,8 @@ export default class WritingToolkitPlugin extends Plugin {
       projectWords: (key) => this.projectForDisplay(key),
       projectDuration: (key) => this.projectDurationHistory[key] || {},
     });
-    this.chapterStatusModule = createChapterStatusModule({
-      legacyFinals: () => this.legacyChapterStatus,
-      clearLegacy: () => {
-        if (!this.legacyChapterStatus) return;
-        this.legacyChapterStatus = null;
-        void this.savePluginData();
-      },
-    });
+    this.chapterStatusModule = this.buildChapterStatusModule();
+    this.planBoardModule = createPlanBoardModule();
     await this.host.activateModules([
       this.typographyModule,
       this.typewriterModule,
@@ -555,6 +555,7 @@ export default class WritingToolkitPlugin extends Plugin {
       this.pomodoroModule,
       this.calendarModule,
       this.chapterStatusModule,
+      this.planBoardModule,
     ]);
 
     // 阶段 5：模块就绪后再构建 Shell 上下文；视图创建时只依赖这个上下文。
@@ -867,6 +868,17 @@ export default class WritingToolkitPlugin extends Plugin {
     this.activePomodoro()?.reassertLock();
     new Notice(LOCKED_NOTICE);
     return true;
+  }
+
+  private buildChapterStatusModule(): ChapterStatusModule {
+    return createChapterStatusModule({
+      legacyFinals: () => this.legacyChapterStatus,
+      clearLegacy: () => {
+        if (!this.legacyChapterStatus) return;
+        this.legacyChapterStatus = null;
+        void this.savePluginData();
+      },
+    });
   }
 
   private buildPomodoroModule(): PomodoroModule {

@@ -47,6 +47,7 @@ CHECKS=(
   "check-pomodoro-module.js:番茄钟 Feature Module"
   "check-pomodoro-lock.js:番茄钟锁定（SPEC-007）"
   "check-calendar-module.js:写作日历 Feature Module"
+  "check-plan-board.js:写作计划看板"
   "check-anchors.js:批注四层锚点定位"
   "check-formatwrap.js:格式包裹与还原"
   "check-renumber.js:全书章节重编号"
