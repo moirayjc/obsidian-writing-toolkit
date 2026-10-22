@@ -21,6 +21,7 @@
  *   · refreshBanners 不再摘掉解锁章节的提示条 →「临时解锁后提示条摘掉」变红；
  *   · 去掉元数据 changed 订阅 →「另一台设备同步来的定稿不重启就生效」变红；
  *   · cleanChapterText 不再去掉 frontmatter →「交稿载荷去掉 frontmatter」变红；
+ *   · 手机悬浮标题栏规则去掉 top 偏移 →「提示条放到安全区 + 标题栏下方」变红；
  *   · 去掉 hardBreak 的 userEvent →「硬换行带 userEvent」变红。
  *
  * 不启动 Obsidian、不依赖 main.js、不联网。
@@ -559,9 +560,21 @@ async function main() {
       "提示条挂在笔记视图上（不在 CodeMirror 面板里，手机端面板不显示），正文区让出高度",
       !/showPanel/.test(lockSource) &&
         /host\.insertBefore\(el, content\)/.test(moduleSource) &&
-        /\.workspace-leaf-content\.wt-has-lock-banner > \.view-content \{[^}]*flex: 1 1 0;[^}]*min-height: 0;/.test(
+        /\.wt-has-lock-banner\s*>\s*\.view-content\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 0;/.test(
           source("styles.css")
         )
+    );
+    const css = source("styles.css");
+    const phoneBanner = css.match(
+      /\.is-phone\.is-floating-nav \.workspace-leaf-content\.wt-has-lock-banner > \.wt-lock-banner,\s*\.is-phone\.auto-full-screen [^{]*\{([^}]*)\}/
+    );
+    r.check(
+      "手机悬浮标题栏模式：提示条放到「安全区 + 标题栏」下方，正文留白加上提示条高度（否则钻到状态栏下面点不到）",
+      !!phoneBanner &&
+        /position: absolute;/.test(phoneBanner[1]) &&
+        /top: calc\(var\(--safe-area-inset-top\) \+ var\(--view-header-height\)\);/.test(phoneBanner[1]) &&
+        /padding-top: calc\(var\(--view-top-spacing-markdown\) \+ var\(--wt-lock-banner-height\)\);/.test(css) &&
+        /body:not\(\.is-floating-nav\):not\(\.auto-full-screen\)\s*\.workspace-leaf-content\.wt-has-lock-banner/.test(css)
     );
 
     const diffSource = source("src/snapshotDiff.ts");

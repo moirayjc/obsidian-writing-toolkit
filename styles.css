@@ -8405,8 +8405,16 @@ body.theme-dark .modal.wt-phone-modal {
    挂在笔记视图外壳（.workspace-leaf-content）里、标题栏与正文区之间，不随正文滚动；
    不放 CodeMirror 面板（手机端不显示）。笔记视图不在四个页面之内，取不到 --wt-* 令牌，
    只用 Obsidian 自带变量，跟随当前主题。 */
-.workspace-leaf-content.wt-has-lock-banner > .view-content {
-  /* 外壳是纵向 flex：正文区原本按「100% - 标题栏」定高，挂了提示条要让出这一截 */
+.workspace-leaf-content.wt-has-lock-banner {
+  /* 提示条的固定高度：手机悬浮标题栏模式下正文留白要加上它 */
+  --wt-lock-banner-height: 40px;
+}
+
+/* 外壳是纵向 flex：正文区原本按「100% - 标题栏」定高，挂了提示条（在文档流里）要让出这一截。
+   手机悬浮标题栏模式下提示条是绝对定位、不占文档流，不改 Obsidian 的正文区布局。 */
+body:not(.is-floating-nav):not(.auto-full-screen)
+  .workspace-leaf-content.wt-has-lock-banner
+  > .view-content {
   flex: 1 1 0;
   min-height: 0;
   height: auto;
@@ -8471,4 +8479,26 @@ body.theme-dark .modal.wt-phone-modal {
 body.wt-mobile .wt-lock-banner-btn {
   min-height: 32px;
   padding: 4px 14px;
+}
+
+/* 手机端悬浮标题栏（Obsidian 在 .is-phone.is-floating-nav / .is-phone.auto-full-screen 下
+   把 .view-header 设成 position: fixed）：外壳从屏幕最顶上开始，留在文档流顶部的提示条会
+   钻到状态栏和标题栏下面、点不到（2026-10-22 真机）。照 Obsidian 自己的算法放到
+   「安全区 + 标题栏」下方，正文顶部留白再加上提示条高度，免得前几行被盖住。 */
+.is-phone.is-floating-nav .workspace-leaf-content.wt-has-lock-banner > .wt-lock-banner,
+.is-phone.auto-full-screen .workspace-leaf-content.wt-has-lock-banner > .wt-lock-banner {
+  position: absolute;
+  top: calc(var(--safe-area-inset-top) + var(--view-header-height));
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: var(--wt-lock-banner-height);
+  box-sizing: border-box;
+}
+
+.is-phone.is-floating-nav .workspace-leaf-content.wt-has-lock-banner .view-content .markdown-source-view > .cm-editor > .cm-scroller,
+.is-phone.is-floating-nav .workspace-leaf-content.wt-has-lock-banner .view-content .markdown-reading-view > .markdown-preview-view,
+.is-phone.auto-full-screen .workspace-leaf-content.wt-has-lock-banner .view-content .markdown-source-view > .cm-editor > .cm-scroller,
+.is-phone.auto-full-screen .workspace-leaf-content.wt-has-lock-banner .view-content .markdown-reading-view > .markdown-preview-view {
+  padding-top: calc(var(--view-top-spacing-markdown) + var(--wt-lock-banner-height));
 }
