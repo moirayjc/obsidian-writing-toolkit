@@ -18,6 +18,8 @@ export interface SnapshotDiffHost {
   isEditorValid(editor: Editor): boolean;
   countWords(text: string): number;
   markProgrammaticEdit?(editor: Editor, text: string): void;
+  /** 这个文件此刻不许插件写正文时返回原因（如定稿锁定中），可以写返回 null。 */
+  writeBlockReason?(path: string): string | null;
 }
 
 /** 一个非空行，以及它后面属于同一段的空行。 */
@@ -551,6 +553,11 @@ export async function performRestore(
     new Notice("写作工具箱：当前没有可恢复的活动文件（文件可能已关闭，请重新打开）");
     return false;
   }
+  const blocked = host.writeBlockReason?.(sourcePath);
+  if (blocked) {
+    new Notice(`写作工具箱：${blocked}`);
+    return false;
+  }
   try {
     const currentText = editor.getValue();
     if (baselineText !== undefined && currentText !== baselineText) {
@@ -606,6 +613,11 @@ export async function applySnapshotContent(
     !host.isEditorValid(editor)
   ) {
     new Notice("写作工具箱：当前没有可编辑的活动文件（文件可能已关闭，请重新打开）");
+    return false;
+  }
+  const blocked = host.writeBlockReason?.(sourcePath);
+  if (blocked) {
+    new Notice(`写作工具箱：${blocked}`);
     return false;
   }
   const currentText = editor.getValue();
@@ -798,8 +810,13 @@ class SnapshotDiffModal extends Modal {
     this.leftPane = leftCol.createDiv({ cls: "wt-diff-pane is-left" });
     this.leftPane.setText(this.snapshot);
 
+    // 定稿锁定中的章节：右栏只读，免得每次输入后的自动保存都被拦一次。
+    const locked = this.host.writeBlockReason?.(this.sourcePath) ?? null;
     const rightCol = body.createDiv({ cls: "wt-diff-col is-right" });
-    rightCol.createDiv({ cls: "wt-diff-colhead", text: "当前（可直接编辑）" });
+    rightCol.createDiv({
+      cls: "wt-diff-colhead",
+      text: locked ? "当前（本章已定稿 · 只读）" : "当前（可直接编辑）",
+    });
     this.rightPane = rightCol.createDiv({
       cls: "wt-diff-pane is-right",
       attr: {
@@ -808,6 +825,11 @@ class SnapshotDiffModal extends Modal {
         "aria-label": "当前正文（可编辑）",
       },
     });
+    if (locked) {
+      this.rightPane.setAttr("contenteditable", "false");
+      this.rightPane.setAttr("tabindex", "-1");
+      this.rightPane.setAttr("aria-label", "当前正文（本章已定稿，只读）");
+    }
     this.rightPane.setText(this.baseline);
     this.rightPane.addEventListener("input", () => this.onRightInput());
 

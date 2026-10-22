@@ -109,6 +109,12 @@ export interface UiShellCapabilities {
   calendar: {
     create(container: HTMLElement, initialYear?: number): CalendarHandle;
   };
+  /** 章节草稿 / 定稿状态（定稿章节在编辑器里锁定）。 */
+  chapterStatus: {
+    isFinal(path: string): boolean;
+    setFinal(path: string, final: boolean): void;
+    subscribe(listener: () => void): () => void;
+  };
   pomodoro: {
     getPomodoroState(): PomodoroState | null;
     getTodayPomodoroSummary(): { count: number; words: number } | null;

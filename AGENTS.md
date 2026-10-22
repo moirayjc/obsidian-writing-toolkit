@@ -100,6 +100,7 @@ npm run dev       # 监听构建（常驻进程，用完记得关）
 - 编辑器内 UI → **不要做跟随文字滚动的浮层**（历史上因此删掉了整个 `commentPopover.ts`）
 - 「是不是正文」→ 用 `isDailyCountFile()` / `chapterPaths()`，不要写路径关键词匹配
 - 新增写入正文的记号 → 同步更新 `stripInlineFormatting`，否则字数统计虚增
+- 插件代码往正文里写 → 先问 `services.editor.writeBlockReason(path)`（定稿锁定中会拒绝）；往编辑器 dispatch 改动要带 `userEvent`（`input.type` / `input`），否则定稿锁认不出
 - 新增设置项 → 照 `loadPluginData` 里 `data.x ?? DEFAULT_SETTINGS.x` 的写法（**曾因漏写而丢掉用户 17 项配置**）
 - 新增计时器/监听器 → 配 `onunload` 清理；body 级监听用 `registerDomEvent`
 - 新增任何操作入口 → **不要注册新命令**；先放进三个主页面、侧栏、右键菜单、设置页或编辑工具条

@@ -74,6 +74,8 @@ interface RowRef {
   rowEl: HTMLElement;
   wordsEl: HTMLElement;
   dotEl: HTMLElement;
+  /** 定稿锁标记（草稿时隐藏） */
+  lockEl: HTMLElement;
   known: boolean;
   words: number;
 }
@@ -296,6 +298,10 @@ export class WritingToolkitWorkbench extends ItemView {
     // 切换标签页 / 打开章节后，把「当前章」高亮跟着活动文件走。
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => this.syncActive())
+    );
+    // 定稿状态变了（右键切换、改名迁移）：只刷新各行的锁标记，不重建列表。
+    this.register(
+      this.host.caps.chapterStatus.subscribe(() => this.applyChapterStatuses())
     );
     this.footTimer = window.setInterval(() => this.renderFoot(), 1000);
     this.render();
@@ -1572,6 +1578,10 @@ export class WritingToolkitWorkbench extends ItemView {
       row.createSpan({ cls: "wt-wb-ch-hits", text: `${hit.count} 处` });
     }
 
+    const lockEl = row.createSpan({ cls: "wt-wb-ch-lock" });
+    setIcon(lockEl, "wt-lock");
+    lockEl.setAttr("title", "已定稿：编辑器里锁定，右键可改回草稿");
+
     const wordsEl = row.createSpan({ cls: "wt-wb-ch-words", text: "…" });
 
     const dotEl = row.createSpan({ cls: "wt-wb-ch-dot" });
@@ -1582,10 +1592,12 @@ export class WritingToolkitWorkbench extends ItemView {
       rowEl: row,
       wordsEl,
       dotEl,
+      lockEl,
       known: false,
       words: 0,
     };
     this.rows.set(entry.file.path, ref);
+    this.applyChapterStatus(ref);
 
     if (entry.file.path === this.currentPath) row.addClass("is-current");
 
@@ -2114,6 +2126,17 @@ export class WritingToolkitWorkbench extends ItemView {
     return best;
   }
 
+  /** 按定稿状态显示 / 隐藏一行的锁标记。 */
+  private applyChapterStatus(ref: RowRef): void {
+    const isFinal = this.host.caps.chapterStatus.isFinal(ref.entry.file.path);
+    ref.rowEl.toggleClass("is-final", isFinal);
+    ref.lockEl.toggleClass("is-final", isFinal);
+  }
+
+  private applyChapterStatuses(): void {
+    for (const ref of this.rows.values()) this.applyChapterStatus(ref);
+  }
+
   // ---------- 菜单与动作 ----------
 
   private showFileMenu(
@@ -2137,6 +2160,12 @@ export class WritingToolkitWorkbench extends ItemView {
       menu.addItem((item) =>
         item.setTitle("对比最近快照").onClick(() => {
           void this.host.caps.snapshots.openDiff(entry.file.path);
+        })
+      );
+      const isFinal = this.host.caps.chapterStatus.isFinal(entry.file.path);
+      menu.addItem((item) =>
+        item.setTitle(isFinal ? "改回草稿" : "设为定稿").onClick(() => {
+          this.host.caps.chapterStatus.setFinal(entry.file.path, !isFinal);
         })
       );
       // 读者手机预览只在桌面端提供（真机上人已经在手机上了）。

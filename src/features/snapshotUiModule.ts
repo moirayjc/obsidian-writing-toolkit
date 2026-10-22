@@ -92,6 +92,7 @@ export function createSnapshotUiModule(
       isEditorValid: options.isEditorValid,
       countWords,
       markProgrammaticEdit: options.markProgrammaticEdit,
+      writeBlockReason: (path) => context.services.editor.writeBlockReason(path),
     };
     const runtime: SnapshotPanelRuntime = {
       ...diffHost,

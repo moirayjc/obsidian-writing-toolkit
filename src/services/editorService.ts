@@ -15,6 +15,13 @@ interface ActiveEditorView {
   editor?: Editor | null;
 }
 
+/**
+ * 写入守卫：返回拒绝写入的原因（给用户看的一句话），允许写入返回 null。
+ * 插件内会改正文的功能（快照恢复、对比写回、编辑工具条）写之前先问一次，
+ * 由具体模块（如章节定稿锁）注册，避免功能模块之间互相 import。
+ */
+export type WriteGuard = (path: string) => string | null;
+
 export interface EditorRegistrationAdapter {
   registerEditorExtension(extension: Extension): void;
 }
@@ -38,9 +45,15 @@ export interface EditorService {
   getFilePath(view: EditorView | null | undefined): string | null;
   getFilePathForEditor(editor: Editor | null | undefined): string | null;
   findViewFromDom(element: HTMLElement | null): EditorView | null;
+  /** 注册写入守卫；返回撤销函数（模块停用时调用）。 */
+  registerWriteGuard(guard: WriteGuard): () => void;
+  /** 这个文件此刻能不能由插件写正文：能返回 null，不能返回原因。 */
+  writeBlockReason(path: string | null | undefined): string | null;
 }
 
 export class DefaultEditorService implements EditorService {
+  private readonly writeGuards = new Set<WriteGuard>();
+
   constructor(
     private readonly app: App,
     private readonly registration: EditorRegistrationAdapter
@@ -102,6 +115,22 @@ export class DefaultEditorService implements EditorService {
 
   findViewFromDom(element: HTMLElement | null): EditorView | null {
     return element ? EditorView.findFromDOM(element) : null;
+  }
+
+  registerWriteGuard(guard: WriteGuard): () => void {
+    this.writeGuards.add(guard);
+    return () => {
+      this.writeGuards.delete(guard);
+    };
+  }
+
+  writeBlockReason(path: string | null | undefined): string | null {
+    if (!path) return null;
+    for (const guard of this.writeGuards) {
+      const reason = guard(path);
+      if (reason) return reason;
+    }
+    return null;
   }
 
   private activeView(): ActiveEditorView | null {

@@ -60,6 +60,7 @@ export function applyPunctuationInput(
     view.dispatch({
       changes: { from, to, insert: text + selected + closer },
       selection: { anchor: from + 1, head: from + 1 + selected.length },
+      userEvent: "input.type",
     });
     return true;
   }
@@ -72,6 +73,8 @@ export function applyPunctuationInput(
   view.dispatch({
     changes: { from, to, insert: text + closer },
     selection: { anchor: from + text.length },
+    // 标成作者输入：撤销分组、定稿锁等过滤器都靠它识别
+    userEvent: "input.type",
   });
   return true;
 }

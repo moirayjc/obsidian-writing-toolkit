@@ -342,6 +342,20 @@ export const WT_ICONS: Record<string, string> = {
     `<circle cx="12" cy="14.2" r="1.5" fill="currentColor" stroke="none"/>`,
   ),
 
+  // ---- 章节状态 ----
+  // 定稿：合上的锁，锁孔落墨
+  "wt-lock": icon(
+    `<rect x="5.2" y="10.6" width="13.6" height="9.4" rx="1.8"/>` +
+    `<path d="M8.4 10.6V7.8a3.6 3.6 0 0 1 7.2 0v2.8"/>` +
+    `<circle cx="12" cy="15.3" r="1.25" fill="currentColor" stroke="none"/>`,
+  ),
+  // 临时解锁：锁梁抬起
+  "wt-unlock": icon(
+    `<rect x="5.2" y="10.6" width="13.6" height="9.4" rx="1.8"/>` +
+    `<path d="M8.4 10.6V7.8a3.6 3.6 0 0 1 6.9-1.4"/>` +
+    `<circle cx="12" cy="15.3" r="1.25" fill="currentColor" stroke="none"/>`,
+  ),
+
 };
 
 /** 注册到 Obsidian 图标库；onload 里必须在任何 setIcon / ribbon 之前调用。 */

@@ -7868,6 +7868,28 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
   opacity: 0.65;
 }
 
+/* 定稿锁标记：紧跟标题；草稿时不占位 */
+.wt-wb .wt-wb-ch-lock {
+  order: 3;
+  flex: none;
+  display: none;
+  align-items: center;
+  color: var(--wt-ink-3);
+}
+
+.wt-wb .wt-wb-ch-lock.is-final {
+  display: inline-flex;
+}
+
+.wt-wb .wt-wb-ch-lock svg {
+  width: 12px;
+  height: 12px;
+}
+
+.wt-wb .wt-wb-ch.is-current .wt-wb-ch-lock {
+  color: var(--wt-accent);
+}
+
 /* 设定资料行：标题在前，轻胶囊标签与字数在后 */
 .wt-wb .wt-wb-res-titlewrap {
   flex: 1;
@@ -8377,4 +8399,67 @@ body.theme-dark .modal.wt-phone-modal {
 .wt-phone-modal .wt-phone-foot-info {
   font-size: var(--wt-fs-12px);
   color: var(--wt-phone-sub);
+}
+
+/* ===== 章节定稿锁：编辑器顶部提示条 =====
+   挂在 CodeMirror 的顶部面板里（不随正文滚动）。编辑器不在四个页面之内，
+   取不到 --wt-* 令牌，所以只用 Obsidian 自带变量，跟随当前主题。 */
+.wt-lock-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.wt-lock-panel-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.wt-lock-panel-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.wt-lock-panel-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.wt-lock-panel-btn {
+  flex: none;
+  padding: 2px 10px;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+/* 编辑被拦下时闪一下，告诉作者为什么打字没反应 */
+.wt-lock-panel.is-flash {
+  animation: wt-lock-flash 0.6s ease-out;
+}
+
+@keyframes wt-lock-flash {
+  0% {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+  }
+  100% {
+    background: var(--background-secondary);
+    color: var(--text-muted);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wt-lock-panel.is-flash {
+    animation: none;
+  }
+}
+
+body.wt-mobile .wt-lock-panel-btn {
+  min-height: 32px;
+  padding: 4px 14px;
 }

@@ -81,6 +81,8 @@ export function createFormatToolbarModule(
           commentBubbleEverywhere: () =>
             settings?.get().commentBubbleEverywhere === true,
           onAddComment: options.onAddComment,
+          isWriteBlocked: (path) =>
+            context.services.editor.writeBlockReason(path) !== null,
         })
       );
     },

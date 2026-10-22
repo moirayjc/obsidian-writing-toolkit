@@ -66,6 +66,8 @@ export function applyHardBreakOnEnter(view: EditorView): boolean {
   view.dispatch({
     changes: { from: sel.from, to: sel.to, insert: "\n\n" },
     selection: { anchor: sel.from + 2 },
+    // 和 CodeMirror 自带的回车一样标成作者输入：撤销分组、定稿锁等过滤器都靠它识别
+    userEvent: "input",
   });
   return true;
 }

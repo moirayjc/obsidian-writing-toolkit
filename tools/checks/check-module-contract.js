@@ -11,6 +11,7 @@ const H = require("./_harness");
 
 const MODULE_FILES = {
   "calendarModule.ts": "calendar",
+  "chapterStatusModule.ts": "chapter-status",
   "commentsModule.ts": "comments",
   "editorHardBreakModule.ts": "editor.hard-break",
   "editorHemingwayModule.ts": "editor.hemingway",
@@ -45,7 +46,7 @@ const SNAPSHOT_SETTING_KEYS = [
 const DATA_KEYS = [
   "settings", "dailyHistory", "dailyDurationHistory",
   "projectHistory", "projectDurationHistory",
-  "dailyPomodoroHistory", "pomodoroSession", "dailyFileDeltas", "dailyTypedHistory", "workbenchProject",
+  "dailyPomodoroHistory", "pomodoroSession", "dailyFileDeltas", "dailyTypedHistory", "chapterStatus", "workbenchProject",
   "workbenchMode", "workbenchStatus", "hiddenProjects", "homePage",
   "projectCovers", "libraryView", "fileBaselines", "baselinesAt",
 ];
@@ -92,18 +93,18 @@ function main() {
     ])
   );
 
-  // 1. 12 个模块 id 与文件一一对应，无重复。
+  // 1. 13 个模块 id 与文件一一对应，无重复。
   const ids = Object.entries(MODULE_FILES).map(([file, id]) => {
     const defined = new RegExp(`id:\\s*"${id.replace(/\./g, "\\.")}"`).test(sources[file]);
     return defined ? id : null;
   });
   r.check(
-    "12 个 Feature Module 文件都声明了约定的模块 id",
-    featureFiles.length === 12 && ids.every(Boolean)
+    "13 个 Feature Module 文件都声明了约定的模块 id",
+    featureFiles.length === 13 && ids.every(Boolean)
   );
   r.check(
     "模块 id 无重复且集合稳定",
-    new Set(ids).size === 12 && sameSet(ids, Object.values(MODULE_FILES))
+    new Set(ids).size === 13 && sameSet(ids, Object.values(MODULE_FILES))
   );
 
   // 2. 只有 snapshots.ui 有依赖，且依赖 snapshots.core。
@@ -117,7 +118,7 @@ function main() {
       /dependsOn:\s*\["snapshots\.core"\]/.test(withDepends[0][1])
   );
 
-  // 3. main.ts 恰好创建并激活 12 个模块。
+  // 3. main.ts 恰好创建并激活 13 个模块。
   const mainSource = readFile("src/main.ts");
   const factoryCalls = (mainSource.match(/create[A-Za-z]+Module\s*\(/g) || []).length;
   const activateBlock = mainSource.slice(
@@ -126,8 +127,8 @@ function main() {
   );
   const activated = (activateBlock.match(/this\.[A-Za-z]+Module,/g) || []).length;
   r.check(
-    "main.ts 创建并激活恰好 12 个模块",
-    factoryCalls === 12 && activated === 12,
+    "main.ts 创建并激活恰好 13 个模块",
+    factoryCalls === 13 && activated === 13,
     "factories=" + factoryCalls + ", activated=" + activated
   );
 
@@ -196,7 +197,7 @@ function main() {
       .matchAll(/^\s{2}([A-Za-z][A-Za-z0-9_]*):/gm),
   ].map((match) => match[1]);
   r.check(
-    "persistPluginData + prefs 快照拼出 data.json 的 19 个顶层键",
+    "persistPluginData + prefs 快照拼出 data.json 的 20 个顶层键",
     /this\.prefs\.forPersistence\(\)/.test(persistBlock) &&
       sameSet(persistedKeys, DATA_KEYS.filter((key) => !PREFS_KEYS.includes(key))) &&
       sameSet(prefsSnapshotKeys, PREFS_KEYS),

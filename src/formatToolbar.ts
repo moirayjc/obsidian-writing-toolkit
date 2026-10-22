@@ -36,6 +36,8 @@ export interface FormatToolbarConfig {
   commentBubbleEverywhere?(): boolean;
   /** 点批注按钮：为当前选区添加批注 */
   onAddComment?(view: EditorView): void;
+  /** 这个文件此刻不许插件写正文（如定稿锁定中）：只留批注按钮 */
+  isWriteBlocked?(path: string | null): boolean;
 }
 
 const ICONS: Record<FormatKind, string> = {
@@ -295,11 +297,13 @@ export function buildFormatToolbar(config: FormatToolbarConfig) {
         if (view.composing) return this.hideWith("输入法拼字中", null);
         if (!this.isMarkdownEditor()) return this.hideWith("非 Markdown 编辑器（无 editorInfoField）", null);
         const path = this.currentPath();
-        // 格式按钮与批注按钮分开判断：批注可以「全库浮出」（不受格式生效范围限制）
-        const formatOk = config.isEnabled() && config.allowsPath(path);
+        // 格式按钮与批注按钮分开判断：批注可以「全库浮出」（不受格式生效范围限制）；
+        // 定稿锁定中的章节不许改正文，格式按钮收起，批注照常可用。
+        const scopeOk = config.isEnabled() && config.allowsPath(path);
+        const formatOk = scopeOk && !(config.isWriteBlocked?.(path) ?? false);
         const commentOk =
           (config.commentsEnabled?.() ?? false) &&
-          (formatOk || (config.commentBubbleEverywhere?.() ?? false));
+          (scopeOk || (config.commentBubbleEverywhere?.() ?? false));
         if (!formatOk && !commentOk) return this.hideWith("开关关闭或范围排除", path);
         this.bubble.toggleClass("is-comments-only", !formatOk);
         this.bubble.toggleClass("is-comment-off", !commentOk);

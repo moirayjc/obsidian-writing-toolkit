@@ -74,6 +74,11 @@ import {
   type CalendarHandle,
   type CalendarModule,
 } from "./features/calendarModule";
+import {
+  createChapterStatusModule,
+  type ChapterStatusMap,
+  type ChapterStatusModule,
+} from "./features/chapterStatusModule";
 import { DefaultDiagnosticsService } from "./services/diagnosticsService";
 import { DefaultEditorService } from "./services/editorService";
 import {
@@ -175,6 +180,8 @@ export default class WritingToolkitPlugin extends Plugin {
   dailyFileDeltas: Record<string, DailyHistory> = {};
   /** 每日写下的字：手动输入的正增量累计（时速的分子），删除不抵减、粘贴不计 */
   dailyTypedHistory: DailyHistory = {};
+  /** 章节定稿状态：路径 → "final"（草稿不存）；读写规则见 chapterStatusModule */
+  chapterStatus: ChapterStatusMap = {};
   /** 阶段 6：界面偏好 Service（主页 / 书架 / 编辑台的界面记忆）。 */
   private prefs!: WorkspacePrefsService;
   /** 阶段 6：统计读模型与状态栏更新广播。 */
@@ -212,6 +219,8 @@ export default class WritingToolkitPlugin extends Plugin {
   private pomodoroModule!: PomodoroModule;
   /** 阶段 4：写作日历的数据绑定、设置热更新和实例生命周期。 */
   private calendarModule!: CalendarModule;
+  /** 章节定稿锁：草稿 / 定稿状态、编辑器锁定与临时解锁。 */
+  private chapterStatusModule!: ChapterStatusModule;
   private immersiveHintEl: HTMLElement | null = null;
   private hintHideTimer: TimerHandle | null = null;
   // 最近一次活动的文件信息：侧栏获得焦点时 workspace.getActiveFile() 会返回 null，
@@ -339,6 +348,13 @@ export default class WritingToolkitPlugin extends Plugin {
         calendar: {
           create: (container, initialYear) =>
             this.createCalendar(container, initialYear),
+        },
+        chapterStatus: {
+          isFinal: (path) => this.chapterStatusModule.operations.isFinal(path),
+          setFinal: (path, final) =>
+            this.chapterStatusModule.operations.setFinal(path, final),
+          subscribe: (listener) =>
+            this.chapterStatusModule.operations.subscribe(listener),
         },
         pomodoro: {
           getPomodoroState: () => this.getPomodoroState(),
@@ -515,6 +531,10 @@ export default class WritingToolkitPlugin extends Plugin {
       projectWords: (key) => this.projectForDisplay(key),
       projectDuration: (key) => this.projectDurationHistory[key] || {},
     });
+    this.chapterStatusModule = createChapterStatusModule({
+      finals: () => this.chapterStatus,
+      onChanged: () => void this.savePluginData(),
+    });
     await this.host.activateModules([
       this.typographyModule,
       this.typewriterModule,
@@ -528,6 +548,7 @@ export default class WritingToolkitPlugin extends Plugin {
       this.outlineModule,
       this.pomodoroModule,
       this.calendarModule,
+      this.chapterStatusModule,
     ]);
 
     // 阶段 5：模块就绪后再构建 Shell 上下文；视图创建时只依赖这个上下文。
@@ -2335,6 +2356,12 @@ export default class WritingToolkitPlugin extends Plugin {
         this.projectDurationHistory = asRecord<Record<string, DailyHistory>>(data.projectDurationHistory) ?? {};
         this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
         this.dailyTypedHistory = asRecord<DailyHistory>(data.dailyTypedHistory) ?? {};
+        // 只认值为 "final" 的条目；草稿不存，认不出的值当草稿处理
+        this.chapterStatus = Object.fromEntries(
+          Object.entries(asRecord<Record<string, unknown>>(data.chapterStatus) ?? {}).filter(
+            ([, value]) => value === "final"
+          )
+        ) as ChapterStatusMap;
         this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
         this.loadedPomodoroSession = data.pomodoroSession ?? null;
         this.prefs.load(data);
@@ -2433,6 +2460,7 @@ export default class WritingToolkitPlugin extends Plugin {
       projectDurationHistory: this.projectDurationHistory,
       dailyFileDeltas: this.dailyFileDeltas,
       dailyTypedHistory: this.dailyTypedHistory,
+      chapterStatus: this.chapterStatus,
       dailyPomodoroHistory: this.dailyPomodoroHistory,
       pomodoroSession: this.pomodoroSessionForPersistence(),
       ...this.prefs.forPersistence(),

@@ -10,7 +10,7 @@ const WORD = /[\p{L}\p{N}]+/gu;
  * 剥离前导 YAML frontmatter：章纲等元数据不应计入正文字数。
  * frontmatter 必须严格位于文件开头（第一行 ---，闭合行也必须是行首 ---）。
  */
-function stripFrontmatter(text: string): string {
+export function stripFrontmatter(text: string): string {
   if (!text.startsWith("---")) return text;
   const lines = text.split(/\r?\n/);
   for (let i = 1; i < lines.length; i++) {
