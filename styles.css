@@ -8082,6 +8082,7 @@ body.wt-indent .cm-editor .cm-line:not([class*="HyperMD-header-"]):not([class*="
 .wt-wb {
   --wt-wb-hair: var(--wt-rule);
   --wt-wb-wash: var(--wt-wash);
+  container: wt-wb / inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -8104,16 +8105,16 @@ body.wt-indent .cm-editor .cm-line:not([class*="HyperMD-header-"]):not([class*="
   box-shadow: none;
 }
 
-/* ---------- ① 顶部书头（紧凑不占宽） ---------- */
+/* ---------- ① 顶部书头（书目风：宋体书名 + 状态胶囊 + 衬线数字） ---------- */
 
 .wt-wb .wt-wb-head {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px 0;
+  gap: 0;
+  padding: 16px 14px 12px;
   border-bottom: 0.5px solid var(--wt-rule);
-  background: color-mix(in srgb, var(--wt-paper-2) 38%, var(--wt-paper));
+  background: var(--wt-paper);
 }
 
 body.wt-theme-contrast .wt-wb .wt-wb-head,
@@ -8122,8 +8123,12 @@ body.wt-theme-contrast .wt-wb .wt-wb-volume-head {
   background: var(--wt-paper-2);
 }
 
+body.wt-theme-contrast .wt-wb .wt-wb-volume-head:hover {
+  background: var(--wt-hover);
+}
+
 .wt-wb .wt-wb-empty-title {
-  padding: 2px 0 10px;
+  padding: 2px 0;
   font-size: var(--wt-fs-13px);
   color: var(--wt-ink-2);
 }
@@ -8136,28 +8141,28 @@ body.wt-theme-contrast .wt-wb .wt-wb-volume-head {
   min-width: 0;
 }
 
-/* 书名右侧：连载状态 + 搜索 / 复制 */
+/* 书名右侧：搜索 / 复制 / 手机预览 */
 .wt-wb .wt-wb-head-right {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 
 .wt-wb .wt-wb-head-tool {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
-  border-radius: var(--wt-radius-5px);
+  border-radius: var(--wt-radius-7px);
   background: transparent;
   color: var(--wt-ink-3);
   box-shadow: none;
   cursor: pointer;
-  transition: background-color var(--wt-dur-snap) ease, color var(--wt-dur-snap) ease;
+  transition: background-color var(--wt-dur-hover) var(--wt-ease-rise), color var(--wt-dur-hover) var(--wt-ease-rise);
 }
 
 .wt-wb .wt-wb-head-tool:hover {
@@ -8185,32 +8190,23 @@ body.wt-mobile .wt-wb .wt-wb-head-tool svg {
   height: 18px;
 }
 
-/* 书名 + 状态点：书名放大、悬停出一条墨线，状态点跟在书名后 */
+/* 书名 + 状态胶囊 */
 .wt-wb .wt-wb-book-group {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
 }
 
 .wt-wb .wt-wb-book {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: calc(100% - 21px);
-  height: auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px 2px 5px;
-  margin-left: -6px;
-  border: 0.5px solid transparent;
-  border-radius: var(--wt-radius-6px);
-  background: transparent;
   color: var(--wt-ink);
   cursor: default;
   text-align: left;
-  transition: background-color var(--wt-dur-snap) ease, border-color var(--wt-dur-snap) ease;
 }
 
 .wt-wb .wt-wb-book-name {
@@ -8218,120 +8214,141 @@ body.wt-mobile .wt-wb .wt-wb-head-tool svg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-bottom: 2px;
-  border-bottom: 3px double var(--wt-ink-2);
   font-family: var(--wt-serif);
-  font-size: var(--wt-fs-16px);
-  font-weight: 700;
-  line-height: 21px;
-  letter-spacing: 0.1em;
+  font-size: var(--wt-fs-18px);
+  font-weight: 600;
+  line-height: 26px;
+  letter-spacing: 0.04em;
   color: var(--wt-ink);
-  transition: border-color var(--wt-dur-base) var(--wt-ease-rise);
 }
 
-.wt-wb .wt-wb-book:hover .wt-wb-book-name {
-  border-bottom-color: var(--wt-accent);
-}
-
-/* 状态点：颜色表示连载状态，点击弹出菜单 */
-.wt-wb .wt-wb-book-status {
+/* 连载状态：带字小胶囊（与主页 .wt-pill 同色），点击弹出菜单 */
+.wt-wb button.wt-wb-book-status {
   flex: none;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  background: transparent;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  cursor: pointer;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px 0 7px;
+  border: none;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-wash);
+  color: var(--wt-ink-3);
   box-shadow: none;
+  font-size: var(--wt-fs-11px);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--wt-dur-hover) var(--wt-ease-rise), color var(--wt-dur-hover) var(--wt-ease-rise);
 }
 
 .wt-wb .wt-wb-book-status::before {
   content: "";
-  width: 7px;
-  height: 7px;
+  flex: none;
+  width: 5px;
+  height: 5px;
   border-radius: var(--wt-radius-circle);
-  background: var(--wt-ink-3);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--wt-paper-2) 65%, var(--wt-paper));
-  transition: transform var(--wt-dur-snap) ease, background-color var(--wt-dur-snap) ease, box-shadow var(--wt-dur-snap) ease;
+  background: currentColor;
 }
 
-.wt-wb .wt-wb-book-status:hover::before {
-  transform: scale(1.3);
+.wt-wb button.wt-wb-book-status.is-ongoing {
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
 }
 
-.wt-wb .wt-wb-book-status.is-ongoing::before {
-  background: var(--wt-accent);
+.wt-wb button.wt-wb-book-status.is-completed {
+  background: color-mix(in srgb, var(--wt-jade) 14%, transparent);
+  color: var(--wt-jade);
 }
 
-.wt-wb .wt-wb-book-status.is-completed::before {
-  background: var(--wt-jade);
-}
-
-.wt-wb .wt-wb-book-status.is-hiatus::before {
-  background: var(--wt-amber);
+.wt-wb button.wt-wb-book-status.is-hiatus {
+  background: color-mix(in srgb, var(--wt-amber) 15%, transparent);
+  color: var(--wt-amber);
 }
 
 .wt-wb .wt-wb-book-status.is-unset::before {
   background: transparent;
-  box-shadow:
-    inset 0 0 0 1px var(--wt-ink-3),
-    0 0 0 2px color-mix(in srgb, var(--wt-paper-2) 65%, var(--wt-paper));
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 
-/* 全书字数 · 卷数 · 最近更新（单行省略，不撑宽侧栏） */
+.wt-wb button.wt-wb-book-status:hover {
+  filter: saturate(1.15);
+  box-shadow: inset 0 0 0 0.5px currentColor;
+}
+
+/* 全书字数 · 章数：衬线数字放大一档，单位缩小变淡 */
 .wt-wb .wt-wb-status-info {
   min-width: 0;
+  margin-top: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--wt-fs-11px);
-  line-height: 16px;
+  line-height: 20px;
   color: var(--wt-ink-3);
-  font-variant-numeric: tabular-nums;
+}
+
+.wt-wb .wt-wb-stat-num {
   font-family: var(--wt-num);
+  font-size: var(--wt-fs-16px);
+  font-weight: 500;
+  color: var(--wt-ink-2);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.wt-wb .wt-wb-stat-sep {
+  align-self: center;
+  width: 1px;
+  height: 10px;
+  margin: 0 6px;
+  background: var(--wt-rule-strong);
 }
 
 .wt-wb .wt-wb-status-info.is-empty {
   display: none;
 }
 
-/* 正文 / 设定 切换 + 右侧轻量胶囊按钮（无冗余图标，窄栏不换行） */
+/* 正文 / 设定：凹槽轨道 + 选中项浮起卡片；右侧 新卷（幽灵）+ 新章节（实心） */
 .wt-wb .wt-wb-seg-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 12px;
 }
 
 .wt-wb .wt-wb-seg {
+  flex: none;
   display: flex;
-  gap: 14px;
+  gap: 0;
+  padding: 2px;
+  border-radius: var(--wt-radius-9px);
+  background: var(--wt-paper-2);
+  box-shadow: inset 0 0 0 0.5px var(--wt-rule);
 }
 
 .wt-wb .wt-wb-seg-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: auto;
-  padding: 2px 0 7px;
-  margin-bottom: -1px;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  margin: 0;
   border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: var(--wt-radius-none);
+  border-radius: var(--wt-radius-7px);
   background: transparent;
-  color: var(--wt-ink-3);
-  font-family: var(--wt-serif);
+  color: var(--wt-ink-2);
+  box-shadow: none;
+  font-family: inherit;
   font-size: var(--wt-fs-13px);
   font-weight: 500;
-  line-height: 18px;
-  letter-spacing: 0.06em;
+  line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  transition: color var(--wt-dur-snap) ease, border-color var(--wt-dur-snap) ease;
+  transition: background-color var(--wt-dur-hover) var(--wt-ease-rise), color var(--wt-dur-hover) var(--wt-ease-rise), box-shadow var(--wt-dur-hover) var(--wt-ease-rise);
 }
 
 .wt-wb .wt-wb-seg-btn:hover:not(.is-active) {
@@ -8340,77 +8357,81 @@ body.wt-mobile .wt-wb .wt-wb-head-tool svg {
 }
 
 .wt-wb .wt-wb-seg-btn.is-active {
-  color: var(--wt-accent);
-  font-weight: 700;
-  border-bottom-color: var(--wt-accent);
+  background: var(--wt-card-bg);
+  color: var(--wt-ink);
+  font-weight: 600;
+  box-shadow: var(--wt-shadow-card);
 }
 
 .wt-wb .wt-wb-seg-count {
-  padding: 0 5px;
-  border-radius: var(--wt-radius-pill);
-  background: var(--wt-wash);
-  font-size: var(--wt-fs-11px);
-  font-weight: 500;
-  line-height: 15px;
-  color: var(--wt-ink-3);
-  font-variant-numeric: tabular-nums;
   font-family: var(--wt-num);
+  font-size: var(--wt-fs-11px);
+  font-weight: 400;
+  line-height: 1;
+  color: var(--wt-ink-3);
+  font-variant-numeric: lining-nums tabular-nums;
 }
 
 .wt-wb .wt-wb-seg-btn.is-active .wt-wb-seg-count {
-  background: var(--wt-accent-soft);
-  color: var(--wt-accent);
-  font-weight: 600;
+  color: var(--wt-ink-2);
 }
 
 .wt-wb .wt-wb-seg-actions {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding-bottom: 5px;
+  gap: 4px;
 }
 
-/* 轻量微胶囊按钮：比纯文字有明确按钮形态，但比带图标实体按钮省宽 */
 .wt-wb .wt-wb-new {
   display: inline-flex;
   align-items: center;
-  height: 22px;
-  padding: 0 8px;
+  gap: 4px;
+  height: 28px;
+  padding: 0 9px;
   margin: 0;
-  border: 0.5px solid var(--wt-rule);
-  border-radius: var(--wt-radius-6px);
-  background: var(--wt-card-bg);
+  border: none;
+  border-radius: var(--wt-radius-7px);
+  background: transparent;
   color: var(--wt-ink-2);
+  box-shadow: none;
   font-size: var(--wt-fs-12px);
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--wt-dur-snap) ease, color var(--wt-dur-snap) ease, border-color var(--wt-dur-snap) ease;
+  transition: background-color var(--wt-dur-hover) var(--wt-ease-rise), color var(--wt-dur-hover) var(--wt-ease-rise), box-shadow var(--wt-dur-hover) var(--wt-ease-rise);
 }
 
 .wt-wb .wt-wb-new:hover {
   background: var(--wt-wash);
-  border-color: var(--wt-rule-strong);
   color: var(--wt-ink);
 }
 
 .wt-wb .wt-wb-new.is-primary {
-  background: var(--wt-accent-soft);
-  border-color: color-mix(in srgb, var(--wt-accent) 32%, transparent);
-  color: var(--wt-accent);
+  padding: 0 11px 0 9px;
+  border-radius: var(--wt-radius-8px);
+  background: var(--wt-accent);
+  color: var(--wt-accent-ink);
   font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 1px 2px color-mix(in srgb, var(--wt-accent) 35%, transparent);
 }
 
 .wt-wb .wt-wb-new.is-primary:hover {
-  background: var(--wt-accent);
-  border-color: var(--wt-accent);
+  background: color-mix(in srgb, var(--wt-accent) 88%, var(--wt-ink));
   color: var(--wt-accent-ink);
 }
 
-body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
-  border-color: var(--wt-rule-strong);
+.wt-wb .wt-wb-new-icon {
+  display: inline-flex;
+}
+
+.wt-wb .wt-wb-new-icon svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.4;
 }
 
 /* ---------- ② 搜索面板（默认收起成标题栏按钮） ---------- */
@@ -8420,7 +8441,7 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 14px 6px;
+  padding: 10px 14px 2px;
 }
 
 .wt-wb .wt-wb-searchbar.is-collapsed {
@@ -8438,19 +8459,19 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 6px 0 8px;
-  border: 0.5px solid var(--wt-rule);
-  border-radius: var(--wt-radius-7px);
-  background: color-mix(in srgb, var(--wt-card-bg) 75%, var(--wt-wash));
+  gap: 7px;
+  height: 32px;
+  padding: 0 7px 0 10px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-9px);
+  background: var(--wt-card-bg);
   transition: border-color var(--wt-dur-snap) ease, background-color var(--wt-dur-snap) ease, box-shadow var(--wt-dur-snap) ease;
 }
 
 .wt-wb .wt-wb-search-wrap:focus-within {
-  border-color: var(--wt-accent);
+  border-color: color-mix(in srgb, var(--wt-accent) 55%, transparent);
   background: var(--wt-card-bg);
-  box-shadow: 0 0 0 2px var(--wt-accent-soft);
+  box-shadow: 0 0 0 3px var(--wt-accent-soft);
 }
 
 .wt-wb .wt-wb-search-icon {
@@ -8461,8 +8482,8 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
 }
 
 .wt-wb .wt-wb-search-icon svg {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
 }
 
 .wt-wb .wt-wb-search {
@@ -8475,6 +8496,17 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   box-shadow: none;
   color: var(--wt-ink);
   font-size: var(--wt-fs-13px);
+  outline: none;
+}
+
+.wt-wb .wt-wb-search-wrap input.wt-wb-search,
+.wt-wb .wt-wb-search-wrap input.wt-wb-search:hover,
+.wt-wb .wt-wb-search-wrap input.wt-wb-search:focus,
+.wt-wb .wt-wb-search-wrap input.wt-wb-search:focus-visible {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   outline: none;
 }
 
@@ -8517,7 +8549,7 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 1px 6px 5px;
+  padding: 8px 8px 2px 10px;
   color: var(--wt-ink-3);
   font-size: var(--wt-fs-11px);
   line-height: 16px;
@@ -8535,20 +8567,20 @@ body.wt-theme-contrast .wt-wb .wt-wb-new.is-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  border: 0.5px solid var(--wt-rule);
-  border-radius: var(--wt-radius-5px);
-  background: var(--wt-card-bg);
-  color: var(--wt-ink-2);
+  border: none;
+  border-radius: var(--wt-radius-6px);
+  background: transparent;
+  color: var(--wt-ink-3);
   box-shadow: none;
   cursor: pointer;
 }
 
 .wt-wb .wt-wb-search-nav-btn:hover {
-  border-color: var(--wt-rule-strong);
-  color: var(--wt-accent);
+  background: var(--wt-wash);
+  color: var(--wt-ink);
 }
 
 .wt-wb .wt-wb-search-nav-btn svg {
@@ -8572,15 +8604,16 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   height: 28px;
 }
 
-/* 正在编辑另一本书时的提示条 */
+/* 正在编辑另一本书时的提示条：琥珀淡底卡片 */
 .wt-wb .wt-wb-notice {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-bottom: 0.5px solid var(--wt-rule);
-  background: var(--wt-accent-soft);
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 7px 7px 7px 10px;
+  border-radius: var(--wt-radius-9px);
+  background: color-mix(in srgb, var(--wt-amber) 11%, transparent);
   font-size: var(--wt-fs-12px);
   color: var(--wt-ink-2);
 }
@@ -8593,12 +8626,12 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   flex: none;
   display: flex;
   align-items: center;
-  color: var(--wt-accent);
+  color: var(--wt-amber);
 }
 
 .wt-wb .wt-wb-notice-icon svg {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 
 .wt-wb .wt-wb-notice-text {
@@ -8617,12 +8650,13 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
 
 .wt-wb .wt-wb-notice-btn {
   flex: none;
-  height: 20px;
-  padding: 0 7px;
-  border: 0.5px solid var(--wt-rule-strong);
-  border-radius: var(--wt-radius-5px);
+  height: 24px;
+  padding: 0 9px;
+  border: none;
+  border-radius: var(--wt-radius-6px);
   background: var(--wt-card-bg);
-  color: var(--wt-accent);
+  color: var(--wt-ink);
+  box-shadow: var(--wt-shadow-card);
   font-size: var(--wt-fs-11px);
   font-weight: 600;
   cursor: pointer;
@@ -8630,7 +8664,6 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
 
 .wt-wb .wt-wb-notice-btn:hover {
   background: var(--wt-accent);
-  border-color: var(--wt-accent);
   color: var(--wt-accent-ink);
 }
 
@@ -8676,10 +8709,10 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   display: none;
 }
 
-/* 分卷：保留清爽吸顶行 + 底部细进度线，悬停只浮现一个 + 按钮 */
+/* 分卷：吸顶卷头（宋体卷名 + 右端迷你进度），卷内一根细竖线做书目骨架 */
 .wt-wb .wt-wb-volume,
 .wt-wb .wt-wb-res-group {
-  margin-bottom: 10px;
+  margin-bottom: 4px;
 }
 
 .wt-wb .wt-wb-volume-head {
@@ -8688,11 +8721,19 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 9px 6px 5px;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: var(--wt-radius-8px);
   background: var(--wt-paper);
   cursor: pointer;
   user-select: none;
+  transition: background-color var(--wt-dur-hover) var(--wt-ease-rise);
+}
+
+.wt-wb .wt-wb-volume-head:hover {
+  /* 吸顶行必须不透明：在纸色上叠一层 wash，而不是直接用半透明 wash */
+  background: linear-gradient(var(--wt-wash), var(--wt-wash)) var(--wt-paper);
 }
 
 .wt-wb .wt-wb-volume-chevron {
@@ -8700,12 +8741,12 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   display: flex;
   align-items: center;
   color: var(--wt-ink-3);
-  transition: transform 160ms ease;
+  transition: transform var(--wt-dur-base) var(--wt-ease-rise);
 }
 
 .wt-wb .wt-wb-volume-chevron svg {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
 }
 
 .wt-wb .wt-wb-volume.is-collapsed .wt-wb-volume-chevron {
@@ -8719,22 +8760,26 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--wt-serif);
-  font-size: var(--wt-fs-13px);
-  font-weight: 700;
-  line-height: 19px;
+  font-size: var(--wt-fs-14px);
+  font-weight: 600;
+  line-height: 20px;
   color: var(--wt-ink);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
+}
+
+.wt-wb .wt-wb-volume.is-collapsed .wt-wb-volume-name {
+  color: var(--wt-ink-2);
 }
 
 .wt-wb .wt-wb-volume-head:hover .wt-wb-volume-name {
-  color: var(--wt-accent);
+  color: var(--wt-ink);
 }
 
 .wt-wb .wt-wb-volume-meta {
   flex: none;
   font-size: var(--wt-fs-11px);
   color: var(--wt-ink-3);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: lining-nums tabular-nums;
   font-family: var(--wt-num);
 }
 
@@ -8770,31 +8815,56 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   color: var(--wt-accent);
 }
 
+/* 卷进度：卷头右端 28px 迷你条；写满 = jade，未满 = 淡墨 */
 .wt-wb .wt-wb-volume-bar {
-  height: 1.5px;
-  margin: 0 6px 4px;
+  flex: none;
+  width: 28px;
+  height: 3px;
   border-radius: var(--wt-radius-pill);
-  background: var(--wt-wash);
+  background: var(--wt-rule);
   overflow: hidden;
 }
 
 .wt-wb .wt-wb-volume-fill {
+  display: block;
   height: 100%;
   width: 0;
-  background: var(--wt-accent);
-  transition: width 260ms ease, background-color 200ms ease;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-ink-3);
+  transition: width 260ms var(--wt-ease-rise), background-color var(--wt-dur-base) ease;
 }
 
 .wt-wb .wt-wb-volume-fill.is-complete {
   background: var(--wt-jade);
 }
 
-.wt-wb .wt-wb-volume.is-collapsed .wt-wb-volume-list {
+.wt-wb .wt-wb-volume-list {
+  position: relative;
+  padding: 2px 0 6px;
+}
+
+/* 书目骨架：只在有卷头时出现，与卷头 chevron 中线（x = 14px）对齐的一根细竖线；
+   行整体右移 18px 让出骨架，当前章的书签（::before）正好压在这根线上 */
+.wt-wb .wt-wb-volume-head ~ .wt-wb-volume-list {
+  padding-left: 18px;
+}
+
+.wt-wb .wt-wb-volume-head ~ .wt-wb-volume-list::before {
+  content: "";
+  position: absolute;
+  left: 13.75px;
+  top: 4px;
+  bottom: 10px;
+  width: 0.5px;
+  background: var(--wt-rule-strong);
+}
+
+.wt-wb .wt-wb-volume-list:empty {
   display: none;
 }
 
-.wt-wb .wt-wb-volume.is-collapsed .wt-wb-volume-bar {
-  margin-bottom: 0;
+.wt-wb .wt-wb-volume.is-collapsed .wt-wb-volume-list {
+  display: none;
 }
 
 .wt-wb .wt-wb-ch.is-dragging {
@@ -8802,15 +8872,18 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
 }
 
 .wt-wb .wt-wb-volume.is-drop-candidate {
-  outline: 1px dashed color-mix(in srgb, var(--wt-accent) 40%, transparent);
-  outline-offset: 2px;
-  border-radius: var(--wt-radius-6px);
+  border-radius: var(--wt-radius-10px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wt-accent) 22%, transparent);
 }
 
 .wt-wb .wt-wb-volume.is-drop-target {
-  outline: 2px solid color-mix(in srgb, var(--wt-accent) 75%, transparent);
-  outline-offset: 2px;
-  border-radius: var(--wt-radius-6px);
+  border-radius: var(--wt-radius-10px);
+  background: var(--wt-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wt-accent) 45%, transparent);
+}
+
+.wt-wb .wt-wb-volume.is-drop-target .wt-wb-volume-head {
+  background: transparent;
 }
 
 /* ---------- 章节行与设定行 ---------- */
@@ -8820,12 +8893,17 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 6px 5px 8px;
-  margin: 1px 0;
-  border-radius: var(--wt-radius-6px);
+  gap: 8px;
+  min-height: 32px;
+  padding: 6px 10px 6px 6px;
+  margin: 0;
+  border-radius: var(--wt-radius-8px);
   cursor: pointer;
-  transition: background-color var(--wt-dur-snap) ease;
+  transition: background-color var(--wt-dur-hover) var(--wt-ease-rise), box-shadow var(--wt-dur-hover) var(--wt-ease-rise);
+}
+
+.wt-wb .wt-wb-res {
+  padding-left: 10px;
 }
 
 .wt-wb .wt-wb-ch:focus,
@@ -8838,10 +8916,28 @@ body.wt-mobile .wt-wb .wt-wb-search-nav-btn {
   background: var(--wt-wash);
 }
 
-/* 当前正在打开的章节 / 设定：柔和强调底色 + 左侧指示细竖条，不占额外横向空间 */
+/* 当前章：浮起的纸卡 + 书目骨架线上一段 2px 朱砂书签 */
 .wt-wb .wt-wb-ch.is-current,
 .wt-wb .wt-wb-res.is-current {
-  background: var(--wt-accent-soft);
+  background: var(--wt-card-bg);
+  box-shadow: var(--wt-shadow-card);
+}
+
+.wt-wb .wt-wb-ch.is-current::before,
+.wt-wb .wt-wb-res.is-current::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-accent);
+}
+
+.wt-wb .wt-wb-volume-head ~ .wt-wb-volume-list .wt-wb-ch.is-current::before,
+.wt-wb .wt-wb-volume-head ~ .wt-wb-volume-list .wt-wb-res.is-current::before {
+  left: -5px;
 }
 
 body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current,
@@ -8857,54 +8953,28 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current::before {
   display: none;
 }
 
-.wt-wb .wt-wb-ch.is-current::before,
-.wt-wb .wt-wb-res.is-current::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 6px;
-  bottom: 6px;
-  width: 2.5px;
-  border-radius: var(--wt-radius-pill);
-  background: var(--wt-accent);
-}
-
+/* 键盘焦点：1px 朱砂细环（与当前章的浮卡可以叠加） */
 .wt-wb .wt-wb-ch.is-keyboard,
 .wt-wb .wt-wb-res.is-keyboard {
-  background: color-mix(in srgb, var(--wt-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wt-accent) 45%, transparent);
 }
 
-/* 章节状态圆点：已写实心、空白草稿空心环 */
-.wt-wb .wt-wb-ch-dot {
-  order: 1;
-  flex: none;
-  width: 5px;
-  height: 5px;
-  margin: 0 1px;
-  border-radius: var(--wt-radius-circle);
-  background: var(--wt-jade);
+.wt-wb .wt-wb-ch.is-current.is-keyboard,
+.wt-wb .wt-wb-res.is-current.is-keyboard {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wt-accent) 45%, transparent), var(--wt-shadow-card);
 }
 
-.wt-wb .wt-wb-ch.is-current .wt-wb-ch-dot {
-  background: var(--wt-accent);
-}
-
-.wt-wb .wt-wb-ch-dot.is-blank {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.25px var(--wt-ink-3);
-}
-
-/* 章号：紧凑等宽数字，不包背景框以节省窄栏横向空间 */
+/* 章号：衬线等宽数字，右对齐成一列 */
 .wt-wb .wt-wb-ch-num {
   order: 2;
   flex: none;
-  width: 20px;
+  width: 22px;
   text-align: right;
   font-family: var(--wt-num);
   font-size: var(--wt-fs-12px);
-  line-height: 18px;
+  line-height: 20px;
   color: var(--wt-ink-3);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: lining-nums tabular-nums;
 }
 
 .wt-wb .wt-wb-ch.is-current .wt-wb-ch-num {
@@ -8916,6 +8986,10 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current::before {
   visibility: hidden;
 }
 
+.wt-wb .wt-wb-ch:has(.wt-wb-ch-snippet) .wt-wb-ch-num {
+  align-self: flex-start;
+}
+
 /* 章节标题 */
 .wt-wb .wt-wb-ch-titlewrap {
   order: 3;
@@ -8923,7 +8997,7 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current::before {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
 .wt-wb .wt-wb-ch-title {
@@ -8937,34 +9011,47 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current::before {
   color: var(--wt-ink);
 }
 
-.wt-wb .wt-wb-ch-snippet {
+.wt-wb .wt-wb-ch-snippet,
+.wt-wb .wt-wb-res-snippet {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--wt-fs-11px);
-  line-height: 15px;
+  line-height: 16px;
   color: var(--wt-ink-3);
+}
+
+/* 命中片段里的关键字 */
+.wt-wb mark.wt-wb-hit {
+  padding: 0 1px;
+  border-radius: var(--wt-radius-3px);
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
 }
 
 .wt-wb .wt-wb-ch-hits {
   order: 4;
   flex: none;
   align-self: center;
-  padding: 0 4px;
+  padding: 0 6px;
   border-radius: var(--wt-radius-pill);
   background: var(--wt-accent-soft);
   color: var(--wt-accent);
   font-size: var(--wt-fs-10px);
   font-weight: 600;
-  line-height: 15px;
-  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  font-variant-numeric: lining-nums tabular-nums;
   font-family: var(--wt-num);
   white-space: nowrap;
 }
 
-.wt-wb .wt-wb-ch-title.is-untitled,
-.wt-wb .wt-wb-ch:has(.wt-wb-ch-dot.is-blank) .wt-wb-ch-title {
+/* 空章：标题变淡（原来靠行首空心圆点表达） */
+.wt-wb .wt-wb-ch-title.is-untitled {
   color: var(--wt-ink-2);
+}
+
+.wt-wb .wt-wb-ch.is-blank .wt-wb-ch-title {
+  color: var(--wt-ink-3);
 }
 
 .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title,
@@ -8979,27 +9066,33 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
   font-weight: 700;
 }
 
-/* 字数标签 */
+/* 字数列 */
 .wt-wb .wt-wb-ch-words {
   order: 5;
   flex: none;
-  min-width: 34px;
+  min-width: 28px;
   font-size: var(--wt-fs-11px);
   line-height: 16px;
   color: var(--wt-ink-3);
   text-align: right;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: lining-nums tabular-nums;
   font-family: var(--wt-num);
 }
 
-.wt-wb .wt-wb-ch-words.is-empty {
-  color: var(--wt-ink-3);
-  opacity: 0.65;
+.wt-wb .wt-wb-ch.is-current .wt-wb-ch-words {
+  color: var(--wt-ink-2);
 }
 
-/* 定稿锁标记：紧跟标题；草稿时不占位 */
+/* 「未写」：用界面字体（衬线数字字体里的中文不好看），再淡一档 */
+.wt-wb .wt-wb-ch-words.is-empty {
+  font-family: inherit;
+  color: var(--wt-ink-3);
+  opacity: 0.8;
+}
+
+/* 定稿锁标记：字数前；草稿时不占位 */
 .wt-wb .wt-wb-ch-lock {
-  order: 3;
+  order: 4;
   flex: none;
   display: none;
   align-items: center;
@@ -9011,8 +9104,8 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
 }
 
 .wt-wb .wt-wb-ch-lock svg {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
 }
 
 .wt-wb .wt-wb-ch.is-current .wt-wb-ch-lock {
@@ -9039,19 +9132,10 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
   color: var(--wt-ink);
 }
 
-.wt-wb .wt-wb-res-snippet {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--wt-fs-11px);
-  line-height: 15px;
-  color: var(--wt-ink-3);
-}
-
 .wt-wb .wt-wb-res-hits {
   flex: none;
   align-self: center;
-  padding: 0 4px;
+  padding: 0 6px;
   border-radius: var(--wt-radius-pill);
   background: var(--wt-accent-soft);
   color: var(--wt-accent);
@@ -9106,16 +9190,16 @@ body.wt-theme-contrast .wt-wb .wt-wb-res.is-current .wt-wb-res-title {
   opacity: 0.65;
 }
 
-/* ---------- ④ 底部今日状态行（紧凑进度细条 + 可点击文字项） ---------- */
+/* ---------- ④ 底部「今日」：字数 / 目标 + 进度条 + 番茄 / 时长 / 时速芯片 ---------- */
 
 .wt-wb .wt-wb-foot {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 8px 14px 10px;
+  gap: 0;
+  padding: 12px 14px 14px;
   border-top: 0.5px solid var(--wt-rule);
-  background: color-mix(in srgb, var(--wt-paper-2) 38%, var(--wt-paper));
+  background: linear-gradient(to bottom, transparent, var(--wt-wash)) var(--wt-paper);
 }
 
 body.wt-theme-contrast .wt-wb .wt-wb-foot {
@@ -9126,10 +9210,63 @@ body.wt-theme-contrast .wt-wb .wt-wb-foot {
   display: none;
 }
 
+.wt-wb .wt-wb-foot-today {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: var(--wt-fs-11px);
+  line-height: 20px;
+  color: var(--wt-ink-3);
+}
+
+.wt-wb .wt-wb-foot-today.is-clickable {
+  cursor: pointer;
+}
+
+.wt-wb .wt-wb-foot-label {
+  margin-right: 4px;
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-2);
+}
+
+.wt-wb .wt-wb-foot-num {
+  font-family: var(--wt-num);
+  font-size: var(--wt-fs-16px);
+  font-weight: 500;
+  color: var(--wt-ink);
+  font-variant-numeric: lining-nums tabular-nums;
+  transition: color var(--wt-dur-hover) var(--wt-ease-rise);
+}
+
+.wt-wb .wt-wb-foot-today:hover .wt-wb-foot-num {
+  color: var(--wt-accent);
+}
+
+.wt-wb .wt-wb-foot-goal {
+  font-family: var(--wt-num);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.wt-wb .wt-wb-foot-pct {
+  margin-left: auto;
+  font-family: var(--wt-num);
+  color: var(--wt-ink-2);
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+.wt-wb .wt-wb-foot-pct.is-done {
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--wt-jade);
+}
+
 .wt-wb .wt-wb-foot-bar {
-  height: 2px;
+  height: 4px;
+  margin-top: 7px;
   border-radius: var(--wt-radius-pill);
-  background: var(--wt-wash);
+  background: var(--wt-rule);
   overflow: hidden;
 }
 
@@ -9137,7 +9274,7 @@ body.wt-theme-contrast .wt-wb .wt-wb-foot {
   height: 100%;
   width: 0;
   border-radius: var(--wt-radius-pill);
-  background: var(--wt-accent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--wt-accent) 70%, var(--wt-paper)), var(--wt-accent));
   transition: width 400ms var(--wt-ease-rise);
 }
 
@@ -9149,16 +9286,28 @@ body.wt-theme-contrast .wt-wb .wt-wb-foot {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  font-size: var(--wt-fs-11px);
-  line-height: 16px;
-  color: var(--wt-ink-3);
-  font-variant-numeric: tabular-nums;
-  font-family: var(--wt-num);
+  gap: 5px;
+}
+
+.wt-wb .wt-wb-foot-bar + .wt-wb-foot-detail {
+  margin-top: 10px;
 }
 
 .wt-wb .wt-wb-foot-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--wt-radius-6px);
+  background: var(--wt-card-bg);
+  box-shadow: inset 0 0 0 0.5px var(--wt-rule);
   color: var(--wt-ink-2);
-  transition: color var(--wt-dur-snap) ease;
+  font-size: var(--wt-fs-11px);
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: lining-nums tabular-nums;
+  transition: color var(--wt-dur-hover) var(--wt-ease-rise), box-shadow var(--wt-dur-hover) var(--wt-ease-rise);
 }
 
 .wt-wb .wt-wb-foot-item.is-clickable {
@@ -9166,18 +9315,68 @@ body.wt-theme-contrast .wt-wb .wt-wb-foot {
 }
 
 .wt-wb .wt-wb-foot-item.is-clickable:hover {
-  color: var(--wt-accent);
+  color: var(--wt-ink);
+  box-shadow: inset 0 0 0 0.5px var(--wt-rule-strong);
 }
 
-.wt-wb .wt-wb-foot-item + .wt-wb-foot-item::before {
-  content: "·";
-  margin: 0 6px;
+.wt-wb .wt-wb-foot-icon {
+  display: inline-flex;
   color: var(--wt-ink-3);
-  opacity: 0.6;
+}
+
+.wt-wb .wt-wb-foot-icon svg {
+  width: 11px;
+  height: 11px;
 }
 
 body.wt-mobile .wt-wb .wt-wb-vol-add {
   opacity: 1;
+}
+
+/* 窄侧栏（≤280px）：保证书名至少露出四五个字、「新章节」不被截断 */
+@container wt-wb (max-width: 280px) {
+  .wt-wb .wt-wb-head-right {
+    gap: 0;
+  }
+
+  .wt-wb .wt-wb-head-tool {
+    width: 24px;
+    height: 24px;
+  }
+
+  /* 状态胶囊只留色点（文字仍在 title / aria-label 里） */
+  .wt-wb button.wt-wb-book-status {
+    width: 18px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+    gap: 0;
+  }
+
+  .wt-wb .wt-wb-seg-btn {
+    padding: 0 8px;
+  }
+
+  .wt-wb .wt-wb-seg-count {
+    display: none;
+  }
+
+  .wt-wb .wt-wb-new {
+    padding: 0 6px;
+  }
+
+  .wt-wb .wt-wb-new.is-primary {
+    padding: 0 8px 0 6px;
+  }
+
+  .wt-wb .wt-wb-volume-bar {
+    display: none;
+  }
+}
+
+/* 手机：底部「今日」两行后变高，有统计时把右下角新建按钮抬到它上方 */
+body.wt-mobile .wt-wb:has(.wt-wb-foot:not(.wt-wb-foot-empty)) .wt-wb-fab {
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ===== 批注：写 / 改内容的输入弹窗（屏幕居中，不跟随光标） ===== */

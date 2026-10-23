@@ -73,7 +73,6 @@ interface RowRef {
   entry: ChapterEntry;
   rowEl: HTMLElement;
   wordsEl: HTMLElement;
-  dotEl: HTMLElement;
   /** 定稿锁标记（草稿时隐藏） */
   lockEl: HTMLElement;
   known: boolean;
@@ -137,10 +136,11 @@ function joinPath(folder: string, name: string): string {
 }
 
 function formatDuration(seconds: number): string {
+  // 只用在底部芯片里，写紧凑一点免得窄栏折行
   const m = Math.round(seconds / 60);
   if (m < 60) return `${m} 分钟`;
   const h = Math.floor(m / 60);
-  return `${h} 小时 ${m % 60} 分钟`;
+  return `${h}小时${m % 60}分`;
 }
 
 /** 书名显示：去掉外层《》，过长时交给 CSS 省略号 */
@@ -662,22 +662,22 @@ export class WritingToolkitWorkbench extends ItemView {
     if (this.mode === "chapters") {
       this.addHeadAction(
         segActions,
-        "+ 新章节",
-        this.nextChapterHint(this.project),
-        true,
-        () => void this.createNextChapter()
-      );
-      this.addHeadAction(
-        segActions,
         "新卷",
         "在正文草稿下新建一卷",
         false,
         () => this.createVolume()
       );
+      this.addHeadAction(
+        segActions,
+        "新章节",
+        this.nextChapterHint(this.project),
+        true,
+        () => void this.createNextChapter()
+      );
     } else {
       this.addHeadAction(
         segActions,
-        "+ 新分类",
+        "新分类",
         "在作品文件夹下新建一个设定分类",
         true,
         () => this.createResourceCategory()
@@ -714,9 +714,13 @@ export class WritingToolkitWorkbench extends ItemView {
   ): void {
     const btn = parent.createEl("button", {
       cls: `wt-wb-new${primary ? " is-primary" : ""}`,
-      text: label,
       attr: { type: "button", title: tip },
     });
+    if (primary) {
+      const icon = btn.createSpan({ cls: "wt-wb-new-icon" });
+      setIcon(icon, "wt-plus");
+    }
+    btn.createSpan({ text: label });
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       cb();
@@ -738,7 +742,17 @@ export class WritingToolkitWorkbench extends ItemView {
       }
     }
     const [num, unit] = splitWords(totalWords);
-    refs.infoEl.setText(
+    refs.infoEl.empty();
+    refs.infoEl.createSpan({ cls: "wt-wb-stat-num", text: num });
+    refs.infoEl.createSpan({ cls: "wt-wb-stat-unit", text: unit });
+    refs.infoEl.createSpan({ cls: "wt-wb-stat-sep" });
+    refs.infoEl.createSpan({
+      cls: "wt-wb-stat-num",
+      text: String(this.project.chapterCount),
+    });
+    refs.infoEl.createSpan({ cls: "wt-wb-stat-unit", text: "章" });
+    refs.infoEl.setAttr(
+      "title",
       `${num} ${unit} · ${this.project.chapterCount} 章`
     );
     refs.infoEl.toggleClass("is-empty", false);
@@ -751,6 +765,7 @@ export class WritingToolkitWorkbench extends ItemView {
     const label = status ? STATUS_LABEL[status] : "未标注";
     const btn = parent.createEl("button", {
       cls: `wt-wb-book-status is-${status ?? "unset"}`,
+      text: label,
       attr: {
         type: "button",
         "aria-label": `连载状态：${label}（点击设置）`,
@@ -1053,6 +1068,30 @@ export class WritingToolkitWorkbench extends ItemView {
     return `${start > 0 ? "…" : ""}${body}${end < text.length ? "…" : ""}`;
   }
 
+  /** 命中片段：关键字用 <mark> 标出（大小写不敏感，与扫描口径一致）。 */
+  private renderSnippet(parent: HTMLElement, cls: string, snippet: string): void {
+    const el = parent.createSpan({ cls });
+    const q = this.searchQuery.toLowerCase();
+    const lower = snippet.toLowerCase();
+    // toLowerCase 改变长度时（极少数字符）下标对不上，退回纯文本
+    if (!q || lower.length !== snippet.length) {
+      el.setText(snippet);
+      return;
+    }
+    let from = 0;
+    let index = lower.indexOf(q);
+    while (index !== -1) {
+      if (index > from) el.appendText(snippet.slice(from, index));
+      el.createEl("mark", {
+        cls: "wt-wb-hit",
+        text: snippet.slice(index, index + q.length),
+      });
+      from = index + q.length;
+      index = lower.indexOf(q, from);
+    }
+    if (from < snippet.length) el.appendText(snippet.slice(from));
+  }
+
   /** 上一处 / 下一处：在全书命中序列里循环，并定位选中。 */
   private stepSearchMatch(direction: 1 | -1): void {
     const matches = this.searchMatches;
@@ -1248,7 +1287,7 @@ export class WritingToolkitWorkbench extends ItemView {
     if (chapters.length === 0 && explicitVolumes.length === 0) {
       this.renderEmpty(
         "这本书还没有章节",
-        "点上方的「+ 新章节」按钮开始写第一章。"
+        "点上方的「新章节」按钮开始写第一章。"
       );
       return;
     }
@@ -1309,6 +1348,13 @@ export class WritingToolkitWorkbench extends ItemView {
             ? "还没有章节"
             : "…"
         );
+        // 卷进度：卷头右端的迷你进度条（搜索时与空卷不显示）
+        const bar =
+          !filtering && volume.chapters.length > 0
+            ? header.createSpan({ cls: "wt-wb-volume-bar" })
+            : null;
+        const fill = bar?.createSpan({ cls: "wt-wb-volume-fill" });
+        if (fill) this.volumeRefs.push({ volume, metaEl, barEl: fill });
         // 卷头**不再**放「+」新建按钮（2026-10-16 去掉）：
         // 章号是**全书连续**的，而「在指定卷里新建」会拿全书最大章号 +1 塞进那一卷，
         // 于是第1卷会拿到「第3章」、而第2章在第2卷——顺序与编号立刻对不上
@@ -1320,9 +1366,6 @@ export class WritingToolkitWorkbench extends ItemView {
           header.addEventListener("click", () => this.toggleVolume(volume.path));
         }
         bindContextMenu(header, (pt) => this.showVolumeMenu(volume, pt));
-        const bar = volumeEl.createDiv({ cls: "wt-wb-volume-bar" });
-        const fill = bar.createDiv({ cls: "wt-wb-volume-fill" });
-        if (!filtering) this.volumeRefs.push({ volume, metaEl, barEl: fill });
       }
       const listEl = volumeEl.createDiv({ cls: "wt-wb-volume-list" });
       for (const entry of matched) {
@@ -1569,10 +1612,7 @@ export class WritingToolkitWorkbench extends ItemView {
     }
     titleEl.setAttr("title", entry.file.basename);
     if (hit?.snippet) {
-      titleWrap.createSpan({
-        cls: "wt-wb-ch-snippet",
-        text: hit.snippet,
-      });
+      this.renderSnippet(titleWrap, "wt-wb-ch-snippet", hit.snippet);
     }
     if (hit && hit.count > 0) {
       row.createSpan({ cls: "wt-wb-ch-hits", text: `${hit.count} 处` });
@@ -1584,14 +1624,10 @@ export class WritingToolkitWorkbench extends ItemView {
 
     const wordsEl = row.createSpan({ cls: "wt-wb-ch-words", text: "…" });
 
-    const dotEl = row.createSpan({ cls: "wt-wb-ch-dot" });
-    dotEl.setAttr("title", "状态");
-
     const ref: RowRef = {
       entry,
       rowEl: row,
       wordsEl,
-      dotEl,
       lockEl,
       known: false,
       words: 0,
@@ -1774,7 +1810,7 @@ export class WritingToolkitWorkbench extends ItemView {
     const titleEl = titleWrap.createSpan({ cls: "wt-wb-res-title", text: name });
     titleEl.setAttr("title", file.basename);
     if (hit?.snippet) {
-      titleWrap.createSpan({ cls: "wt-wb-res-snippet", text: hit.snippet });
+      this.renderSnippet(titleWrap, "wt-wb-res-snippet", hit.snippet);
     }
     if (hit && hit.count > 0) {
       row.createSpan({ cls: "wt-wb-res-hits", text: `${hit.count} 处` });
@@ -1884,11 +1920,11 @@ export class WritingToolkitWorkbench extends ItemView {
   private applyChapterStats(ref: RowRef, words: number): void {
     ref.known = true;
     ref.words = words;
-    ref.wordsEl.setText(words > 0 ? formatNumber(words) : "—");
+    // 原来每行一个状态圆点；现在空章直接在字数列写「未写」，标题跟着变淡。
+    ref.wordsEl.setText(words > 0 ? formatNumber(words) : "未写");
     ref.wordsEl.toggleClass("is-empty", words === 0);
-    ref.dotEl.toggleClass("is-written", words > 0);
-    ref.dotEl.toggleClass("is-blank", words === 0);
-    ref.dotEl.setAttr("title", words > 0 ? `已写 ${formatNumber(words)} 字` : "还没写");
+    ref.wordsEl.setAttr("title", words > 0 ? `已写 ${formatNumber(words)} 字` : "还没写");
+    ref.rowEl.toggleClass("is-blank", words === 0);
   }
 
   private applyResourceStats(ref: ResourceRowRef, words: number): void {
@@ -1914,9 +1950,10 @@ export class WritingToolkitWorkbench extends ItemView {
       }
       const vTotal = item.volume.chapters.length;
       item.metaEl.setText(
-        `${vWritten}/${vTotal} 章 · ${formatCompact(vWords)} 字` +
+        `${vWritten}/${vTotal} · ${formatCompact(vWords)} 字` +
           (vKnown < vTotal ? " …" : "")
       );
+      item.metaEl.setAttr("title", `已写 ${vWritten} 章 / 共 ${vTotal} 章`);
       const pct = vTotal > 0 ? Math.round((vWritten / vTotal) * 100) : 0;
       item.barEl.style.width = `${pct}%`;
       item.barEl.toggleClass("is-complete", vTotal > 0 && vWritten === vTotal);
@@ -1953,60 +1990,80 @@ export class WritingToolkitWorkbench extends ItemView {
       return;
     }
 
-    const details: Array<{ text: string; title: string; onClick: () => void }> = [];
-    if (todayNet !== 0) {
-      details.push({
-        text: `今日 ${formatNumber(todayNet)} 字`,
-        title:
-          todayNet < 0
-            ? `今日净增 ${formatNumber(todayNet)} 字（新增为正，删除会抵减）· 点击查看明细`
-            : `今日目标 ${formatNumber(dailyGoal)} 字（点击查看明细）`,
-        onClick: () => this.host.stats.showDailyBreakdown(),
+    // 第一行：今日字数 / 目标 + 百分比（点击看明细）；下面一条进度条
+    const hasToday = todayNet !== 0;
+    if (hasToday) {
+      const pct = Math.min(100, Math.round((todayWords / dailyGoal) * 100));
+      const done = todayWords >= dailyGoal;
+      const top = this.footEl.createDiv({
+        cls: "wt-wb-foot-today is-clickable",
+        attr: {
+          title:
+            todayNet < 0
+              ? `今日净增 ${formatNumber(todayNet)} 字（新增为正，删除会抵减）· 点击查看明细`
+              : `今日目标 ${formatNumber(dailyGoal)} 字（点击查看明细）`,
+        },
       });
+      top.createSpan({ cls: "wt-wb-foot-label", text: "今日" });
+      top.createSpan({ cls: "wt-wb-foot-num", text: formatNumber(todayNet) });
+      top.createSpan({
+        cls: "wt-wb-foot-goal",
+        text: `/ ${formatNumber(dailyGoal)} 字`,
+      });
+      top.createSpan({
+        cls: `wt-wb-foot-pct${done ? " is-done" : ""}`,
+        text: done ? "达标" : `${pct}%`,
+      });
+      top.addEventListener("click", () => this.host.stats.showDailyBreakdown());
+
+      const bar = this.footEl.createDiv({ cls: "wt-wb-foot-bar" });
+      const fill = bar.createDiv({
+        cls: `wt-wb-foot-fill${done ? " is-done" : ""}`,
+      });
+      fill.style.width = `${pct}%`;
     }
+
+    // 第二行：番茄 / 码字时长 / 时速 芯片，点击都去工具箱
+    const details: Array<{ icon: string; text: string; title: string }> = [];
     if (pomo && pomo.count > 0) {
       details.push({
+        icon: "wt-pomodoro",
         text: `${pomo.count} 番茄`,
         title: "点击打开工具箱侧栏",
-        onClick: () => void this.host.nav.openSidebar(),
       });
     }
     if (duration > 0) {
       details.push({
+        icon: "wt-clock",
         text: `码字 ${formatDuration(duration)}`,
         title: "点击打开工具箱侧栏",
-        onClick: () => void this.host.nav.openSidebar(),
       });
     }
     if (showSpeed) {
       details.push({
-        text: speed !== null ? `时速 ${formatNumber(speed)} 字` : "时速 —",
+        icon: "wt-speed",
+        text: speed !== null ? `时速 ${formatNumber(speed)}` : "时速 —",
         title:
-          "今日平均时速：今天写下的字 ÷ 写作时长（删除不抵减，粘贴不计入；10 分钟内的停顿算作思考，计入时长）；写满 1 分钟后开始显示",
-        onClick: () => void this.host.nav.openSidebar(),
+          "今日平均时速（字 / 小时）：今天写下的字 ÷ 写作时长（删除不抵减，粘贴不计入；10 分钟内的停顿算作思考，计入时长）；写满 1 分钟后开始显示",
       });
     }
-
     if (details.length > 0) {
-      const pct = Math.min(100, Math.round((todayWords / dailyGoal) * 100));
-      if (todayWords > 0) {
-        const bar = this.footEl.createDiv({ cls: "wt-wb-foot-bar" });
-        const fill = bar.createDiv({
-          cls: `wt-wb-foot-fill${todayWords >= dailyGoal ? " is-done" : ""}`,
-        });
-        fill.style.width = `${pct}%`;
-      }
       const detailEl = this.footEl.createDiv({ cls: "wt-wb-foot-detail" });
       for (const item of details) {
-        const span = detailEl.createSpan({
+        const chip = detailEl.createSpan({
           cls: "wt-wb-foot-item is-clickable",
-          text: item.text,
           attr: { title: item.title },
         });
-        span.addEventListener("click", item.onClick);
+        const icon = chip.createSpan({ cls: "wt-wb-foot-icon" });
+        setIcon(icon, item.icon);
+        chip.createSpan({ text: item.text });
+        chip.addEventListener("click", () => void this.host.nav.openSidebar());
       }
     }
-    this.footEl.toggleClass("wt-wb-foot-empty", details.length === 0);
+    this.footEl.toggleClass(
+      "wt-wb-foot-empty",
+      !hasToday && details.length === 0
+    );
   }
 
   /** 手机版主操作按钮：按当前模式给出动作，没有作品时隐藏。 */
