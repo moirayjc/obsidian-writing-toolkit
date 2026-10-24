@@ -531,7 +531,7 @@ async function main() {
     );
 
     const mainSource = source("src/main.ts");
-    const persist = H.extractMethod(mainSource, "private persistPluginData()");
+    const persist = H.extractMethod(mainSource, "private pluginDataPayload()");
     const load = H.extractMethod(mainSource, "private async loadPluginData()");
     r.check(
       "data.json 旧定稿表只读：读进来等迁移，搬完前原样带回，不再写新状态",

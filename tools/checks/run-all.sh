@@ -30,6 +30,7 @@ CHECKS=(
   "check-wordcount-service.js:字数统计 WordCount Service"
   "check-day-rollover.js:跨午夜统计（零点后保存不串日）"
   "check-typed-speed.js:时速（写下的字 ÷ 有效写作时长）"
+  "check-cross-device-stats.js:跨设备字数统计（今日净增 = 书稿字数 − 今日起点）"
   "check-chapter-status.js:章节定稿锁"
   "check-anchor-tracking.js:批注位置跟踪（作者改正文）"
   "check-comment-panel.js:批注面板（标签 / 列表 / 详情）"

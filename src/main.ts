@@ -151,6 +151,27 @@ import type { UiShellContext } from "./uiShellContext";
 import type { WorkbenchStatus } from "./uiShellShared";
 import { NavigationService } from "./services/navigationService";
 import { StatsService } from "./services/statsService";
+import { buildEditorOriginTracker, isNonAuthorDoc } from "./editorOrigin";
+import {
+  DeviceStatsBook,
+  LEGACY_DEVICE_ID,
+  LEGACY_FILE,
+  STATS_FOLDER,
+  buildLedger,
+  computeDay,
+  emptyStatsMaps,
+  hasAnyStats,
+  isLedgerFileName,
+  ledgerPath,
+  newDeviceId,
+  parseLedger,
+  pruneLedgerDays,
+  readStatsMaps,
+  type DayResult,
+  type DayStart,
+  type LedgerFile,
+  type StatsMaps,
+} from "./deviceStats";
 import { WorkspacePrefsService } from "./services/workspacePrefsService";
 import {
   UI_SLOT_SIDEBAR_COMMENTS,
@@ -253,6 +274,29 @@ export default class WritingToolkitPlugin extends Plugin {
   private unloaded = false;
   /** 最近一次外部修改写入的内容：用于识别编辑器同步刷新触发的 editor-change */
   private lastExternalSyncText: string | null = null;
+  /**
+   * 跨设备分账（specs/cross-device-stats.md）：本机的统计写进
+   * `_写作工具箱/统计/<设备ID>.json`，别的设备的只读、用来加总和认领同步来的版本。
+   */
+  private deviceId = "";
+  private statsBook: DeviceStatsBook = new DeviceStatsBook("");
+  /** 上次写盘的本机统计（不含 updatedAt）：内容没变就不写，免得同步工具来回传 */
+  private lastLedgerJson = "";
+  /** 上次写盘的 data.json：内容没变就不写（统计搬走后它只在改设置时才变） */
+  private lastPersistedJson = "";
+  /** 旧统计没能迁进 legacy.json 时先留在 data.json，下次启动再迁，不能丢 */
+  private carryLegacyStats: StatsMaps | null = null;
+  private othersReloadTimer: TimerHandle | null = null;
+  /**
+   * 今日净增 = 书稿现在的字数 − 今日起点（specs/cross-device-stats.md）。
+   * bookCounts：各正文章节现在的字数（正在编辑的章节按编辑器里的文字）；
+   * ownStarts / ownResults：本机记的起点与算出的结果，写进本机统计文件。
+   */
+  private bookCounts = new Map<string, number>();
+  private bookCountsReady = false;
+  private bookCountsToken = 0;
+  private ownStarts: Record<string, DayStart> = {};
+  private ownResults: Record<string, DayResult> = {};
   /** 待忽略统计的程序化编辑（快照恢复/应用），按编辑器和最终文本精确匹配。 */
   private pendingProgrammaticEdit: { editor: Editor; text: string } | null = null;
   /** 内部 Host：统一注册面与模块生命周期 */
@@ -320,8 +364,8 @@ export default class WritingToolkitPlugin extends Plugin {
       // 迁移期：SettingsService 持有的实时对象；Shell 改完字段后调用 actions.saveSettings()。
       settings: this.host.services.settings.get(),
       stats: {
-        total: () => this.dailyTotal,
-        durationSeconds: () => this.dailyDurationSeconds,
+        total: () => this.todayTotalsAllDevices().total,
+        durationSeconds: () => this.todayTotalsAllDevices().durationSeconds,
         getTodayDurationSeconds: () => this.stats.getTodayDurationSeconds(),
         getTodayPomodoroSummary: () => this.stats.getTodayPomodoroSummary(),
         dailyForDisplay: () => this.stats.dailyForDisplay(),
@@ -421,24 +465,7 @@ export default class WritingToolkitPlugin extends Plugin {
       getSettings: () => this.settings,
       setWorkbenchProject: (root) => this.prefs.setWorkbenchProject(root),
     });
-    this.stats = new StatsService({
-      dailyHistory: () => this.dailyHistory,
-      projectHistory: () => this.projectHistory,
-      projectDurationHistory: () => this.projectDurationHistory,
-      dailyFileDeltas: () => this.dailyFileDeltas,
-      todayTotals: () => ({
-        total: this.dailyTotal,
-        durationSeconds: this.dailyDurationSeconds,
-      }),
-      todayKey: () => this.todayStr,
-      getSettings: () => this.settings,
-      getPomodoroSummary: () => this.activePomodoro()?.getTodaySummary() ?? null,
-      isProjectHidden: (root) => this.prefs.isProjectHidden(root),
-      projectRootForFile: (path) => this.getProjectForPath(path),
-      listMarkdownPaths: () =>
-        this.app.vault.getMarkdownFiles().map((file) => file.path),
-      typedToday: () => this.dailyTypedHistory[this.activeDay] || 0,
-    });
+    this.stats = this.createStatsService();
     await this.loadPluginData();
 
     // Obsidian 手机端自动套用手机版布局；桌面端可用命令手动预览。
@@ -545,9 +572,14 @@ export default class WritingToolkitPlugin extends Plugin {
     this.pomodoroModule = this.buildPomodoroModule();
     this.calendarModule = createCalendarModule({
       allWords: () => this.dailyForDisplay(),
-      allDuration: () => this.dailyDurationHistory,
+      allDuration: () =>
+        this.statsBook.mergeDaily("dailyDurationHistory", {
+          ...this.dailyDurationHistory,
+          ...(this.activeDay ? { [this.activeDay]: this.dailyDurationSeconds } : {}),
+        }),
       projectWords: (key) => this.projectForDisplay(key),
-      projectDuration: (key) => this.projectDurationHistory[key] || {},
+      projectDuration: (key) =>
+        this.statsBook.mergeProjectDuration(this.projectDurationHistory)[key] || {},
     });
     this.chapterStatusModule = this.buildChapterStatusModule();
     this.planBoardModule = createPlanBoardModule();
@@ -608,9 +640,7 @@ export default class WritingToolkitPlugin extends Plugin {
       this.statusBar.setSelectionText(this.getActiveEditorSelection());
     });
 
-    this.eventScope.onWorkspace("editor-change", () => {
-      this.handleEditorChange();
-    });
+    this.registerEditorChangeTracking();
 
 
     this.registerVaultEvents();
@@ -719,11 +749,19 @@ export default class WritingToolkitPlugin extends Plugin {
   private registerVaultEvents(): void {
   this.eventScope.onVault("modify", (file) => {
       if (!(file instanceof TFile)) return;
+      if (this.isOtherLedgerPath(file.path)) {
+        this.scheduleReloadOthers();
+        return;
+      }
       this.handleVaultModify(file);
     });
 
   // 外部工具新建的章节文件：Obsidian 有时只发 create 不发 modify
   this.eventScope.onVault("create", (file) => {
+      if (this.isOtherLedgerPath(file.path)) {
+        this.scheduleReloadOthers();
+        return;
+      }
       this.invalidateProjectIndex();
       if (file instanceof TFile) {
         this.handleVaultModify(file);
@@ -738,9 +776,17 @@ export default class WritingToolkitPlugin extends Plugin {
         if (this.lastKnownPath === oldPath) this.lastKnownPath = file.path;
         this.statusBar.onFileRename(oldPath, file.path);
         this.migrateBaselineKey(oldPath, file.path);
+        // 书稿字数：旧路径不再算；新路径还算正文的话按新路径记
+        this.dropBookCount(oldPath);
+        if (this.isDailyCountFile(file.path)) {
+          void this.app.vault.cachedRead(file).then((text) => {
+            if (!this.unloaded) this.updateBookCount(file.path, this.countWords(text));
+          });
+        }
         this.migrateCoverPaths(oldPath, file.path);
       } else if (file instanceof TFolder) {
         this.migrateProjectKeysOnRename(file.path, oldPath);
+        void this.rebuildBookCounts();
         this.migrateCoverPaths(oldPath, file.path);
         this.migrateBaselinePrefix(oldPath, file.path);
       }
@@ -748,12 +794,18 @@ export default class WritingToolkitPlugin extends Plugin {
 
   // 文件删掉后旧基线一起清掉，避免同路径重建时拿旧数字做差
   this.eventScope.onVault("delete", (file) => {
+      if (this.isOtherLedgerPath(file.path)) {
+        this.scheduleReloadOthers();
+        return;
+      }
       this.invalidateProjectIndex();
       if (file instanceof TFile) {
         this.statusBar.dropBaseline(file.path);
+        this.dropBookCount(file.path);
       } else if (file instanceof TFolder) {
         this.migrateBaselinePrefix(file.path, null);
         this.dropProjectKeys(file.path);
+        void this.rebuildBookCounts();
       }
     });
   }
@@ -1307,6 +1359,17 @@ export default class WritingToolkitPlugin extends Plugin {
     return this.host.services.editor.getActiveEditorSelection();
   }
 
+  /**
+   * 编辑器变化统计：editor-change 事件 + 记录「这次变化是不是作者改的」的编辑器扩展
+   * （打开着的章节被同步工具改写时，编辑器重载的变化不能算作者写的，见 editorOrigin.ts）。
+   */
+  private registerEditorChangeTracking(): void {
+    this.host.registerEditorExtension(buildEditorOriginTracker());
+    this.eventScope.onWorkspace("editor-change", () => {
+      this.handleEditorChange();
+    });
+  }
+
   private handleEditorChange(): void {
     const file = this.app.workspace.getActiveFile();
     if (!file) return;
@@ -1326,7 +1389,11 @@ export default class WritingToolkitPlugin extends Plugin {
     // 字数已在 processVaultModify 统计过，且不应计入用户写作时长。
     const isExternalSync = this.lastExternalSyncText === text;
     if (isExternalSync) this.lastExternalSyncText = null;
-
+    // 这次变化不是作者改的（Obsidian 把磁盘上的新内容重载进编辑器：同步工具、
+    // 外部工具改写了打开着的章节）。不算写下的字、不计时长。
+    const view = this.host.services.editor.getViewForEditor(editor);
+    const fromDisk =
+      !isProgrammatic && !isExternalSync && !!view && isNonAuthorDoc(view.state.doc);
     // 诊断计数（内部字数统计诊断报告用）
     statsDiag.editorChanges++;
     if (isProgrammatic) statsDiag.programmaticIgnored++;
@@ -1337,7 +1404,9 @@ export default class WritingToolkitPlugin extends Plugin {
     this.lastKnownText = text;
     this.lastEditor = editor;
     if (!isProgrammatic && !isExternalSync && previousPath === file.path) {
-      this.activePomodoro()?.captureCurrentWords();
+      // 重载进来的变化不是这个番茄写的：跟上基数，不算进本番茄字数
+      if (fromDisk) this.activePomodoro()?.rebaseBaseCount();
+      else this.activePomodoro()?.captureCurrentWords();
     }
     this.ensureCurrentDay();
     // 插件刚加载、编辑器还没就绪时（没触发过 active-leaf-change），状态栏并不知道
@@ -1373,11 +1442,14 @@ export default class WritingToolkitPlugin extends Plugin {
       ({ delta, typed } = this.statusBar.onEditorChange(
         text,
         freshFile,
-        !isExternalSync && dailyFile,
+        !isExternalSync && !fromDisk && dailyFile,
         composing
       ));
     }
     this.statusBar.setSelectionText(this.getActiveEditorSelection());
+
+    // 今日净增按书稿字数算：这一章现在的字数以编辑器里的文字为准
+    if (dailyFile) this.updateBookCount(file.path, this.countWords(text));
 
     if (dailyFile) {
       if (isProgrammatic && !programmaticNewFile) {
@@ -1390,7 +1462,7 @@ export default class WritingToolkitPlugin extends Plugin {
         this.applyDailyStats(
           file,
           delta,
-          !isExternalSync && !isProgrammatic
+          !isExternalSync && !isProgrammatic && !fromDisk
         );
       }
     } else {
@@ -1489,6 +1561,8 @@ export default class WritingToolkitPlugin extends Plugin {
         ? this.statusBar.onExternalFileChange(file.path, text)
         : this.handleUnknownFile(file, text);
     }
+    // 今日净增按书稿字数算：同步、外部工具、本机保存都只是更新这一章的字数
+    this.updateBookCount(file.path, this.countWords(text));
     this.applyDailyStats(file, delta, false);
     this.stats.publish();
     this.refreshSidebar(text);
@@ -1509,18 +1583,8 @@ export default class WritingToolkitPlugin extends Plugin {
       this.knownProjects.add(project);
       this.refreshSidebarSettings();
     }
-    if (delta !== 0) {
-      this.dailyTotal += delta;
-      this.dailyHistory[day] = this.dailyTotal;
-      const projectDay = this.projectHistory[project]
-        ?? (this.projectHistory[project] = {});
-      projectDay[day] = (projectDay[day] || 0) + delta;
-
-      // 明细：今天这个数是哪个文件贡献的（负数是删除/回退）
-      const fileDay = this.dailyFileDeltas[day]
-        ?? (this.dailyFileDeltas[day] = {});
-      fileDay[file.path] = (fileDay[file.path] || 0) + delta;
-    }
+    // 今日净增 / 作品 / 明细不再由这里按事件累加：改为书稿字数 − 今日起点（recomputeToday），
+    // 这里只记写作时长。dailyHistory / projectHistory / dailyFileDeltas 是切换前的历史，只读。
     this.dailyDurationHistory[day] = this.dailyDurationSeconds;
     const durationInc = this.dailyDurationSeconds - this.lastDurationTotal;
     if (durationInc > 0) {
@@ -2062,6 +2126,7 @@ export default class WritingToolkitPlugin extends Plugin {
       currentWords: cur.words,
       pomodoroBaseCount,
       pendingExternal: this.externalModifyPending,
+      todayBasis: this.todayBasisLines(),
     });
   }
 
@@ -2298,8 +2363,9 @@ export default class WritingToolkitPlugin extends Plugin {
   private ensureCurrentDay(): void {
     const today = this.todayStr;
     if (today === this.activeDay) return;
+    const previous = this.activeDay;
     this.activeDay = today;
-    this.dailyTotal = this.dailyHistory[today] || 0;
+    this.onDayRollover(previous, today);
     this.dailyDurationSeconds = this.dailyDurationHistory[today] || 0;
     this.lastDurationTotal = this.dailyDurationSeconds;
     this.lastWritingActivityAt = 0;
@@ -2333,61 +2399,14 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   /**
-   * 今天新建的文件，今日贡献不应小于 0（当天起点是 0）。
-   * 旧逻辑对「程序化写入的新文件」只记删除不记新增，会留下负数；
-   * 启动时按当前字数校正这类明细，避免今日净增被幽灵负数拖垮。
+   * 布局就绪后统计书稿字数（文件树 / 作品索引此时才完整），据此记今日起点、算今日净增。
+   * 旧的「今天新建文件不应为负」校正已删除：它按文件创建时间判断，而同步工具会把旧章节的
+   * 创建时间刷成今天（2026-10-24 真机：−22 被改成了全文 3270 字）；新口径也不需要它。
    */
-  /** 布局就绪后再校正今天新建文件的负数明细（文件树/作品索引此时才完整）。 */
   private registerStartupReconcile(): void {
     this.eventScope.onLayoutReady(() => {
-      void this.reconcileTodayNewFileDeltas();
+      void this.rebuildBookCounts();
     });
-  }
-
-  private async reconcileTodayNewFileDeltas(): Promise<void> {
-    // 先跨天结算：dailyTotal 必须与下面写入的日期键属于同一天。
-    this.ensureCurrentDay();
-    const today = this.activeDay;
-    const fileDay = this.dailyFileDeltas[today];
-    if (!fileDay) return;
-    let changed = false;
-    for (const path of Object.keys(fileDay)) {
-      const oldDelta = fileDay[path];
-      if (oldDelta >= 0) continue;
-      const file = this.app.vault.getAbstractFileByPath(path);
-      if (!(file instanceof TFile)) continue;
-      if (!this.isCreatedToday(file)) continue;
-      let text: string;
-      try {
-        text = await this.app.vault.cachedRead(file);
-      } catch {
-        continue;
-      }
-      // 读盘期间跨过了零点：dailyTotal 已切到新的一天，不能再往旧日期上加。
-      if (this.activeDay !== today) break;
-      const words = this.countWords(text);
-      if (words === oldDelta) continue;
-      const diff = words - oldDelta;
-      fileDay[path] = words;
-      // 基线也跟到当前字数，后续删改才不会再从 0 起算。
-      this.fileBaselines[path] = words;
-      this.statusBar?.loadBaselines({ [path]: words });
-      this.dailyTotal += diff;
-      this.dailyHistory[today] = this.dailyTotal;
-      const project = this.getProjectForPath(path) ?? "未分组";
-      const projectDay =
-        this.projectHistory[project] ??
-        (this.projectHistory[project] = {});
-      projectDay[today] = (projectDay[today] || 0) + diff;
-      changed = true;
-    }
-    if (changed) {
-      this.scheduleDailySave();
-      void this.savePluginData();
-      this.stats.publish();
-      this.refreshWorkbench();
-      this.refreshHome();
-    }
   }
 
   private async loadPluginData() {
@@ -2407,27 +2426,19 @@ export default class WritingToolkitPlugin extends Plugin {
     if (data) {
       // 老格式（顶层扁平设置）与新格式共用同名字段；旧版设置由 SettingsService
       // 统一迁移。老格式如有历史数据则保留，不主动清空。
-        this.dailyHistory = asRecord<DailyHistory>(data.dailyHistory) ?? {};
-        this.dailyDurationHistory = asRecord<DailyHistory>(data.dailyDurationHistory) ?? {};
-        this.projectHistory = asRecord<Record<string, DailyHistory>>(data.projectHistory) ?? {};
-        this.projectDurationHistory = asRecord<Record<string, DailyHistory>>(data.projectDurationHistory) ?? {};
-        this.dailyFileDeltas = asRecord<Record<string, DailyHistory>>(data.dailyFileDeltas) ?? {};
-        this.dailyTypedHistory = asRecord<DailyHistory>(data.dailyTypedHistory) ?? {};
         // 旧版定稿表：留着等定稿模块搬进 frontmatter（搬完前写盘也原样带回）
         this.legacyChapterStatus = asRecord<Record<string, unknown>>(data.chapterStatus);
-        this.dailyPomodoroHistory = asRecord<Record<string, DailyPomodoro>>(data.dailyPomodoroHistory) ?? {};
         this.loadedPomodoroSession = data.pomodoroSession ?? null;
         this.prefs.load(data);
-        this.fileBaselines = asRecord<Record<string, number>>(data.fileBaselines) ?? {};
-        this.baselinesAt = pick(data.baselinesAt, 0);
-    } else {
-      this.dailyHistory = {};
-      this.dailyDurationHistory = {};
-      this.projectHistory = {};
-      this.projectDurationHistory = {};
-      this.dailyPomodoroHistory = {};
     }
-    this.dailyTotal = this.dailyHistory[this.todayStr] || 0;
+    // 每日统计与字数基线按设备存在 `_写作工具箱/统计/`，不再放 data.json
+    // （data.json 会被同步工具在设备间整份覆盖，见设计文档 §5.2 第 58 条）。
+    await this.loadDeviceStats(data, {
+      fileBaselines: asRecord<Record<string, number>>(data?.fileBaselines) ?? {},
+      baselinesAt: pick(data?.baselinesAt, 0),
+    });
+    // 书稿字数还没统计完之前，先显示最近一次算出的今日结果
+    this.dailyTotal = this.statsBook.latestResult(this.todayStr, this.ownResults)?.total ?? 0;
     this.dailyDurationSeconds = this.dailyDurationHistory[this.todayStr] || 0;
     this.lastDurationTotal = this.dailyDurationSeconds;
     this.activeDay = this.todayStr;
@@ -2493,8 +2504,8 @@ export default class WritingToolkitPlugin extends Plugin {
     // 内存里的今日数值属于 activeDay，不是写盘这一刻的日期：零点后、跨天结算前
     // 落盘（防抖、睡眠唤醒、卸载）若按实时日期回填，会把昨天的总数写进今天。
     const day = this.activeDay || this.todayStr;
-    this.dailyHistory[day] = this.dailyTotal;
     this.dailyDurationHistory[day] = this.dailyDurationSeconds;
+    await this.writeOwnLedger();
     await this.persistPluginData();
   }
 
@@ -2504,9 +2515,90 @@ export default class WritingToolkitPlugin extends Plugin {
     return live === undefined ? this.loadedPomodoroSession : live;
   }
 
-  private persistPluginData(): Promise<void> {
-    return this.host.services.persistence.save({
+  /** data.json 的内容：设置、界面偏好、番茄会话。统计在各设备自己的统计文件里。 */
+  private pluginDataPayload(): Record<string, unknown> {
+    return {
       settings: this.settings,
+      pomodoroSession: this.pomodoroSessionForPersistence(),
+      // 旧版定稿表搬进 frontmatter 之前原样带回，免得搬完前写盘把它丢了
+      ...(this.legacyChapterStatus ? { chapterStatus: this.legacyChapterStatus } : {}),
+      ...this.prefs.forPersistence(),
+      // 旧统计迁移失败时原样带回，下次启动再迁
+      ...(this.carryLegacyStats ?? {}),
+    };
+  }
+
+  private async persistPluginData(): Promise<void> {
+    const payload = this.pluginDataPayload();
+    const json = JSON.stringify(payload);
+    // 内容没变就不写：data.json 一写，同步工具就要传给另一台设备
+    if (json === this.lastPersistedJson) return;
+    this.lastPersistedJson = json;
+    await this.host.services.persistence.save(payload);
+  }
+
+  /**
+   * 另一台设备改的设置被同步工具带过来了：重新读进来，并当作「已写过」，
+   * 免得下一次保存拿内存里的旧值把它盖回去。统计不在 data.json 里，不受影响。
+   */
+  async onExternalSettingsChange(): Promise<void> {
+    const loaded: unknown = await this.host.services.persistence.load();
+    if (!loaded || typeof loaded !== "object") return;
+    const data = loaded as Record<string, unknown>;
+    this.host.services.settings.load(data);
+    this.prefs.load(data);
+    if (Platform.isMobile) this.loadedPomodoroSession = data.pomodoroSession ?? null;
+    this.lastPersistedJson = JSON.stringify(this.pluginDataPayload());
+    this.host.services.settings.publishChanges();
+    this.stats.publish();
+    this.refreshSidebar();
+    this.refreshWorkbenches();
+    this.refreshHome();
+  }
+
+  // ---------- 跨设备分账：本机统计文件的读写 ----------
+
+  /** 本机设备 ID：存在 app.saveLocalStorage（按库、按设备，不同步）。 */
+  private loadOrCreateDeviceId(): string {
+    const key = "writing-toolkit:device-id";
+    const saved = this.app.loadLocalStorage(key) as unknown;
+    if (typeof saved === "string" && /^[a-z0-9]+$/.test(saved)) return saved;
+    const id = newDeviceId(Date.now());
+    this.app.saveLocalStorage(key, id);
+    return id;
+  }
+
+  private deviceName(): string {
+    if (Platform.isIosApp) return "iPhone / iPad";
+    if (Platform.isAndroidApp) return "Android";
+    if (Platform.isMacOS) return "Mac";
+    if (Platform.isWin) return "Windows";
+    if (Platform.isLinux) return "Linux";
+    return Platform.isMobile ? "手机" : "电脑";
+  }
+
+  private async readLedger(path: string, fallbackId: string): Promise<LedgerFile | null> {
+    const adapter = this.app.vault.adapter;
+    try {
+      if (!(await adapter.exists(path))) return null;
+      return parseLedger(await adapter.read(path), fallbackId);
+    } catch (error) {
+      console.error(`写作工具箱：读取统计文件失败 ${path}`, error);
+      return null;
+    }
+  }
+
+  private async writeStatsFile(path: string, content: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(await adapter.exists(STATS_FOLDER))) {
+      if (!(await adapter.exists("_写作工具箱"))) await adapter.mkdir("_写作工具箱");
+      await adapter.mkdir(STATS_FOLDER);
+    }
+    await adapter.write(path, content);
+  }
+
+  private currentStatsMaps(): StatsMaps {
+    return {
       dailyHistory: this.dailyHistory,
       dailyDurationHistory: this.dailyDurationHistory,
       projectHistory: this.projectHistory,
@@ -2514,13 +2606,293 @@ export default class WritingToolkitPlugin extends Plugin {
       dailyFileDeltas: this.dailyFileDeltas,
       dailyTypedHistory: this.dailyTypedHistory,
       dailyPomodoroHistory: this.dailyPomodoroHistory,
-      pomodoroSession: this.pomodoroSessionForPersistence(),
-      // 旧版定稿表搬进 frontmatter 之前原样带回，免得搬完前写盘把它丢了
-      ...(this.legacyChapterStatus ? { chapterStatus: this.legacyChapterStatus } : {}),
-      ...this.prefs.forPersistence(),
-      fileBaselines: this.fileBaselines,
-      baselinesAt: this.baselinesAt,
-    });
+    };
+  }
+
+  private applyStatsMaps(maps: StatsMaps): void {
+    this.dailyHistory = maps.dailyHistory;
+    this.dailyDurationHistory = maps.dailyDurationHistory;
+    this.projectHistory = maps.projectHistory;
+    this.projectDurationHistory = maps.projectDurationHistory;
+    this.dailyFileDeltas = maps.dailyFileDeltas;
+    this.dailyTypedHistory = maps.dailyTypedHistory;
+    this.dailyPomodoroHistory = maps.dailyPomodoroHistory;
+  }
+
+  /**
+   * 启动时读本机统计文件；没有就说明是第一次跑这个版本：
+   * 把旧 data.json 里的历史统计迁进 legacy.json（别的设备已迁过就跳过，避免翻倍），
+   * 本机从空账开始，基线沿用 data.json 里的。
+   */
+  private async loadDeviceStats(
+    data: Record<string, unknown> | null,
+    legacyBaselines: { fileBaselines: Record<string, number>; baselinesAt: number }
+  ): Promise<void> {
+    this.deviceId = this.loadOrCreateDeviceId();
+    this.statsBook = new DeviceStatsBook(this.deviceId);
+    const own = await this.readLedger(ledgerPath(this.deviceId), this.deviceId);
+    if (own) {
+      this.applyStatsMaps(own);
+      this.ownStarts = own.starts;
+      this.ownResults = own.results;
+      // 字数基线不再参与今日净增，只在本次运行里给编辑器用，不再存盘
+      this.fileBaselines = { ...legacyBaselines.fileBaselines };
+      this.baselinesAt = legacyBaselines.baselinesAt;
+    } else {
+      this.applyStatsMaps(emptyStatsMaps());
+      this.fileBaselines = { ...legacyBaselines.fileBaselines };
+      this.baselinesAt = legacyBaselines.baselinesAt;
+    }
+    if (data && hasAnyStats(data)) {
+      try {
+        if (!(await this.app.vault.adapter.exists(LEGACY_FILE))) {
+          const legacy = buildLedger(
+            { deviceId: LEGACY_DEVICE_ID, deviceName: "旧版统计（迁移前）", now: Date.now() },
+            readStatsMaps(data),
+            {},
+            {}
+          );
+          await this.writeStatsFile(LEGACY_FILE, JSON.stringify(legacy));
+        }
+        this.carryLegacyStats = null;
+      } catch (error) {
+        console.error("写作工具箱：旧统计迁移失败，先留在 data.json，下次启动再迁", error);
+        this.carryLegacyStats = readStatsMaps(data);
+      }
+    }
+    // data.json 里还带着旧统计 / 基线时，下一次保存要把它们去掉
+    this.lastPersistedJson =
+      data && (hasAnyStats(data) || "fileBaselines" in data) && !this.carryLegacyStats
+        ? ""
+        : JSON.stringify(this.pluginDataPayload());
+    await this.reloadOtherLedgers(false);
+  }
+
+  /** 写本机统计文件；内容没变（不算更新时间）就不写。 */
+  private async writeOwnLedger(): Promise<void> {
+    if (!this.deviceId) return;
+    pruneLedgerDays(this.ownStarts, this.ownResults, this.activeDay || this.todayStr);
+    const meta = { deviceId: this.deviceId, deviceName: this.deviceName(), now: 0 };
+    const json = JSON.stringify(
+      buildLedger(meta, this.currentStatsMaps(), this.ownStarts, this.ownResults)
+    );
+    if (json === this.lastLedgerJson) return;
+    this.lastLedgerJson = json;
+    const ledger = buildLedger(
+      { ...meta, now: Date.now() },
+      this.currentStatsMaps(),
+      this.ownStarts,
+      this.ownResults
+    );
+    try {
+      await this.writeStatsFile(ledgerPath(this.deviceId), JSON.stringify(ledger));
+    } catch (error) {
+      this.lastLedgerJson = "";
+      console.error("写作工具箱：写入本机统计文件失败", error);
+    }
+  }
+
+  /** 统计目录里别的设备的文件变了（同步工具带过来的）：稍等再整体重读。 */
+  private scheduleReloadOthers(): void {
+    this.othersReloadTimer?.dispose();
+    this.othersReloadTimer = this.eventScope.setTimeout(() => {
+      this.othersReloadTimer = null;
+      void this.reloadOtherLedgers(true);
+    }, 800);
+  }
+
+  /** 重读其他设备的统计文件，核对待核对列表，并刷新界面上的加总。 */
+  private async reloadOtherLedgers(refresh: boolean): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const others: LedgerFile[] = [];
+    try {
+      if (await adapter.exists(STATS_FOLDER)) {
+        const listed = await adapter.list(STATS_FOLDER);
+        for (const filePath of listed.files) {
+          const name = filePath.split("/").pop() ?? filePath;
+          if (!isLedgerFileName(name)) continue;
+          const id = name.replace(/\.json$/, "");
+          if (id === this.deviceId) continue;
+          const ledger = await this.readLedger(filePath, id);
+          if (ledger) others.push(ledger);
+        }
+      }
+    } catch (error) {
+      console.error("写作工具箱：读取其他设备的统计失败", error);
+      return;
+    }
+    if (this.unloaded) return;
+    this.statsBook.setOthers(others);
+    // 别的设备可能更早记了今日起点：重算一次今日净增
+    this.recomputeToday();
+    if (!refresh) return;
+    this.stats.publish();
+    this.refreshSidebar();
+    this.refreshWorkbench();
+    this.refreshHome();
+  }
+
+  /** 统计目录里别的设备的文件（本机自己的不算）。 */
+  private isOtherLedgerPath(path: string): boolean {
+    return (
+      path.startsWith(`${STATS_FOLDER}/`) &&
+      path !== ledgerPath(this.deviceId) &&
+      isLedgerFileName(path)
+    );
+  }
+
+  /** 统计读模型。显示的数字一律是「本机 + 其他设备」的加总（跨设备分账，见 deviceStats.ts）。 */
+  private createStatsService(): StatsService {
+      return new StatsService({
+        dailyHistory: () => this.statsBook.netDaily(this.ownResults, this.dailyHistory),
+        projectHistory: () =>
+          this.statsBook.netProjects(this.ownResults, this.projectHistory),
+        projectDurationHistory: () =>
+          this.statsBook.mergeProjectDuration(this.projectDurationHistory),
+        dailyFileDeltas: () =>
+          this.statsBook.netFiles(this.ownResults, this.dailyFileDeltas),
+        todayTotals: () => this.todayTotalsAllDevices(),
+        todayKey: () => this.todayStr,
+        getSettings: () => this.settings,
+        getPomodoroSummary: () => this.pomodoroSummaryAllDevices(),
+        isProjectHidden: (root) => this.prefs.isProjectHidden(root),
+        projectRootForFile: (path) => this.getProjectForPath(path),
+        listMarkdownPaths: () =>
+          this.app.vault.getMarkdownFiles().map((file) => file.path),
+        typedToday: () =>
+          (this.dailyTypedHistory[this.activeDay] || 0) +
+          this.statsBook.othersDay("dailyTypedHistory", this.activeDay),
+      });
+  }
+
+  /** 今日字数 / 时长：本机 + 其他设备。 */
+  private todayTotalsAllDevices(): { total: number; durationSeconds: number } {
+    const day = this.activeDay || this.todayStr;
+    return {
+      // 净增是书稿的变化，各设备算的是同一个数，不加总
+      total: this.dailyTotal,
+      durationSeconds:
+        this.dailyDurationSeconds + this.statsBook.othersDay("dailyDurationHistory", day),
+    };
+  }
+
+  /** 今日番茄：本机 + 其他设备；都没有时返回 null（与番茄模块的约定一致）。 */
+  private pomodoroSummaryAllDevices(): { count: number; words: number } | null {
+    const local = this.activePomodoro()?.getTodaySummary() ?? null;
+    const others = this.statsBook.othersPomodoro(this.activeDay || this.todayStr);
+    const count = (local?.count ?? 0) + others.count;
+    if (count === 0) return null;
+    return { count, words: (local?.words ?? 0) + others.words };
+  }
+
+  // ---------- 今日净增 = 书稿字数 − 今日起点 ----------
+
+  /** 某一章现在的字数变了（编辑器输入、保存、同步、外部工具改写都走这里）。 */
+  private updateBookCount(path: string, words: number): void {
+    if (this.bookCounts.get(path) === words) return;
+    this.bookCounts.set(path, words);
+    this.recomputeToday();
+  }
+
+  /** 某一章不再算正文（删了、移出正文目录）。 */
+  private dropBookCount(path: string): void {
+    if (!this.bookCounts.delete(path)) return;
+    this.recomputeToday();
+  }
+
+  /** 重新统计全部正文章节的字数（启动、文件夹改名 / 删除、章节识别设置变化、换统计口径）。 */
+  private async rebuildBookCounts(): Promise<void> {
+    const token = ++this.bookCountsToken;
+    const counts = new Map<string, number>();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!this.isDailyCountFile(file.path)) continue;
+      let text: string;
+      if (file.path === this.lastKnownPath && this.lastKnownText !== null) {
+        text = this.lastKnownText;
+      } else {
+        try {
+          text = await this.app.vault.cachedRead(file);
+        } catch {
+          continue;
+        }
+      }
+      if (this.unloaded || token !== this.bookCountsToken) return;
+      counts.set(file.path, this.countWords(text));
+    }
+    this.bookCounts = counts;
+    this.bookCountsReady = true;
+    this.recomputeToday();
+    this.stats.publish();
+    this.refreshSidebar();
+    this.refreshWorkbench();
+    this.refreshHome();
+  }
+
+  /** 诊断报告里的「今日净增怎么来的」。 */
+  private todayBasisLines(): string[] {
+    const day = this.activeDay || this.todayStr;
+    const mode = this.settings.wordCountMode;
+    const start = this.statsBook.effectiveStart(day, mode, this.ownStarts[day]);
+    const from =
+      !start
+        ? "（还没有）"
+        : start === this.ownStarts[day]
+          ? "本机"
+          : this.statsBook.otherLedgers().find((l) => l.starts[day] === start)?.deviceName || "其他设备";
+    const sum = (map: Iterable<number>): number => [...map].reduce((a, b) => a + b, 0);
+    return [
+      `书稿字数已统计：${this.bookCountsReady ? "是" : "否"}（正文章节 ${this.bookCounts.size} 个，共 ${sum(this.bookCounts.values())} 字）`,
+      `今日起点：来自${from}${start ? `，记于 ${new Date(start.at).toLocaleString()}，共 ${sum(Object.values(start.files))} 字` : ""}`,
+      `本机设备 ID：${this.deviceId}（${this.deviceName()}）；其他设备 ${this.statsBook.otherLedgers().length} 份统计`,
+    ];
+  }
+
+  /** 现在各章字数的快照（记今日起点用）。 */
+  private snapshotBook(): DayStart {
+    return {
+      at: Date.now(),
+      mode: this.settings.wordCountMode,
+      files: Object.fromEntries(this.bookCounts),
+    };
+  }
+
+  /**
+   * 重算今日净增：现在的书稿字数 − 今日起点（各设备里最早记的那份）。
+   * 本机今天还没记起点、或口径变了，就以现在为起点。
+   */
+  private recomputeToday(): void {
+    if (!this.bookCountsReady) return;
+    const day = this.activeDay || this.todayStr;
+    const mode = this.settings.wordCountMode;
+    if (this.ownStarts[day]?.mode !== mode) this.ownStarts[day] = this.snapshotBook();
+    const start =
+      this.statsBook.effectiveStart(day, mode, this.ownStarts[day]) ?? this.ownStarts[day];
+    const result = computeDay(
+      start.files,
+      this.bookCounts,
+      (path) => this.getProjectForPath(path) ?? "未分组"
+    );
+    this.ownResults[day] = { at: Date.now(), ...result };
+    this.dailyTotal = result.total;
+    for (const project of Object.keys(result.projects)) {
+      if (!this.knownProjects.has(project)) {
+        this.knownProjects.add(project);
+        this.refreshSidebarSettings();
+      }
+    }
+    this.scheduleDailySave();
+  }
+
+  /**
+   * 跨过零点：今天以此刻的书稿为起点（recomputeToday 发现今天还没有本机起点就会记）。
+   * 昨天的结果不用另外结算——每次字数变化都已经按当天算过、写进了结果。
+   */
+  private onDayRollover(_previous: string, today: string): void {
+    if (!this.bookCountsReady) {
+      this.dailyTotal = this.statsBook.latestResult(today, this.ownResults)?.total ?? 0;
+      return;
+    }
+    this.recomputeToday();
   }
 }
 

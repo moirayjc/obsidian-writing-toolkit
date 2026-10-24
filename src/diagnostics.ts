@@ -384,6 +384,8 @@ export function buildStatsDiagReport(ctx: {
   currentWords: number | null;
   pomodoroBaseCount: number | null;
   pendingExternal: number;
+  /** 今日净增的算法依据（书稿字数 − 今日起点；specs/cross-device-stats.md） */
+  todayBasis?: string[];
 }): string {
   const lines: string[] = [];
   const push = (s = "") => lines.push(s);
@@ -399,6 +401,7 @@ export function buildStatsDiagReport(ctx: {
   push("## 今日");
   push(`- 日期键：${ctx.todayStr}`);
   push(`- 净增 dailyTotal：${ctx.dailyTotal}（今日目标与热力图用的就是这个）`);
+  for (const line of ctx.todayBasis ?? []) push(`- ${line}`);
   push(`- 有效写作时长：${Math.round(ctx.dailyDurationSeconds / 60)} 分钟`);
 
   push("");
@@ -452,6 +455,6 @@ export function buildStatsDiagReport(ctx: {
   push("- 「判定不算正文」次数很高 → 你可能一直在非正文文件里打字。");
   push("- 「外部修改仍在队列里」不为 0 且持续 → 队列卡住（外部写入异常）。");
   push("- 「locateAll 最大耗时」很大 → 长文档的批注定位是热点（每次输入都会重跑）。");
-  push("- 数字对不上时，先看 data.json 的 `dailyFileDeltas`：它记着每天每个文件贡献了多少。");
+  push("- 今日净增 = 书稿现在的字数 − 今日起点（各设备里最早记的那份）。数字对不上时，先看上面的「今日起点」来自哪台设备、什么时候记的，再看 `_写作工具箱/统计/<设备>.json` 的 `results` 里各章的变化。");
   return lines.join("\n");
 }

@@ -1,22 +1,20 @@
 /**
- * 跨午夜统计检查：零点后保存不再把昨天的字数写进今天。
+ * 跨午夜统计检查：零点前后的字数与时长各归各天。
  *
- * 内存里的 dailyTotal / dailyDurationSeconds 属于 activeDay，只在
- * ensureCurrentDay() 里切天。旧实现写盘时按「实时日期」回填，零点后、跨天结算前
- * 的任何一次保存（2 秒防抖、睡眠唤醒后点按钮、卸载）都会把昨天的总数写进今天，
- * 随后今天就从昨天的总数开始累计。
+ * 2026-10-24 起今日净增 = 书稿字数 − 今日起点（specs/cross-device-stats.md）：
+ * 跨过零点时，昨天的结果按那一刻的书稿字数定下来，今天以那一刻为起点。
+ * 写作时长仍按 activeDay 记：内存里的 dailyDurationSeconds 只在 ensureCurrentDay()
+ * 里切天，零点后、跨天结算前的保存不能把昨天的时长写进今天。
  *
- * 做法：从 src/main.ts 按符号抽出**真实方法**（todayStr / ensureCurrentDay /
- * recordWritingActivity / applyDailyStats / isCreatedToday / savePluginData /
- * reconcileTodayNewFileDeltas），拼成一个最小类，在假时钟下跑四个时序：
+ * 做法：从 src/main.ts 按符号抽出**真实方法**，连同 src/deviceStats.ts 的真实实现
+ * 拼成一个最小类，在假时钟下跑：
  *
- *   1. 昨天写了字 → 零点后、结算前保存 → 今天的键不能拿到昨天的数（AC-001）
- *   2. 跨天后第一笔增量记今天，昨天的数不再变（AC-002）
- *   3. 启动校正在 activeDay 还是昨天时运行，不能把 diff 加到昨天的总数上（AC-003）
- *   4. 启动校正读盘期间跨过零点 → 停手，不往旧日期上加（AC-003）
+ *   1. 昨天写了字 → 零点后、结算前保存 → 时长留在昨天，今天的键不拿昨天的数
+ *   2. 跨过零点：昨天的净增按零点那一刻定下，今天从 0 起算；之后的字记今天
+ *   3. 起点由别的设备更早记下时，今天按那份起点算（多设备取最早）
  *
- * 反向验证：把 savePluginData 的回填改回 `this.todayStr` 作键，场景 1 变红；
- * 把 reconcileTodayNewFileDeltas 开头的 ensureCurrentDay() 去掉，场景 3 变红。
+ * 反向验证：把 savePluginData 的时长回填改回 `this.todayStr` 作键，场景 1 变红；
+ * 去掉 recomputeToday 里「本机今天还没有起点就以此刻为起点」，场景 2 变红。
  *
  * 不启动 Obsidian、不依赖 main.js、不联网。
  */
@@ -29,18 +27,22 @@ const METHODS = [
   "private ensureCurrentDay(): void",
   "private recordWritingActivity(): void",
   "private applyDailyStats(",
-  "private isCreatedToday(",
   "private async savePluginData()",
-  "private async reconcileTodayNewFileDeltas()",
+  "private updateBookCount(",
+  "private recomputeToday(): void",
+  "private onDayRollover(",
+  "private snapshotBook(): DayStart",
 ];
 
-/** 把 main.ts 的真实方法拼进一个只带桩的类，编译后返回构造器。 */
+/** 把 main.ts 的真实方法拼进一个只带桩的类，编译后返回模块。 */
 function loadDayStats(mainSource) {
   const bodies = METHODS.map((sig) => H.extractMethod(mainSource, sig));
   // 时长阈值常量照搬 main.ts，不在检查里写死
   const gapConst = mainSource.match(/^const BREAK_GAP_MS = .*;$/m);
   if (!gapConst) throw new Error("main.ts 里找不到 BREAK_GAP_MS");
+  const deviceStats = fs.readFileSync(path.join(H.ROOT, "src", "deviceStats.ts"), "utf8");
   const ts = `
+${deviceStats}
 ${gapConst[0]}
 function statsApplied(..._args: unknown[]): void {}
 export class TFile {
@@ -83,7 +85,7 @@ function installClock() {
 }
 
 /** 给抽出来的方法配齐它们读写的字段与协作者。 */
-function createPlugin(mod, files) {
+function createPlugin(mod) {
   const p = new mod.DayStats();
   Object.assign(p, {
     activeDay: "",
@@ -91,39 +93,28 @@ function createPlugin(mod, files) {
     dailyDurationSeconds: 0,
     lastDurationTotal: 0,
     lastWritingActivityAt: 0,
-    dailyHistory: {},
     dailyDurationHistory: {},
-    projectHistory: {},
     projectDurationHistory: {},
-    dailyFileDeltas: {},
-    fileBaselines: {},
     knownProjects: new Set(["作品甲"]),
+    settings: { wordCountMode: "chars" },
+    bookCounts: new Map(),
+    bookCountsReady: true,
+    ownStarts: {},
+    ownResults: {},
+    statsBook: new mod.DeviceStatsBook("dpc"),
     saved: [],
-    onRead: null,
-    statusBar: { loadBaselines() {} },
-    stats: { publish() {} },
-    app: {
-      vault: {
-        getAbstractFileByPath: (path) => files[path]?.file ?? null,
-        cachedRead: async (file) => {
-          if (p.onRead) p.onRead();
-          return files[file.path].text;
-        },
-      },
-    },
     getProjectForPath: () => "作品甲",
     refreshSidebarSettings() {},
     scheduleDailySave() {},
-    refreshWorkbench() {},
-    refreshHome() {},
-    countWords: (text) => text.length,
+    writeOwnLedger() {
+      return Promise.resolve();
+    },
     persistPluginData() {
       p.saved.push(
         JSON.parse(
           JSON.stringify({
-            dailyHistory: p.dailyHistory,
             dailyDurationHistory: p.dailyDurationHistory,
-            projectHistory: p.projectHistory,
+            results: p.ownResults,
           })
         )
       );
@@ -140,111 +131,86 @@ async function main() {
   const r = H.createReporter("跨午夜统计（src/main.ts 真实方法 + 假时钟）");
   const D1 = "2026-03-01";
   const D2 = "2026-03-02";
-  const D3 = "2026-03-03";
-  const chapter = new mod.TFile("作品甲/正文/第1章.md", { ctime: 0 });
+  const ch1 = "作品甲/正文/第1章.md";
+  const chapter = new mod.TFile(ch1, { ctime: 0 });
 
   try {
-    // 1) 昨天写了字，零点后、跨天结算前触发保存（AC-001）
+    // 1) 昨天写了字，零点后、跨天结算前触发保存：时长留在昨天
     {
-      const p = createPlugin(mod, {});
+      const p = createPlugin(mod);
       clock.set(2026, 3, 1, 23, 59, 50);
+      p.bookCounts.set(ch1, 100);
       p.ensureCurrentDay();
+      p.updateBookCount(ch1, 200);
       p.applyDailyStats(chapter, 100, true);
       clock.set(2026, 3, 1, 23, 59, 58);
+      p.updateBookCount(ch1, 220);
       p.applyDailyStats(chapter, 20, true);
       clock.set(2026, 3, 2, 0, 0, 1);
       await p.savePluginData();
       const disk = p.saved[p.saved.length - 1];
       r.check(
-        "零点后保存：昨天的键保持 120",
-        disk.dailyHistory[D1] === 120,
-        JSON.stringify(disk.dailyHistory)
-      );
-      r.check(
-        "零点后保存：今天的键没有拿到昨天的总数",
-        !disk.dailyHistory[D2],
-        JSON.stringify(disk.dailyHistory)
-      );
-      r.check(
-        "零点后保存：时长同样记在昨天、不写进今天",
+        "零点后保存：时长记在昨天、不写进今天",
         disk.dailyDurationHistory[D1] === 8 && !disk.dailyDurationHistory[D2],
         JSON.stringify(disk.dailyDurationHistory)
       );
-      p.ensureCurrentDay();
       r.check(
-        "跨天结算后今天从 0 起算",
-        p.activeDay === D2 && p.dailyTotal === 0 && p.dailyDurationSeconds === 0,
-        `activeDay=${p.activeDay} total=${p.dailyTotal} duration=${p.dailyDurationSeconds}`
+        "零点后保存：今天还没有结果（昨天的净增 120 不会挪到今天）",
+        disk.results[D1].total === 120 && !disk.results[D2],
+        JSON.stringify(Object.fromEntries(Object.entries(disk.results).map(([d, v]) => [d, v.total])))
       );
 
-      // 2) 跨天后第一笔增量（AC-002）
-      clock.set(2026, 3, 2, 0, 0, 5);
-      p.applyDailyStats(chapter, 30, true);
-      await p.savePluginData();
-      const after = p.saved[p.saved.length - 1];
+      // 2) 跨过零点
+      p.ensureCurrentDay();
       r.check(
-        "跨天后第一笔增量记今天，昨天的数不再变",
-        after.dailyHistory[D1] === 120 && after.dailyHistory[D2] === 30,
-        JSON.stringify(after.dailyHistory)
+        "跨天结算：昨天定在 120，今天从 0 起算，今天的起点是零点那一刻的书稿",
+        p.activeDay === D2 && p.dailyTotal === 0 && p.dailyDurationSeconds === 0 &&
+          p.ownResults[D1].total === 120 && p.ownStarts[D2].files[ch1] === 220,
+        `activeDay=${p.activeDay} total=${p.dailyTotal} D1=${p.ownResults[D1]?.total} start=${JSON.stringify(p.ownStarts[D2]?.files)}`
+      );
+      clock.set(2026, 3, 2, 0, 0, 5);
+      p.updateBookCount(ch1, 250);
+      r.check(
+        "跨天后写的字记今天，昨天的数不再变",
+        p.dailyTotal === 30 && p.ownResults[D2].total === 30 && p.ownResults[D1].total === 120,
+        `today=${p.dailyTotal} D1=${p.ownResults[D1].total}`
       );
       r.check(
         "作品统计同样分在两天",
-        after.projectHistory["作品甲"][D1] === 120 &&
-          after.projectHistory["作品甲"][D2] === 30,
-        JSON.stringify(after.projectHistory)
+        p.ownResults[D1].projects["作品甲"] === 120 && p.ownResults[D2].projects["作品甲"] === 30
       );
     }
 
-    // 3) 启动校正时 activeDay 还是昨天（AC-003）
+    // 3) 别的设备更早记了今天的起点：按那份算
     {
-      const path = "作品甲/正文/第2章.md";
-      const file = new mod.TFile(path, { ctime: clock.at(2026, 3, 2, 0, 0, 10) });
-      const p = createPlugin(mod, { [path]: { file, text: "字".repeat(80) } });
-      clock.set(2026, 3, 1, 23, 0, 0);
-      p.ensureCurrentDay();
-      p.applyDailyStats(chapter, 500, false);
-      p.dailyFileDeltas[D2] = { [path]: -50 };
-      clock.set(2026, 3, 2, 0, 0, 30);
-      await p.reconcileTodayNewFileDeltas();
-      r.check(
-        "启动校正：今天按 0 起算加上校正量 130",
-        p.dailyHistory[D2] === 130 && p.dailyTotal === 130,
-        `history=${JSON.stringify(p.dailyHistory)} total=${p.dailyTotal}`
-      );
-      r.check(
-        "启动校正：昨天的 500 保持不变",
-        p.dailyHistory[D1] === 500,
-        JSON.stringify(p.dailyHistory)
-      );
-    }
-
-    // 4) 启动校正读盘期间跨过零点（AC-003）
-    {
-      const path = "作品甲/正文/第3章.md";
-      const file = new mod.TFile(path, { ctime: clock.at(2026, 3, 2, 23, 0, 0) });
-      const p = createPlugin(mod, { [path]: { file, text: "字".repeat(40) } });
-      clock.set(2026, 3, 2, 23, 59, 59);
-      p.ensureCurrentDay();
-      p.applyDailyStats(chapter, 200, false);
-      p.dailyFileDeltas[D2] = { [path]: -10 };
-      p.onRead = () => {
-        clock.set(2026, 3, 3, 0, 0, 1);
-        p.ensureCurrentDay();
+      const p = createPlugin(mod);
+      clock.set(2026, 3, 2, 9, 0, 0);
+      p.bookCounts.set(ch1, 1000);
+      const phoneStart = {
+        at: clock.at(2026, 3, 2, 7, 0, 0),
+        mode: "chars",
+        files: { [ch1]: 900 },
       };
-      await p.reconcileTodayNewFileDeltas();
+      p.statsBook.setOthers([
+        mod.buildLedger(
+          { deviceId: "dphone", deviceName: "手机", now: 0 },
+          mod.emptyStatsMaps(),
+          { [D2]: phoneStart },
+          {}
+        ),
+      ]);
+      p.ensureCurrentDay();
       r.check(
-        "读盘期间跨天：不再往旧日期或新的一天上加校正量",
-        p.dailyHistory[D2] === 200 && !p.dailyHistory[D3] && p.dailyTotal === 0,
-        `history=${JSON.stringify(p.dailyHistory)} total=${p.dailyTotal}`
+        "多设备：用最早记的起点（手机 7 点记的 900），今天 = 1000 − 900 = 100",
+        p.dailyTotal === 100,
+        `total=${p.dailyTotal}`
       );
     }
 
-    // 5) 源码级兜底：不许再出现「实时日期键 = 今日总数」的回填
+    // 4) 源码级兜底：不许再出现「实时日期键 = 今日时长」的回填
     r.check(
-      "main.ts 不再用 todayStr 作键回填 dailyTotal / dailyDurationSeconds",
-      !/\[this\.todayStr\]\s*=\s*this\.(dailyTotal|dailyDurationSeconds)\b/.test(
-        mainSource
-      )
+      "main.ts 不用 todayStr 作键回填 dailyDurationSeconds",
+      !/\[this\.todayStr\]\s*=\s*this\.dailyDurationSeconds\b/.test(mainSource)
     );
   } finally {
     clock.restore();

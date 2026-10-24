@@ -224,6 +224,8 @@ function main() {
         dailyHistory: {},
         dailyDurationHistory: {},
         dailyTypedHistory: {},
+        // 今日净增的跨天结算（书稿字数 − 起点）由 check-day-rollover 测，这里只测写下的字
+        onDayRollover() {},
       });
       clock.set(2026, 3, 1, 23, 59, 50);
       p.ensureCurrentDay();
@@ -244,13 +246,16 @@ function main() {
   // D) 源码级接线
   {
     const mainSource = source("src/main.ts");
-    const persist = H.extractMethod(mainSource, "private persistPluginData()");
-    const load = H.extractMethod(mainSource, "private async loadPluginData()");
+    // 2026-10-23 起统计按设备存在 `_写作工具箱/统计/<设备>.json`（specs/cross-device-stats.md）
+    const persist = H.extractMethod(mainSource, "private currentStatsMaps(): StatsMaps");
+    const load = H.extractMethod(mainSource, "private applyStatsMaps(maps: StatsMaps): void");
+    const ledgerSource = source("src/deviceStats.ts");
     const change = H.extractMethod(mainSource, "private handleEditorChange(): void");
     r.check(
-      "data.json 读写都带 dailyTypedHistory",
+      "本机统计文件读写都带 dailyTypedHistory",
       /dailyTypedHistory:\s*this\.dailyTypedHistory/.test(persist) &&
-        /data\.dailyTypedHistory/.test(load)
+        /this\.dailyTypedHistory = maps\.dailyTypedHistory/.test(load) &&
+        /dailyTypedHistory:\s*numberMap\(src\.dailyTypedHistory\)/.test(ledgerSource)
     );
     r.check(
       "编辑器路径：先记写下的字，再结算今日统计",
@@ -271,7 +276,8 @@ function main() {
     );
     r.check(
       "今日写下的字按 activeDay 取（与有效写作时长同一天）",
-      /typedToday:\s*\(\)\s*=>\s*this\.dailyTypedHistory\[this\.activeDay\]/.test(mainSource)
+      // 2026-10-23 起显示的是各设备加总：本机 + 其他设备，都按 activeDay 取
+      /typedToday:\s*\(\)\s*=>\s*\(this\.dailyTypedHistory\[this\.activeDay\] \|\| 0\) \+\s*this\.statsBook\.othersDay\("dailyTypedHistory", this\.activeDay\)/.test(mainSource)
     );
     const shells = ["src/home.ts", "src/workbench.ts"].map(source).join("\n");
     r.check(

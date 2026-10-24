@@ -47,12 +47,16 @@ const SNAPSHOT_SETTING_KEYS = [
   "snapshotIdleMinutes", "snapshotMaxPerFile", "snapshotOnlyDrafts",
 ];
 
+// 2026-10-23 起每日统计与字数基线按设备存在 `_写作工具箱/统计/<设备>.json`，
+// 不再进 data.json（specs/cross-device-stats.md）。
 const DATA_KEYS = [
-  "settings", "dailyHistory", "dailyDurationHistory",
-  "projectHistory", "projectDurationHistory",
-  "dailyPomodoroHistory", "pomodoroSession", "dailyFileDeltas", "dailyTypedHistory", "workbenchProject",
+  "settings", "pomodoroSession", "workbenchProject",
   "workbenchMode", "workbenchStatus", "hiddenProjects", "homePage",
-  "projectCovers", "libraryView", "fileBaselines", "baselinesAt",
+  "projectCovers", "libraryView",
+];
+const STATS_KEYS = [
+  "dailyHistory", "dailyDurationHistory", "projectHistory", "projectDurationHistory",
+  "dailyPomodoroHistory", "dailyFileDeltas", "dailyTypedHistory", "fileBaselines", "baselinesAt",
 ];
 
 function readFile(relPath) {
@@ -181,13 +185,12 @@ function main() {
     "schema=" + (schemaKeys || []).length + ", snapshot=" + (snapshotKeys || []).length
   );
 
-  // 7. data.json 顶层键由 persistPluginData + prefs 快照唯一决定，且与约定集合一致。
+  // 7. data.json 顶层键由 pluginDataPayload + prefs 快照唯一决定，且与约定集合一致。
   const PREFS_KEYS = [
     "workbenchProject", "workbenchMode", "workbenchStatus", "hiddenProjects",
     "homePage", "projectCovers", "libraryView",
   ];
-  const persistStart = mainSource.indexOf("private persistPluginData");
-  const persistBlock = mainSource.slice(persistStart, persistStart + 1600);
+  const persistBlock = H.extractMethod(mainSource, "private pluginDataPayload()");
   const persistedKeys = [
     ...persistBlock.matchAll(/^\s{6}([A-Za-z][A-Za-z0-9_]*):/gm),
   ].map((match) => match[1]);
@@ -201,11 +204,17 @@ function main() {
       .matchAll(/^\s{2}([A-Za-z][A-Za-z0-9_]*):/gm),
   ].map((match) => match[1]);
   r.check(
-    "persistPluginData + prefs 快照拼出 data.json 的 19 个顶层键",
+    "pluginDataPayload + prefs 快照拼出 data.json 的 9 个顶层键",
     /this\.prefs\.forPersistence\(\)/.test(persistBlock) &&
       sameSet(persistedKeys, DATA_KEYS.filter((key) => !PREFS_KEYS.includes(key))) &&
       sameSet(prefsSnapshotKeys, PREFS_KEYS),
     "persist=" + persistedKeys.join(",") + " / prefs=" + prefsSnapshotKeys.join(",")
+  );
+  r.check(
+    "每日统计与字数基线不再写进 data.json（只在迁移失败时原样带回）",
+    STATS_KEYS.every((key) => !new RegExp("\\b" + key + ":").test(persistBlock)) &&
+      /\.\.\.\(this\.carryLegacyStats \?\? \{\}\)/.test(persistBlock),
+    persistBlock.slice(0, 200)
   );
 
   // 8. Feature Module / Services / Host 不能绕过持久化入口直接写 data.json。
