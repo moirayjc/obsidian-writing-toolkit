@@ -113,16 +113,11 @@ class NewProjectModal extends Modal {
     const { contentEl } = this;
     contentEl.addClass("wt-np");
     this.titleEl.setText("新建作品");
-    contentEl.createDiv({
-      cls: "wt-np-sub",
-      text: "代号和目录都会自动接上现有的编号规律，建完直接打开开写。",
-    });
 
     this.code = suggestProjectCode(this.app, this.options.parent);
 
     new Setting(contentEl)
       .setName("代号")
-      .setDesc("自动接续现有编号，可修改")
       .addText((text) => {
         text.setValue(this.code).onChange((value) => {
           this.code = value;
@@ -137,18 +132,12 @@ class NewProjectModal extends Modal {
 
     new Setting(contentEl)
       .setName("名称（可选）")
-      .setDesc("留空就用代号；填了就拼成「004-名称」这样的格式")
       .addText((text) => {
         text.setPlaceholder("留空也行").onChange((value) => {
           this.name = value;
           this.updatePreview();
         });
       });
-
-    new Setting(contentEl)
-      .setName("位置")
-      .setDesc("新作品统一建在这里，不用选")
-      .addText((text) => text.setValue(this.options.parent).setDisabled(true));
 
     this.previewEl = contentEl.createDiv({ cls: "wt-np-preview" });
     this.updatePreview();
@@ -187,6 +176,9 @@ class NewProjectModal extends Modal {
       text: "点击创建后，自动做好这些：",
     });
     const book = this.previewEl.createDiv({ cls: "wt-np-preview-row" });
+    if (this.options.parent) {
+      book.createSpan({ cls: "wt-np-preview-dim", text: `${this.options.parent}/` });
+    }
     book.createSpan({ cls: "wt-np-preview-name", text: folder });
     book.createSpan({ cls: "wt-np-preview-dim", text: "（作品文件夹）" });
     const subs = this.previewEl.createDiv({
@@ -195,10 +187,6 @@ class NewProjectModal extends Modal {
     subs.setText(
       SUBFOLDER_NAMES.map((label, i) => `${prefix}${i + 1} ${label}`).join("　")
     );
-    this.previewEl.createDiv({
-      cls: "wt-np-preview-note",
-      text: "不塞模板；目录里先保持空白。",
-    });
   }
 
   private async submit(): Promise<void> {

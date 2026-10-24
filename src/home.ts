@@ -775,11 +775,10 @@ export class WritingToolkitHome extends ItemView {
     return el;
   }
 
-  private pageHead(page: HTMLElement, title: string, sub: string): HTMLElement {
+  private pageHead(page: HTMLElement, title: string): HTMLElement {
     const head = this.block(page, "wt-home-head", 0);
     const titles = head.createDiv({ cls: "wt-home-titles" });
     titles.createEl("h2", { cls: "wt-home-title", text: title });
-    titles.createDiv({ cls: "wt-home-subtitle", text: sub });
     return head;
   }
 
@@ -1724,11 +1723,7 @@ export class WritingToolkitHome extends ItemView {
   private renderBoardPage(main: HTMLElement): void {
     const page = main.createDiv({ cls: "wt-home-page wt-board" });
     const board = this.host.caps.planBoard;
-    const head = this.pageHead(
-      page,
-      "看板",
-      "拖动卡片排先后、换列；点卡片看详情、改备注和关联章节。"
-    );
+    const head = this.pageHead(page, "看板");
     const toolbar = head.createDiv({ cls: "wt-home-toolbar" });
     const openBtn = this.button(toolbar, "打开看板文件", "wt-doc", "is-quiet");
     openBtn.setAttr("title", board.path());
@@ -2076,7 +2071,7 @@ export class WritingToolkitHome extends ItemView {
     const page = main.createDiv({ cls: "wt-home-page" });
     const view = this.host.prefs.getLibraryView();
 
-    const head = this.pageHead(page, "书架", "所有作品都在这里；点一本就切过去写。");
+    const head = this.pageHead(page, "书架");
     const toolbar = head.createDiv({ cls: "wt-home-toolbar" });
     this.searchBox(toolbar, "搜索书名 / 代号", this.libQuery, (value) => {
       this.libQuery = value;
@@ -2179,7 +2174,7 @@ export class WritingToolkitHome extends ItemView {
       const body = this.renderFoldGroup(
         listEl,
         "存档",
-        `${archiveHits.length} 本 · 已完结的作品收在这里`,
+        `${archiveHits.length} 本`,
         open,
         () => {
           libFoldOpen.archive = !libFoldOpen.archive;
@@ -2201,7 +2196,7 @@ export class WritingToolkitHome extends ItemView {
       const body = this.renderFoldGroup(
         listEl,
         "已隐藏",
-        `${hiddenHits.length} 本 · 默认不显示`,
+        `${hiddenHits.length} 本`,
         open,
         () => {
           libFoldOpen.hidden = !libFoldOpen.hidden;
@@ -2508,7 +2503,7 @@ export class WritingToolkitHome extends ItemView {
 
   private renderStatsPage(main: HTMLElement): void {
     const page = main.createDiv({ cls: "wt-home-page" });
-    const head = this.pageHead(page, "数据统计", "一笔一笔写下来的，都记在这里。");
+    const head = this.pageHead(page, "数据统计");
 
     // 统计范围放在页头：数字卡片、热力图、作品占比都跟着它走
     const toolbar = head.createDiv({ cls: "wt-home-toolbar" });
@@ -2740,7 +2735,7 @@ export class WritingToolkitHome extends ItemView {
 
   private renderDocsPage(main: HTMLElement): void {
     const page = main.createDiv({ cls: "wt-home-page" });
-    const head = this.pageHead(page, "资料库", "跨作品共用的设定与参考资料。");
+    const head = this.pageHead(page, "资料库");
     const toolbar = head.createDiv({ cls: "wt-home-toolbar" });
     this.searchBox(toolbar, "搜索资料", this.docsQuery, (value) => {
       this.docsQuery = value;
