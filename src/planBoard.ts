@@ -20,6 +20,7 @@
  * - 日期写法与 Tasks 插件一致：截止 `📅 YYYY-MM-DD`，完成 `✅ YYYY-MM-DD`。
  * - 作品写成 `📚 书名`；关联章节是正文后面紧跟的 `[[链接]]`（正文中间的链接不算）；
  *   备注就是条目下面缩进的行。一行的写法顺序：`正文 [[章节]] 📚 书名 📅 截止 ✅ 完成`。
+ * - 整行只有一个 `[[链接]]` 的条目是「章节卡」：卡片就是这一章，点开直接写。
  * - 列内顺序就是文件里的行序（看板上拖动 = 挪行）；勾完成的排到「完成」段最上面。
  * - 每次修改都「现读文件 → 按条目原文定位 → 改 → 写回」，所以别处同时手改、
  *   网盘同步过来的内容不会被页面上的旧数据盖掉。
@@ -38,6 +39,9 @@ export const PLAN_COLUMN_LABEL: Record<PlanColumn, string> = {
 export interface PlanItem {
   /** 定位用：条目原文 + 同原文的第几条（0 起），页面上的旧数据靠它找回文件里的这一行 */
   readonly key: string;
+  /** task：普通任务卡；chapter：章节卡（整行只有一个章节链接，卡片就是这一章） */
+  readonly kind: "task" | "chapter";
+  /** 卡片标题；章节卡是章节名（链接的别名或文件名） */
   readonly text: string;
   /** 截止日 YYYY-MM-DD */
   readonly due: string | null;
@@ -184,11 +188,9 @@ function readTask(line: string): TaskFields | null {
   const doneAt = DONE_RE.exec(rest)?.[1] ?? null;
   const book = BOOK_RE.exec(rest)?.[1]?.trim() || null;
   rest = rest.replace(DUE_RE, "").replace(DONE_RE, "").replace(BOOK_RE, "").trim();
-  // 行尾的链接是关联章节；整行只有一个链接时它就是正文，不拆
-  let chapter = CHAPTER_TAIL_RE.exec(rest)?.[1]?.trim() || null;
-  const withoutLink = rest.replace(CHAPTER_TAIL_RE, "").trim();
-  if (chapter && withoutLink) rest = withoutLink;
-  else chapter = null;
+  // 行尾的链接是关联章节；整行只有一个链接时就是章节卡（正文为空、章节即卡片）
+  const chapter = CHAPTER_TAIL_RE.exec(rest)?.[1]?.trim() || null;
+  if (chapter) rest = rest.replace(CHAPTER_TAIL_RE, "").trim();
   return {
     indent: match[1],
     checked: match[2] !== " ",
@@ -201,7 +203,8 @@ function readTask(line: string): TaskFields | null {
 }
 
 function writeTask(fields: TaskFields): string {
-  let line = `${fields.indent}- [${fields.checked ? "x" : " "}] ${fields.text}`;
+  let line = `${fields.indent}- [${fields.checked ? "x" : " "}]`;
+  if (fields.text) line += ` ${fields.text}`;
   if (fields.chapter) line += ` [[${fields.chapter}]]`;
   if (fields.book) line += ` 📚 ${fields.book}`;
   if (fields.due) line += ` 📅 ${fields.due}`;
@@ -294,7 +297,8 @@ export function parsePlanBoard(content: string): PlanItem[] {
       if (!fields || fields.indent.length > 0) continue;
       items.push({
         key,
-        text: fields.text,
+        kind: fields.text ? "task" : "chapter",
+        text: fields.text || planChapterName(fields.chapter ?? ""),
         due: fields.due,
         doneAt: fields.checked ? fields.doneAt : null,
         column: displayColumn(section, fields),
@@ -309,6 +313,13 @@ export function parsePlanBoard(content: string): PlanItem[] {
     }
   }
   return items;
+}
+
+/** 章节链接的显示名：有别名用别名，否则取路径最后一段（去掉 #标题） */
+export function planChapterName(link: string): string {
+  const [target, alias] = link.split("|");
+  if (alias?.trim()) return alias.trim();
+  return target.split("#")[0].split("/").pop()?.trim() || link;
 }
 
 /** 某一列的卡片，按文件里的行序（看板上的上下顺序就是行序） */
@@ -353,10 +364,13 @@ export function addPlanItem(
   text: string,
   due: string | null,
   today: string,
-  book: string | null = null
+  book: string | null = null,
+  chapter: string | null = null
 ): string {
   const clean = cleanText(text);
-  if (!clean) return content;
+  const link = cleanChapter(chapter);
+  // 文字为空时只有带章节才成立（章节卡）
+  if (!clean && !link) return content;
   const doc = parseDoc(content);
   const checked = column === "done";
   const line = writeTask({
@@ -366,7 +380,7 @@ export function addPlanItem(
     due: due && DATE_RE.test(due) ? due : null,
     doneAt: checked ? today : null,
     book: cleanBook(book),
-    chapter: null,
+    chapter: link,
   });
   appendToSection(sectionFor(doc, column), { kind: "task", lines: [line] });
   return serializeDoc(doc);
@@ -452,7 +466,7 @@ export function editPlanItem(
   const fields: TaskFields = { ...hit.fields };
   if (patch.text !== undefined) {
     const clean = cleanText(patch.text);
-    if (!clean) return content;
+    if (!clean && !fields.chapter) return content;
     fields.text = clean;
   }
   if (patch.due !== undefined) {
@@ -460,6 +474,8 @@ export function editPlanItem(
   }
   if (patch.book !== undefined) fields.book = cleanBook(patch.book);
   if (patch.chapter !== undefined) fields.chapter = cleanChapter(patch.chapter);
+  // 章节卡清掉章节就没有标题了：不改
+  if (!fields.text && !fields.chapter) return content;
   hit.entry.lines[0] = writeTask(fields);
   if (patch.notes !== undefined) {
     hit.entry.lines = [hit.entry.lines[0], ...noteLines(patch.notes)];

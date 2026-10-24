@@ -126,7 +126,7 @@ export interface UiShellCapabilities {
   planBoard: {
     path(): string;
     load(): Promise<PlanItem[]>;
-    add(column: PlanColumn, text: string, extra?: { due?: string | null; book?: string | null }): Promise<void>;
+    add(column: PlanColumn, text: string, extra?: { due?: string | null; book?: string | null; chapter?: string | null }): Promise<void>;
     move(key: string, column: PlanColumn, place?: PlanPlacement): Promise<void>;
     edit(key: string, patch: PlanItemPatch): Promise<void>;
     remove(key: string): Promise<RemovedPlanItem | null>;

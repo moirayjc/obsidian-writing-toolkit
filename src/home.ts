@@ -51,6 +51,7 @@ import {
   type PlanColumn,
   type PlanItem,
   type PlanItemPatch,
+  type PlanPlacement,
 } from "./planBoard";
 import type { WordCountMode } from "./wordcount";
 
@@ -305,25 +306,35 @@ class PlanDetailModal extends Modal {
     contentEl.empty();
     this.modalEl.addClass("wt-plan-detail");
 
+    // 章节卡的标题就是章节名，不能单独改（要换就在下面换一章）
+    const isChapter = item.kind === "chapter";
     const title = contentEl.createEl("textarea", {
       cls: "wt-plan-detail-title",
       attr: { rows: "2", placeholder: "卡片标题" },
     });
     title.value = item.text;
+    if (isChapter) {
+      title.readOnly = true;
+      title.addClass("is-chapter");
+      title.rows = 1;
+    }
 
     const grid = contentEl.createDiv({ cls: "wt-plan-detail-grid" });
-    const field = (label: string): HTMLElement => {
-      grid.createDiv({ cls: "wt-plan-detail-label", text: label });
+    // 属性行：图标 + 灰色标签 + 值（照 Notion 页面顶部的属性区）
+    const field = (label: string, icon: string): HTMLElement => {
+      const key = grid.createDiv({ cls: "wt-plan-detail-label" });
+      setIcon(key.createSpan({ cls: "wt-plan-detail-icon" }), icon);
+      key.createSpan({ text: label });
       return grid.createDiv({ cls: "wt-plan-detail-value" });
     };
 
-    const columnSel = field("列").createEl("select", { cls: "dropdown" });
+    const columnSel = field("列", "wt-board").createEl("select", { cls: "dropdown" });
     for (const column of PLAN_COLUMNS) {
       columnSel.createEl("option", { value: column, text: PLAN_COLUMN_LABEL[column] });
     }
     columnSel.value = item.column;
 
-    const bookSel = field("作品").createEl("select", { cls: "dropdown" });
+    const bookSel = field("作品", "wt-shelf").createEl("select", { cls: "dropdown" });
     bookSel.createEl("option", { value: "", text: "不归属某本书" });
     const names = opts.projects.map((p) => p.name);
     if (item.book && !names.includes(item.book)) names.push(item.book);
@@ -332,11 +343,11 @@ class PlanDetailModal extends Modal {
     }
     bookSel.value = item.book ?? "";
 
-    const chapterSel = field("关联章节").createEl("select", { cls: "dropdown" });
+    const chapterSel = field("关联章节", "wt-doc").createEl("select", { cls: "dropdown" });
     const fillChapters = (): void => {
       const keep = chapterSel.value || item.chapter || "";
       chapterSel.empty();
-      chapterSel.createEl("option", { value: "", text: "不关联章节" });
+      if (!isChapter) chapterSel.createEl("option", { value: "", text: "不关联章节" });
       const project = opts.projects.find((p) => p.name === bookSel.value);
       const links: string[] = [];
       for (const chapter of project ? allChapters(project) : []) {
@@ -354,7 +365,7 @@ class PlanDetailModal extends Modal {
       fillChapters();
     });
 
-    const dueBox = field("截止日期");
+    const dueBox = field("截止日期", "wt-calendar");
     const due = dueBox.createEl("input", { cls: "wt-plan-detail-date", attr: { type: "date" } });
     due.value = item.due ?? "";
     const clearDue = dueBox.createEl("button", {
@@ -390,10 +401,12 @@ class PlanDetailModal extends Modal {
         return;
       }
       const patch: PlanItemPatch = {};
-      if (text !== item.text) patch.text = text;
+      if (!isChapter && text !== item.text) patch.text = text;
       if ((due.value || null) !== item.due) patch.due = due.value || null;
       if ((bookSel.value || null) !== item.book) patch.book = bookSel.value || null;
-      if ((chapterSel.value || null) !== item.chapter) patch.chapter = chapterSel.value || null;
+      if ((chapterSel.value || null) !== item.chapter && (!isChapter || chapterSel.value)) {
+        patch.chapter = chapterSel.value || null;
+      }
       const noteText = notes.value.trim();
       if (noteText !== item.notes.join("\n")) patch.notes = noteText;
       if (columnSel.value !== item.column) patch.column = columnSel.value as PlanColumn;
@@ -417,6 +430,107 @@ class PlanDetailModal extends Modal {
       title.focus();
       title.setSelectionRange(title.value.length, title.value.length);
     }, 30);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+interface PlanChapterPickOptions {
+  projects: NovelProject[];
+  initial: NovelProject;
+  /** 已经在看板上的章节文件路径：不能重复添加 */
+  onBoard: ReadonlySet<string>;
+  column: PlanColumn;
+  onPick: (project: NovelProject, files: TFile[]) => void;
+}
+
+/** 「＋ 添加章节」：选一本书，勾选若干章，加成章节卡 */
+class PlanChapterPickModal extends Modal {
+  private project: NovelProject;
+  private readonly picked = new Set<string>();
+  private query = "";
+
+  constructor(app: App, private readonly opts: PlanChapterPickOptions) {
+    super(app);
+    this.project = opts.initial;
+  }
+
+  onOpen(): void {
+    const { contentEl, opts } = this;
+    contentEl.empty();
+    this.modalEl.addClass("wt-plan-pick");
+    contentEl.createEl("h3", { text: `添加章节到「${PLAN_COLUMN_LABEL[opts.column]}」` });
+
+    const bar = contentEl.createDiv({ cls: "wt-plan-pick-bar" });
+    const bookSel = bar.createEl("select", { cls: "dropdown" });
+    for (const project of opts.projects) {
+      bookSel.createEl("option", { value: project.root, text: displayProjectName(project.name) });
+    }
+    bookSel.value = this.project.root;
+    const search = bar.createEl("input", {
+      cls: "wt-plan-pick-search",
+      attr: { type: "search", placeholder: "搜章节名" },
+    });
+
+    const list = contentEl.createDiv({ cls: "wt-plan-pick-list" });
+    const actions = contentEl.createDiv({ cls: "wt-plan-detail-actions" });
+    const hint = actions.createDiv({ cls: "wt-plan-pick-hint" });
+    actions
+      .createEl("button", { text: "取消", attr: { type: "button" } })
+      .addEventListener("click", () => this.close());
+    const add = actions.createEl("button", { cls: "mod-cta", attr: { type: "button" } });
+
+    const sync = (): void => {
+      add.setText(this.picked.size ? `添加 ${this.picked.size} 章` : "添加");
+      add.disabled = this.picked.size === 0;
+      hint.setText(this.picked.size ? "" : "勾选要放上看板的章节");
+    };
+    const render = (): void => {
+      list.empty();
+      const chapters = allChapters(this.project).filter(
+        (c) => !this.query || chapterLabel(c).includes(this.query)
+      );
+      if (chapters.length === 0) {
+        list.createDiv({ cls: "wt-board-empty", text: this.query ? "没有匹配的章节" : "这本书还没有章节" });
+      }
+      for (const chapter of chapters) {
+        const path = chapter.file.path;
+        const taken = opts.onBoard.has(path);
+        const row = list.createEl("label", { cls: `wt-plan-pick-row${taken ? " is-taken" : ""}` });
+        const box = row.createEl("input", { attr: { type: "checkbox" } });
+        box.checked = taken || this.picked.has(path);
+        box.disabled = taken;
+        row.createSpan({ cls: "wt-plan-pick-name", text: chapterLabel(chapter) });
+        if (taken) row.createSpan({ cls: "wt-plan-pick-tag", text: "已在看板" });
+        box.addEventListener("change", () => {
+          if (box.checked) this.picked.add(path);
+          else this.picked.delete(path);
+          sync();
+        });
+      }
+      sync();
+    };
+    bookSel.addEventListener("change", () => {
+      this.project = opts.projects.find((p) => p.root === bookSel.value) ?? this.project;
+      this.picked.clear();
+      render();
+    });
+    search.addEventListener("input", () => {
+      this.query = search.value.trim();
+      render();
+    });
+    add.addEventListener("click", () => {
+      // 按书里的章节顺序加，看板上从上到下就是第几章
+      const files = allChapters(this.project)
+        .map((c) => c.file)
+        .filter((f) => this.picked.has(f.path));
+      this.close();
+      if (files.length) opts.onPick(this.project, files);
+    });
+    render();
+    window.setTimeout(() => search.focus(), 30);
   }
 
   onClose(): void {
@@ -548,6 +662,12 @@ export class WritingToolkitHome extends ItemView {
     this.register(
       this.host.caps.planBoard.subscribe(() => {
         if (this.page === "desk" || this.page === "board") this.refreshSoon();
+      })
+    );
+    // 章节定稿状态变了：看板上章节卡的锁标记跟着变
+    this.register(
+      this.host.caps.chapterStatus.subscribe(() => {
+        if (this.page === "board") this.refreshSoon();
       })
     );
     // 切回本页面时轻量刷新一次（写了一会儿再回来看，数字要是新的）
@@ -1337,8 +1457,91 @@ export class WritingToolkitHome extends ItemView {
     new PlanDetailModal(this.app, item, {
       projects: this.planProjects(),
       boardPath: board.path(),
-      onSave: (patch) => this.planTask(board.edit(item.key, patch)),
+      onSave: (patch) =>
+        this.planTask(
+          board.edit(item.key, patch).then(() => {
+            if (patch.column) this.syncChapterFinal(item, patch.column);
+          })
+        ),
       onDelete: () => this.removePlanItem(item),
+    }).open();
+  }
+
+  /** 挪卡片（勾选、拖动、菜单都走这里），章节卡顺带同步定稿状态 */
+  private movePlan(item: PlanItem, column: PlanColumn, place?: PlanPlacement): void {
+    this.planTask(
+      this.host.caps.planBoard
+        .move(item.key, column, place)
+        .then(() => this.syncChapterFinal(item, column))
+    );
+  }
+
+  /** 章节卡进「完成」= 定稿，离开「完成」= 改回草稿（只在看板上操作时联动） */
+  private syncChapterFinal(item: PlanItem, to: PlanColumn): void {
+    if (item.kind !== "chapter" || !item.chapter) return;
+    if ((item.column === "done") === (to === "done")) return;
+    const file = this.planChapterFile(item.chapter);
+    if (!file) return;
+    const status = this.host.caps.chapterStatus;
+    const final = to === "done";
+    if (status.isFinal(file.path) === final) return;
+    status.setFinal(file.path, final);
+    new Notice(
+      final
+        ? `「${item.text}」已定稿，正文锁定；拖出「完成」即改回草稿`
+        : `「${item.text}」已改回草稿`
+    );
+  }
+
+  /** 章节卡：打开这一章写作，并把它所在的书设为正在写的书 */
+  private openPlanChapter(item: PlanItem): void {
+    const file = item.chapter ? this.planChapterFile(item.chapter) : null;
+    if (!file) {
+      new Notice(`找不到「${item.text}」，可以在详情里换一章或删掉这张卡`);
+      return;
+    }
+    const projects = this.discover();
+    const project =
+      projects.find((p) => file.path.startsWith(`${p.root}/`)) ??
+      projects.find((p) => p.name === item.book);
+    if (project) this.makeCurrent(project, false);
+    this.openForWriting(file);
+  }
+
+  /** 「＋ 添加章节」：从一本书里勾选章节，批量加成章节卡 */
+  private pickPlanChapters(column: PlanColumn, items: readonly PlanItem[]): void {
+    const board = this.host.caps.planBoard;
+    const projects = this.planProjects();
+    const current = this.host.prefs.getWorkbenchProject();
+    const preferred =
+      projects.find((p) => p.name === boardView.book) ??
+      projects.find((p) => p.root === current) ??
+      projects[0];
+    if (!preferred) {
+      new Notice("书架上还没有作品");
+      return;
+    }
+    const onBoard = new Set<string>();
+    for (const item of items) {
+      const file = item.chapter ? this.planChapterFile(item.chapter) : null;
+      if (file) onBoard.add(file.path);
+    }
+    new PlanChapterPickModal(this.app, {
+      projects,
+      initial: preferred,
+      onBoard,
+      column,
+      onPick: (project, files) => {
+        const job = (async () => {
+          for (const file of files) {
+            await board.add(column, "", {
+              book: project.name,
+              chapter: this.app.metadataCache.fileToLinktext(file, board.path(), true),
+            });
+          }
+        })();
+        this.planTask(job);
+      },
     }).open();
   }
 
@@ -1368,6 +1571,11 @@ export class WritingToolkitHome extends ItemView {
 
   private planMenu(item: PlanItem): Menu {
     const menu = new Menu();
+    if (item.kind === "chapter") {
+      menu.addItem((mi) =>
+        mi.setTitle("打开这一章").setIcon("wt-write").onClick(() => this.openPlanChapter(item))
+      );
+    }
     menu.addItem((mi) =>
       mi.setTitle("打开详情").setIcon("wt-pencil").onClick(() => this.openPlanDetail(item))
     );
@@ -1378,7 +1586,7 @@ export class WritingToolkitHome extends ItemView {
         mi
           .setTitle(`移到「${PLAN_COLUMN_LABEL[column]}」`)
           .setIcon(column === "done" ? "wt-check" : "wt-chevron-right")
-          .onClick(() => this.planTask(this.host.caps.planBoard.move(item.key, column)))
+          .onClick(() => this.movePlan(item, column))
       );
     }
     menu.addSeparator();
@@ -1421,7 +1629,7 @@ export class WritingToolkitHome extends ItemView {
     check.addEventListener("click", (e) => {
       e.stopPropagation();
       (parent.closest<HTMLElement>(".wt-plan-card") ?? parent).addClass("is-leaving");
-      this.planTask(this.host.caps.planBoard.move(item.key, done ? "todo" : "done"));
+      this.movePlan(item, done ? "todo" : "done");
     });
   }
 
@@ -1486,10 +1694,15 @@ export class WritingToolkitHome extends ItemView {
         return;
       }
       for (const item of focus.slice(0, DESK_PLAN_LIMIT)) {
-        const row = list.createDiv({ cls: "wt-plan-row" });
+        const row = list.createDiv({ cls: `wt-plan-row is-${item.kind}` });
         this.planCheck(row, item);
         const text = row.createDiv({ cls: "wt-plan-row-text", text: item.text });
-        text.setAttr("title", item.text);
+        text.setAttr("title", item.kind === "chapter" ? `打开「${item.text}」开始写` : item.text);
+        if (item.kind === "chapter") {
+          setIcon(row.createSpan({ cls: "wt-plan-row-icon" }), "wt-doc");
+          row.insertBefore(row.lastElementChild as HTMLElement, text);
+          row.addEventListener("click", () => this.openPlanChapter(item));
+        }
         const meta = row.createDiv({ cls: "wt-plan-row-meta" });
         if (item.column === "doing") {
           meta.createSpan({ cls: "wt-pill is-ongoing", text: "在写" });
@@ -1528,7 +1741,7 @@ export class WritingToolkitHome extends ItemView {
 
     // 拖动时的插入线：全页只有一条，跟着鼠标挪到落点
     const dropLine = createDiv({ cls: "wt-board-drop-line" });
-    let drag: { key: string; from: PlanColumn; card: HTMLElement } | null = null;
+    let drag: { item: PlanItem; card: HTMLElement } | null = null;
     const clearDrop = (): void => {
       dropLine.remove();
       cols.querySelectorAll(".is-drop").forEach((el) => el.removeClass("is-drop"));
@@ -1546,10 +1759,23 @@ export class WritingToolkitHome extends ItemView {
 
     PLAN_COLUMNS.forEach((column, index) => {
       const col = this.block(cols, `wt-board-col is-${column}`, index + 1);
+      // 列头：状态药丸（带色点）+ 条数；悬停时右侧出现「＋」，直接在这一列新建
       const colHead = col.createDiv({ cls: "wt-board-col-head" });
-      colHead.createSpan({ cls: "wt-board-col-dot" });
-      colHead.createSpan({ cls: "wt-board-col-label", text: PLAN_COLUMN_LABEL[column] });
+      const pill = colHead.createSpan({ cls: "wt-board-col-pill" });
+      pill.createSpan({ cls: "wt-board-col-dot" });
+      pill.createSpan({ cls: "wt-board-col-label", text: PLAN_COLUMN_LABEL[column] });
       counts.set(column, colHead.createSpan({ cls: "wt-board-col-count" }));
+      if (column !== "done") {
+        const quickAdd = colHead.createEl("button", {
+          cls: "wt-board-col-add",
+          attr: { type: "button", "aria-label": `在「${PLAN_COLUMN_LABEL[column]}」新建卡片` },
+        });
+        setIcon(quickAdd, "wt-plus");
+        quickAdd.addEventListener("click", () => {
+          this.boardAdding = column;
+          this.renderPage(false);
+        });
+      }
       const list = col.createDiv({ cls: "wt-board-list" });
       lists.set(column, list);
 
@@ -1577,7 +1803,8 @@ export class WritingToolkitHome extends ItemView {
         if (!drag) return;
         e.preventDefault();
         const before = dropTarget(list, e.clientY);
-        const { key, from, card } = drag;
+        const { item, card } = drag;
+        const from = item.column;
         clearDrop();
         // 放回原处（自己前后）不算动
         const next = card.nextElementSibling?.hasClass("wt-plan-card")
@@ -1585,8 +1812,10 @@ export class WritingToolkitHome extends ItemView {
           : null;
         if (from === column && card.parentElement === list && before === next) return;
         card.addClass("is-leaving");
-        this.planTask(
-          board.move(key, column, before?.dataset.key ? { before: before.dataset.key } : "end")
+        this.movePlan(
+          item,
+          column,
+          before?.dataset.key ? { before: before.dataset.key } : "end"
         );
       });
     });
@@ -1631,7 +1860,7 @@ export class WritingToolkitHome extends ItemView {
         for (const item of shown) {
           const card = this.renderPlanCard(list, item, today, books);
           card.addEventListener("dragstart", (e) => {
-            drag = { key: item.key, from: column, card };
+            drag = { item, card };
             e.dataTransfer?.setData("text/plain", item.text);
             if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
             window.requestAnimationFrame(() => card.addClass("is-dragging"));
@@ -1660,7 +1889,7 @@ export class WritingToolkitHome extends ItemView {
           const older = cards.filter((item) => !isRecentlyDone(item, today));
           if (older.length > 0) this.renderOlderDone(list, older, today, books);
         } else {
-          this.renderPlanAdd(list, column, filter);
+          this.renderPlanAdd(list, column, filter, items);
         }
       }
     });
@@ -1695,16 +1924,38 @@ export class WritingToolkitHome extends ItemView {
     today: string,
     books: PlanBook[]
   ): HTMLElement {
-    const card = list.createDiv({ cls: `wt-plan-card is-${item.column}` });
+    const card = list.createDiv({ cls: `wt-plan-card is-${item.column} is-${item.kind}` });
     card.dataset.key = item.key;
     card.draggable = true;
     if (item.due && item.column !== "done" && planDueState(item.due, today) === "overdue") {
       card.addClass("is-overdue");
     }
+    const chapterFile =
+      item.kind === "chapter" && item.chapter ? this.planChapterFile(item.chapter) : null;
     const top = card.createDiv({ cls: "wt-plan-card-top" });
     this.planCheck(top, item);
     const body = top.createDiv({ cls: "wt-plan-card-body" });
-    body.createDiv({ cls: "wt-plan-card-text", text: item.text });
+    const titleEl = body.createDiv({ cls: "wt-plan-card-text", text: item.text });
+    if (item.kind === "chapter") {
+      // 章节卡：标题前一枚页面图标、标题后定稿锁，下面一行「字数 · 上次修改」
+      const page = createSpan({ cls: "wt-plan-card-page" });
+      setIcon(page, "wt-doc");
+      titleEl.prepend(page);
+      if (chapterFile && this.host.caps.chapterStatus.isFinal(chapterFile.path)) {
+        const lock = titleEl.createSpan({ cls: "wt-plan-lock", attr: { title: "已定稿" } });
+        setIcon(lock, "wt-lock");
+      }
+      const meta = body.createDiv({ cls: "wt-plan-card-chapter-meta" });
+      if (chapterFile) {
+        const words = meta.createSpan({ text: "…" });
+        this.requestWords(chapterFile, (n) => words.setText(`${fmt(n)} 字`));
+        meta.createSpan({ cls: "wt-plan-sep", text: "·" });
+        meta.createSpan({ text: `${relativeTime(chapterFile.stat.mtime)}改过` });
+      } else {
+        card.addClass("is-missing");
+        meta.setText("找不到这一章");
+      }
+    }
     if (item.notes.length > 0) {
       body.createDiv({
         cls: "wt-plan-card-notes",
@@ -1724,12 +1975,14 @@ export class WritingToolkitHome extends ItemView {
     const tags = card.createDiv({ cls: "wt-plan-card-tags" });
     if (item.book) {
       const book = books.find((b) => b.name === item.book);
-      const tag = tags.createSpan({ cls: "wt-plan-book" });
-      tag.createSpan({ cls: "wt-plan-book-dot" }).style.background =
-        book?.tone ?? COVER_TONES[hashString(item.book) % COVER_TONES.length].cloth;
-      tag.createSpan({ text: displayProjectName(item.book) });
+      // 作品标签：用这本书的书衣色调出浅底深字（和 Notion 的彩色标签一个意思）
+      const tag = tags.createSpan({ cls: "wt-plan-book", text: displayProjectName(item.book) });
+      tag.style.setProperty(
+        "--wt-book",
+        book?.tone ?? COVER_TONES[hashString(item.book) % COVER_TONES.length].cloth
+      );
     }
-    if (item.chapter) {
+    if (item.chapter && item.kind === "task") {
       const file = this.planChapterFile(item.chapter);
       const chip = tags.createEl("button", {
         cls: `wt-plan-chapter${file ? "" : " is-missing"}`,
@@ -1748,13 +2001,23 @@ export class WritingToolkitHome extends ItemView {
     this.planDate(tags, item, today);
     if (tags.childElementCount === 0) tags.remove();
 
-    card.addEventListener("click", () => this.openPlanDetail(item));
+    // 章节卡点一下直接开写；找不到文件或普通卡片打开详情
+    card.addEventListener("click", () => {
+      if (chapterFile) this.openPlanChapter(item);
+      else this.openPlanDetail(item);
+    });
+    if (chapterFile) card.setAttr("title", `打开「${item.text}」开始写`);
     bindContextMenu(card, (pt) => showMenuAt(this.planMenu(item), pt));
     return card;
   }
 
   /** 列底部「＋ 添加」：回车加一条，输入框留着接着加；Esc 或空着失焦就收起 */
-  private renderPlanAdd(list: HTMLElement, column: PlanColumn, book: string | null): void {
+  private renderPlanAdd(
+    list: HTMLElement,
+    column: PlanColumn,
+    book: string | null,
+    items: readonly PlanItem[]
+  ): void {
     const wrap = list.createDiv({ cls: "wt-board-add" });
     const open = (): void => {
       this.boardAdding = column;
@@ -1793,8 +2056,15 @@ export class WritingToolkitHome extends ItemView {
         attr: { type: "button" },
       });
       setIcon(btn.createSpan({ cls: "wt-board-add-icon" }), "wt-plus");
-      btn.createSpan({ text: "添加卡片" });
+      btn.createSpan({ text: "新建卡片" });
       btn.addEventListener("click", open);
+      const chapters = wrap.createEl("button", {
+        cls: "wt-board-add-btn",
+        attr: { type: "button", title: "从书里挑章节放上看板" },
+      });
+      setIcon(chapters.createSpan({ cls: "wt-board-add-icon" }), "wt-doc");
+      chapters.createSpan({ text: "添加章节" });
+      chapters.addEventListener("click", () => this.pickPlanChapters(column, items));
     };
     if (this.boardAdding === column) open();
     else renderButton();

@@ -6,6 +6,7 @@
  * - 进「完成」写完成日，出「完成」去掉完成日
  * - 日期判定（逾期 / 今天 / 明天 / 一周内）、书桌摘要的筛选与排序
  * - 看板 v2：列内 / 跨列插到指定位置、同原文条目拖动不串位、作品 / 章节 / 备注的解析与写回
+ * - 看板 v3：整行链接 = 章节卡（解析、写回、添加、不能清掉章节）；看板挪动与定稿联动的接线
  * - 模块：文件不存在时读为空、第一次添加才创建、写回走 vault.process、文件变动通知订阅者
  * - 新设置项按默认值加载
  */
@@ -264,9 +265,13 @@ async function main() {
       JSON.stringify(a)
     );
     r.check(
-      "正文中间的链接、整行只有链接时不拆成章节",
-      b.text === "看 [[人物设定]] 里的年龄" && b.chapter === null &&
-        c.text === "[[只有链接]]" && c.chapter === null
+      "正文中间的链接不拆成章节，仍是普通卡",
+      b.kind === "task" && b.text === "看 [[人物设定]] 里的年龄" && b.chapter === null &&
+        a.kind === "task"
+    );
+    r.check(
+      "整行只有链接：章节卡，标题取链接名",
+      c.kind === "chapter" && c.chapter === "只有链接" && c.text === "只有链接"
     );
     const edited = P.editPlanItem(rich, b.key, {
       book: "雾港来信",
@@ -296,6 +301,50 @@ async function main() {
     r.check(
       "新增带作品（筛选中添加）",
       P.addPlanItem("", "todo", "整理伏笔", null, TODAY, "雾港来信").includes("- [ ] 整理伏笔 📚 雾港来信")
+    );
+  }
+
+  // ── C3. 章节卡 ────────────────────────────────────────────
+  {
+    const doc = [
+      "## 待写",
+      "- [ ] [[第十二章 夜雨]] 📚 雾港来信 📅 2026-10-25",
+      "  先写受伤",
+      "- [ ] [[正文/第一卷/第十三章|十三章]]",
+      "## 在写",
+      "## 完成",
+    ].join("\n");
+    const [ch12, ch13] = P.parsePlanBoard(doc);
+    r.check(
+      "章节卡带作品 / 日期 / 备注",
+      ch12.kind === "chapter" && ch12.text === "第十二章 夜雨" && ch12.chapter === "第十二章 夜雨" &&
+        ch12.book === "雾港来信" && ch12.due === "2026-10-25" && ch12.notes[0] === "先写受伤"
+    );
+    r.check(
+      "章节卡标题：有别名用别名，否则取路径最后一段",
+      ch13.text === "十三章" &&
+        P.planChapterName("正文/第一卷/第十四章#开头") === "第十四章"
+    );
+    const moved = P.movePlanItem(doc, ch12.key, "done", TODAY);
+    r.check(
+      "章节卡挪进完成：写回仍是整行链接，作品 / 日期 / 备注跟着走",
+      moved.includes("## 完成\n- [x] [[第十二章 夜雨]] 📚 雾港来信 📅 2026-10-25 ✅ 2026-10-22\n  先写受伤"),
+      JSON.stringify(moved)
+    );
+    const added = P.addPlanItem(doc, "doing", "", null, TODAY, "雾港来信", "第十五章");
+    r.check(
+      "添加章节卡（文字为空 + 章节）",
+      added.includes("## 在写\n- [ ] [[第十五章]] 📚 雾港来信\n") &&
+        P.parsePlanBoard(added).some((i) => i.kind === "chapter" && i.chapter === "第十五章")
+    );
+    r.check(
+      "既没文字也没章节不添加",
+      P.addPlanItem(doc, "doing", "  ", null, TODAY, "雾港来信", null) === doc
+    );
+    r.check(
+      "章节卡不能把章节清掉（会变成空卡）；换一章可以",
+      P.editPlanItem(doc, ch12.key, { chapter: null }) === doc &&
+        P.editPlanItem(doc, ch12.key, { chapter: "第十二章 雨夜" }).includes("- [ ] [[第十二章 雨夜]] 📚 雾港来信")
     );
   }
 
@@ -462,6 +511,23 @@ async function main() {
       "看板只在桌面端：手机端不显示导航项与书桌计划卡",
       /def\.key === "board" && Platform\.isMobile/.test(home) &&
         /if \(!Platform\.isMobile\) this\.renderDeskPlan\(sideCol\)/.test(home)
+    );
+    const sync = H.extractMethod(home, "private syncChapterFinal(");
+    const move = H.extractMethod(home, "private movePlan(");
+    r.check(
+      "章节卡进出「完成」同步定稿：所有挪动都走 movePlan，movePlan 写完后调 syncChapterFinal",
+      /\.then\(\(\) => this\.syncChapterFinal\(item, column\)\)/.test(move) &&
+        /chapterStatus/.test(sync) && /setFinal\(file\.path, final\)/.test(sync) &&
+        !/planBoard\.move\(/.test(home.replace(move, "")) &&
+        !/board\.move\(/.test(home.replace(move, ""))
+    );
+    r.check(
+      "详情窗改列也联动定稿",
+      /if \(patch\.column\) this\.syncChapterFinal\(item, patch\.column\)/.test(home)
+    );
+    r.check(
+      "点章节卡直接打开那一章（找不到才开详情）",
+      /if \(chapterFile\) this\.openPlanChapter\(item\);\s*else this\.openPlanDetail\(item\);/.test(home)
     );
     r.check(
       "模块不写 data.json、不注册命令",
