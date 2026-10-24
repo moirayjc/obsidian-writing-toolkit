@@ -11,6 +11,7 @@ import { CommentStore } from "../commentStore";
 import {
   AnchorLocator,
   LOCATE_VIA_LABELS,
+  SUGGESTION_PROBLEM_LABELS,
   WtComment,
   buildReplyPrompt,
   buildReviewPrompt,
@@ -19,6 +20,7 @@ import {
   docPathForSidecar,
   formatTimestamp,
   isSidecarPath,
+  latestSuggestionIndex,
   legacySidecarPathFor,
   locateAll,
   nextCommentId,
@@ -26,9 +28,20 @@ import {
   rejectedLine,
   restoreTamperedComments,
   sidecarPathFor,
+  suggestionTarget,
+  type AgentChannel,
   type CommentFileData,
 } from "../comments";
 import {
+  AgentToolError,
+  buildAgentComment,
+  buildAgentReply,
+  describeComment,
+  normalizeAgentPath,
+  type AgentToolsPort,
+} from "../agentTools";
+import {
+  anchorReplaceEffect,
   buildCommentExtensions,
   dispatchCommentRefresh,
   type AnchorEdit,
@@ -38,6 +51,7 @@ import {
   type CommentPanelHost,
   type CommentPanelItem,
   type CommentPanelModel,
+  type CommentPanelSuggestion,
 } from "../commentView";
 import {
   buildCommentDiagReport,
@@ -81,6 +95,8 @@ export interface CommentStoreAdapter {
   migrateLegacySidecars?(): Promise<number>;
   /** 正文目录改名时同步搬镜像目录（可选，测试桩可省略）。 */
   migrateFolderPrefix?(oldFolder: string, newFolder: string): Promise<number>;
+  /** 有批注文件的文档路径（批注工具「列出所有」用；可选，测试桩可省略）。 */
+  listCommentDocs?(): Promise<string[]>;
 }
 
 export interface CommentsChange {
@@ -98,6 +114,8 @@ export interface CommentsOperations extends CommentPanelHost {
   buildDiagnosticReport(): string;
   flush(): Promise<void>;
   subscribe(listener: (change: CommentsChange) => void): () => void;
+  /** 本机批注工具（MCP）落到这里读写批注。 */
+  readonly agentTools: AgentToolsPort;
 }
 
 export interface CommentsModule extends FeatureModule {
@@ -118,6 +136,8 @@ export interface CommentsModuleOptions {
    * （批注文件不随同步时，手机上写的批注会孤立在手机里）。为真时不画批注痕迹、不给添加入口。
    */
   isMobile?(): boolean;
+  /** 复制给 Agent 的指令走哪条路：本机批注工具开着就用工具，否则直接写批注文件。 */
+  agentChannel?(): AgentChannel;
 }
 
 type CommentPanelFactory = (
@@ -458,8 +478,10 @@ export function createCommentsModule(
     recordLocate(locateMs);
     runtime.services.diagnostics.recordTiming("comments:locate", locateMs);
     const byId = new Map(located.map((item) => [item.comment.id, item]));
+    const blocked = runtime.services.editor.writeBlockReason?.(docPath) ?? null;
     const items: CommentPanelItem[] = comments.map((comment) => {
       const hit = byId.get(comment.id);
+      const suggestion = panelSuggestion(docText, comment, blocked);
       return {
         id: comment.id,
         origin: comment.origin,
@@ -471,6 +493,7 @@ export function createCommentsModule(
         createdAt: comment.createdAt,
         locatedLine: hit ? hit.lineFrom : null,
         via: hit ? hit.via : null,
+        ...(suggestion ? { suggestion } : {}),
       };
     });
     return {
@@ -481,6 +504,227 @@ export function createCommentsModule(
       rejectedCount: rejectedOf(docPath).length,
     };
   }
+
+  /** 最新一条修改建议现在能不能采纳（面板据此显示按钮或原因）。 */
+  function panelSuggestion(
+    docText: string | null,
+    comment: WtComment,
+    blocked: string | null
+  ): CommentPanelSuggestion | null {
+    const index = latestSuggestionIndex(comment);
+    if (index < 0) return null;
+    const suggestion = comment.messages[index].suggestion;
+    if (!suggestion) return null;
+    const fallback = suggestion.original || comment.current || comment.quote;
+    if (suggestion.adopted) {
+      return { index, status: "adopted", reason: "", before: fallback };
+    }
+    if (docText === null) {
+      return {
+        index,
+        status: "missing",
+        reason: SUGGESTION_PROBLEM_LABELS.missing,
+        before: fallback,
+      };
+    }
+    const target = suggestionTarget(docText, comment, suggestion);
+    if ("problem" in target) {
+      return {
+        index,
+        status: target.problem,
+        reason: SUGGESTION_PROBLEM_LABELS[target.problem],
+        before: fallback,
+      };
+    }
+    const before = docText.slice(target.from, target.to);
+    if (blocked) return { index, status: "locked", reason: blocked, before };
+    return { index, status: "ready", reason: "", before };
+  }
+
+  /**
+   * 采纳最新一条修改建议：在编辑器里把原句换成建议的写法（作者的一次输入，⌘Z 可撤回），
+   * 批注标记跟到新文字上；再把那一行标成「已采纳」。批注不会因此结案。
+   */
+  async function adoptSuggestion(path: string, id: number): Promise<boolean> {
+    const runtime = requireRuntime();
+    const blocked = runtime.services.editor.writeBlockReason?.(path) ?? null;
+    if (blocked) {
+      new Notice(blocked);
+      return false;
+    }
+    let comment: WtComment | undefined;
+    try {
+      comment = (await runtime.store.reload(path)).find((item) => item.id === id);
+    } catch (error) {
+      console.error("[Writing Toolkit:comments] 读取批注失败", error);
+      new Notice("读取批注失败（详见控制台）");
+      return false;
+    }
+    if (!comment) {
+      new Notice(`批注 #${id} 已经不在了`);
+      return false;
+    }
+    const index = latestSuggestionIndex(comment);
+    const suggestion = index >= 0 ? comment.messages[index].suggestion : undefined;
+    if (!suggestion) return false;
+    if (suggestion.adopted) {
+      new Notice("这条建议已经采纳过了");
+      return false;
+    }
+    const file = runtime.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) {
+      new Notice("找不到这篇文档");
+      return false;
+    }
+    const view = await openDocView(file);
+    const cm = runtime.services.editor.getViewForEditor(view?.editor);
+    if (!cm) {
+      new Notice("打不开这篇文档的编辑器，没法采纳");
+      return false;
+    }
+    const target = suggestionTarget(cm.state.doc.toString(), comment, suggestion);
+    if ("problem" in target) {
+      new Notice(SUGGESTION_PROBLEM_LABELS[target.problem]);
+      refreshPanels();
+      return false;
+    }
+    const end = target.from + suggestion.replacement.length;
+    cm.dispatch({
+      changes: { from: target.from, to: target.to, insert: suggestion.replacement },
+      effects: anchorReplaceEffect.of({ id, from: target.from, to: target.to }),
+      selection: { anchor: target.from, head: end },
+      scrollIntoView: true,
+      // 走作者输入的口径：定稿锁认得出、批注位置跟踪会跟着走、能撤销
+      userEvent: "input.adopt",
+    });
+    const ok = await mutateComments(path, (list) =>
+      list.map((item) =>
+        item.id !== id
+          ? item
+          : {
+              ...item,
+              messages: item.messages.map((m, k) =>
+                k === index && m.suggestion
+                  ? { ...m, suggestion: { ...m.suggestion, adopted: true } }
+                  : m
+              ),
+            }
+      )
+    );
+    if (ok) new Notice(`已采纳批注 #${id} 的修改建议（⌘/Ctrl + Z 可撤回正文）`);
+    return ok;
+  }
+
+  function copyText(text: string): void {
+    navigator.clipboard.writeText(text).then(
+      () => new Notice("已复制"),
+      () => new Notice("复制到剪贴板失败")
+    );
+  }
+
+  /* ---------- 本机批注工具（MCP）的读写端口 ---------- */
+
+  function agentDocPath(raw: unknown): string {
+    const runtime = requireRuntime();
+    if (!runtime.services.settings.get().commentsEnabled) {
+      throw new AgentToolError("作者关掉了批注功能（设置 → 批注），现在不能读写批注。");
+    }
+    const adapter = runtime.app.vault.adapter as { getBasePath?: () => string } | undefined;
+    const path = normalizeAgentPath(raw, adapter?.getBasePath?.() ?? null);
+    if (isSidecarPath(path) || isInternalPath(path)) {
+      throw new AgentToolError("path 要给正文文档本身，不是批注文件或插件的内部文件。");
+    }
+    const file = runtime.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile) || file.extension.toLowerCase() !== "md") {
+      throw new AgentToolError(`库里没有「${path}」这篇文档。请给出库内相对路径，比如「作品/正文/第3章.md」。`);
+    }
+    return path;
+  }
+
+  async function agentDocText(path: string): Promise<string> {
+    const text = await readDocTextForLocate(path);
+    if (text === null) throw new AgentToolError(`读不到「${path}」的正文。`);
+    return text;
+  }
+
+  async function agentSave(
+    path: string,
+    mutator: (list: WtComment[]) => WtComment[]
+  ): Promise<void> {
+    const ok = await mutateComments(path, mutator);
+    if (!ok) throw new AgentToolError("保存批注失败，请稍后再试一次。");
+  }
+
+  const agentTools: AgentToolsPort = {
+    async list(input) {
+      assertAcceptingCalls();
+      const runtime = requireRuntime();
+      if (input.path === undefined) {
+        if (!runtime.services.settings.get().commentsEnabled) {
+          throw new AgentToolError("作者关掉了批注功能（设置 → 批注），现在不能读写批注。");
+        }
+        const docs = (await runtime.store.listCommentDocs?.()) ?? [];
+        const documents = [];
+        for (const docPath of docs) {
+          const list = await runtime.store.load(docPath);
+          if (list.length === 0) continue;
+          documents.push({
+            path: docPath,
+            comments: list.length,
+            yourTurn: list.filter((c) => commentTurn(c) === "agent").length,
+          });
+        }
+        return { documents };
+      }
+      const path = agentDocPath(input.path);
+      const list = await runtime.store.reload(path);
+      const docText = await readDocTextForLocate(path);
+      return {
+        path,
+        comments: list.map((comment) => describeComment(docText, comment)),
+        rejected: rejectedOf(path),
+      };
+    },
+    async create(input) {
+      assertAcceptingCalls();
+      const runtime = requireRuntime();
+      const path = agentDocPath(input.path);
+      const docText = await agentDocText(path);
+      // 先按最新的盘上内容校验一次，错误原样返回给 Agent；写入时再按写入那一刻的列表编号
+      const draft = buildAgentComment(docText, await runtime.store.reload(path), input);
+      let id = draft.id;
+      await agentSave(path, (list) => {
+        id = nextCommentId(list);
+        return [...list, { ...draft, id }];
+      });
+      return { ok: true, id, message: `已发起第 ${id} 条批注` };
+    },
+    async reply(input) {
+      assertAcceptingCalls();
+      const runtime = requireRuntime();
+      const path = agentDocPath(input.path);
+      const docText = await readDocTextForLocate(path);
+      const list = await runtime.store.reload(path);
+      const message = buildAgentReply(
+        docText,
+        list.find((c) => c.id === input.id),
+        input
+      );
+      let appended = false;
+      await agentSave(path, (fresh) =>
+        fresh.map((item) => {
+          // 写盘前重读过：这一刻仍轮到 Agent 才追加，免得连发两条
+          if (item.id !== input.id || commentTurn(item) !== "agent") return item;
+          appended = true;
+          return { ...item, messages: [...item.messages, message] };
+        })
+      );
+      if (!appended) {
+        throw new AgentToolError(`第 ${input.id} 条刚刚变了（被结案或已经回复过），先用 list_comments 再看一次。`);
+      }
+      return { ok: true, id: input.id, message: `已回复第 ${input.id} 条批注` };
+    },
+  };
 
   /** 编辑作者自己的最后一条消息；Agent 已回复（最后一条不是作者）时不能改。 */
   function openCommentEditor(path: string, comment: WtComment): void {
@@ -612,10 +856,8 @@ export function createCommentsModule(
     );
   }
 
-  async function revealCommentInDoc(
-    file: TFile,
-    comment: WtComment
-  ): Promise<void> {
+  /** 把这篇文档显示出来（已打开就切过去，没打开就新开一个标签页）。 */
+  async function openDocView(file: TFile): Promise<MarkdownView | null> {
     const runtime = requireRuntime();
     let target = markdownViewForPath(file.path)?.leaf ?? null;
     if (!target) {
@@ -628,11 +870,18 @@ export function createCommentsModule(
     }
     if (!target) {
       target = runtime.services.ui.getLeaf("tab");
-      if (!target) return;
+      if (!target) return null;
       await target.openFile(file);
     }
     runtime.services.ui.reveal(target);
-    const view = target.view instanceof MarkdownView ? target.view : null;
+    return target.view instanceof MarkdownView ? target.view : null;
+  }
+
+  async function revealCommentInDoc(
+    file: TFile,
+    comment: WtComment
+  ): Promise<void> {
+    const view = await openDocView(file);
     if (!view) return;
     const editor = view.editor;
     const span = new AnchorLocator(editor.getValue()).locate(comment);
@@ -679,7 +928,7 @@ export function createCommentsModule(
     const settings = runtime.services.settings.get();
     if (options.isMobile?.()) return;
     if (!settings.commentsEnabled) {
-      new Notice("批注功能已关闭（设置 → 写作 → 批注）");
+      new Notice("批注功能已关闭（设置 → 批注）");
       return;
     }
     const path = runtime.services.editor.getFilePath(view);
@@ -844,10 +1093,14 @@ export function createCommentsModule(
 
   function copyReviewPrompt(docPath?: string): void {
     copyPrompt(docPath, (path, list) => ({
-      text: buildReviewPrompt(path, {
-        open: list.length,
-        rejected: rejectedOf(path).length,
-      }),
+      text: buildReviewPrompt(
+        path,
+        {
+          open: list.length,
+          rejected: rejectedOf(path).length,
+        },
+        options.agentChannel?.() ?? "file"
+      ),
       done: "已复制批注指令：发给 Agent，它会通读全文、把意见写成批注",
     }));
   }
@@ -860,7 +1113,7 @@ export function createCommentsModule(
         return null;
       }
       return {
-        text: buildReplyPrompt(path, waiting),
+        text: buildReplyPrompt(path, waiting, options.agentChannel?.() ?? "file"),
         done: `已复制回复指令（${waiting} 条等 Agent）：发给 Agent，它会逐条回复`,
       };
     });
@@ -1161,6 +1414,17 @@ export function createCommentsModule(
           assertAcceptingCalls();
           rebindComment(docPath, id);
         },
+        adoptSuggestion(docPath, id) {
+          assertAcceptingCalls();
+          const path = docPath || activeCommentDocPath();
+          if (!path) return Promise.resolve(false);
+          return adoptSuggestion(path, id);
+        },
+        copyText(text) {
+          assertAcceptingCalls();
+          copyText(text);
+        },
+        agentTools,
         copyReviewPrompt(docPath) {
           assertAcceptingCalls();
           copyReviewPrompt(docPath);

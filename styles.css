@@ -6009,6 +6009,21 @@ body.wt-heading-style .markdown-rendered p {
   color: var(--wt-ink-3);
   font-size: var(--wt-fs-12px);
   line-height: 1.75;
+  /* 说明里的长串（文件名、请求头）不能断行时会溢出说明栏、盖到右边的控件上 */
+  overflow-wrap: anywhere;
+}
+/* 控件很宽的一项（下拉 + 两个按钮）：说明占满一行，控件换到下面，免得把说明挤成一条缝 */
+.wt-settings-page .setting-item.wt-setting-stacked {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+.wt-settings-page .setting-item.wt-setting-stacked .setting-item-info {
+  flex-basis: 100%;
+}
+.wt-settings-page .setting-item.wt-setting-stacked .setting-item-control {
+  margin-left: 0;
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 .wt-settings-page .setting-item-control {
   flex: 0 0 auto;
@@ -10494,6 +10509,102 @@ body.wt-mobile .wt-lock-banner-btn {
   border: 0.5px solid var(--text-error);
   background: color-mix(in srgb, var(--text-error) 12%, transparent);
   color: var(--text-error);
+}
+
+/* ---- 修改建议：删掉的划线、新增的高亮（配色和快照对比一致） ---- */
+.wt-tb-comments .wt-comment-suggest {
+  margin-top: 6px;
+  padding: 7px 9px;
+  border: 0.5px solid var(--wt-rule-strong);
+  border-radius: var(--wt-radius-7px);
+  background: var(--wt-paper);
+}
+
+.wt-tb-comments .wt-comment-suggest.is-superseded {
+  opacity: 0.6;
+}
+
+.wt-tb-comments .wt-comment-suggest-label {
+  margin-bottom: 3px;
+  font-size: var(--wt-fs-11px);
+  letter-spacing: 0.08em;
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comment-suggest-diff {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--wt-fs-13px);
+  line-height: 1.75;
+  color: var(--wt-ink);
+}
+
+.wt-tb-comments .wt-comment-suggest-del {
+  background: rgba(255, 92, 92, 0.22);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--wt-ink) 55%, transparent);
+}
+
+.wt-tb-comments .wt-comment-suggest-add {
+  background: rgba(94, 201, 126, 0.24);
+}
+
+body.theme-dark .wt-tb-comments .wt-comment-suggest-del {
+  background: rgba(255, 92, 92, 0.32);
+}
+
+body.theme-dark .wt-tb-comments .wt-comment-suggest-add {
+  background: rgba(94, 201, 126, 0.32);
+}
+
+body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-del {
+  background: rgba(214, 58, 58, 0.26);
+}
+
+body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-add {
+  background: rgba(46, 160, 92, 0.26);
+}
+
+.wt-tb-comments .wt-comment-suggest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.wt-tb-comments .wt-comment-suggest-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--wt-radius-6px);
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-2);
+}
+
+.wt-tb-comments .wt-comment-suggest-actions button.mod-cta {
+  background: var(--wt-accent);
+  font-weight: 600;
+  color: var(--wt-card-bg);
+}
+
+body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-actions button.mod-cta {
+  background: var(--wt-action);
+  color: #ffffff;
+}
+
+.wt-tb-comments .wt-comment-suggest-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wt-tb-comments .wt-comment-suggest-reason {
+  font-size: var(--wt-fs-11px);
+  color: var(--wt-ink-3);
+}
+
+.wt-tb-comments .wt-comment-row-flag.is-suggest {
+  background: var(--wt-accent-soft);
+  color: var(--wt-accent);
 }
 
 /* ---- 高对比度：Notion 皮肤是平的，选中用暖灰底 + 墨色，不用强调色块 ---- */

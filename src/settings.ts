@@ -1,4 +1,5 @@
 import { PluginSettingTab, Setting, App, Plugin } from "obsidian";
+import { AGENT_CLIENT_LABELS, type AgentClient } from "./agentTools";
 import type { WordCountMode } from "./wordcount";
 import { DEFAULT_CHAPTER_EXCLUDE_NAMES } from "./outlineText";
 import { setupSelectArrows, setupSliderFills } from "./settingControls";
@@ -36,6 +37,21 @@ export const DAILY_DISPLAY_MODE_LABELS: Record<DailyDisplayMode, string> = {
   duration: "时长",
 };
 
+/** 本机批注工具在设置页显示的状态。 */
+export interface AgentBridgeSettingsStatus {
+  /** 桌面端才有 */
+  available: boolean;
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  error: string | null;
+  /** 「复制给」上次选的 Agent */
+  client: AgentBridgeClient;
+}
+
+/** 「复制给」的 Agent */
+export type AgentBridgeClient = AgentClient;
+
 /**
  * 设置页需要的插件接口。刻意不与 Obsidian 的 Plugin 类型交叉，
  * 避免 Plugin.settings（1.13.0 才有）被官方扫描误判为不兼容 API。
@@ -63,10 +79,77 @@ export interface WritingToolkitPluginLike {
     refreshMobileStatusBar: () => void;
     /** 批注总开关变化后，刷新已打开文档里的批注痕迹 */
     refreshAllCommentDecors: () => void;
+    /** 本机批注工具（给 Agent 用的 MCP）：开关、端口、口令都只存在这台电脑上 */
+    agentBridgeStatus: () => AgentBridgeSettingsStatus;
+    setAgentBridgeEnabled: (on: boolean) => Promise<void>;
+    setAgentBridgePort: (port: number) => Promise<void>;
+    regenerateAgentBridgeToken: () => Promise<void>;
+    setAgentBridgeClient: (client: AgentBridgeClient) => void;
+    copyAgentBridgeCommand: () => void;
 }
 
 export class WritingToolkitSettingTab extends PluginSettingTab {
   private wt: WritingToolkitPluginLike;
+
+  /** 批注工具：只在桌面端显示；开着时多出端口、连接命令和换口令。 */
+  private buildAgentBridgeSettings(el: HTMLElement): void {
+    const status = this.wt.agentBridgeStatus();
+    if (!status.available) return;
+    new Setting(el)
+      .setName("允许 Agent 通过批注工具连接（仅本机）")
+      .setDesc(
+        "打开后，插件在这台电脑上提供批注工具（MCP），Claude Code、Gemini CLI、Antigravity 等 Agent 用它列出、发起、回复批注：写入前当场校验原文，也没有结案和改正文的工具。只接受这台电脑上带口令的连接，别的电脑和网页都连不进来。需要 Obsidian 开着。"
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(status.enabled).onChange((value) => {
+          void this.wt.setAgentBridgeEnabled(value);
+        })
+      );
+    if (!status.enabled) return;
+
+    const state = status.running
+      ? `运行中：http://127.0.0.1:${status.port}/mcp`
+      : status.error ?? "启动中…";
+    new Setting(el)
+      .setName("端口")
+      .setDesc(`${state}。被占用时换一个 1024–65535 之间的数，改完要在 Agent 那边重新配一次。`)
+      .addText((text) => {
+        text.setValue(String(status.port));
+        text.inputEl.inputMode = "numeric";
+        text.inputEl.addEventListener("change", () => {
+          const port = Number(text.getValue().trim());
+          void this.wt.setAgentBridgePort(port);
+        });
+      });
+
+    new Setting(el)
+      .setName("连接到 Agent")
+      .setDesc(
+        "选你用的 Agent 再点复制，照弹出的提示配一次就好（每台电脑各配一次）。别的 Agent 选「通用」，按它的方式填地址和口令。"
+      )
+      .setClass("wt-setting-stacked")
+      .addDropdown((dd) => {
+        for (const [value, label] of Object.entries(AGENT_CLIENT_LABELS)) {
+          dd.addOption(value, label);
+        }
+        dd.setValue(status.client).onChange((value) =>
+          this.wt.setAgentBridgeClient(value as AgentBridgeClient)
+        );
+      })
+      .addButton((button) =>
+        button
+          .setButtonText("复制")
+          .setCta()
+          .onClick(() => this.wt.copyAgentBridgeCommand())
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("换新口令")
+          .onClick(() => {
+            void this.wt.regenerateAgentBridgeToken();
+          })
+      );
+  }
 
   private activeTabIndex: number = 0;
   private tabEls: HTMLElement[] = [];
@@ -200,15 +283,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 })
             );
 
-          new Setting(statsCard)
-            .setName("修复项目统计路径")
-            .setDesc("作品文件夹改名后，检查并迁移失联的项目统计记录")
-            .addButton((button) =>
-              button
-                .setButtonText("检查并修复")
-                .onClick(() => void this.wt.repairProjectStatPaths())
-            );
-
           this.group("番茄钟", section, (el) => {
             const pomoSettings: Setting[] = [];
             const track = (setting: Setting): Setting => {
@@ -290,7 +364,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
         },
       },
       {
-        title: "写作",
+        title: "编辑",
         build: (section) => {
           // 「打字机模式 / 光标位置 / 行高 / 段间距 / 段首缩进」以及「沉浸模式 /
           // 高亮当前段落 / 中文标点辅助 / 海明威模式 / 信纸横线」都已经能从
@@ -298,8 +372,8 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           // 免得同一个开关出现在两处、改完不知道哪个生效。
           // 放侧栏也更顺手：开关后当场能看出效果（沉浸、段落高亮都有常驻预览）。
           //
-          // 仍留在本页的是侧栏没有的：编辑工具条与范围、批注开关、回车即新段落、
-          // 配色主题、快照、章节识别、作品位置。
+          // 本页只放侧栏没有的编辑相关项：配色主题、标题样式、回车即新段落、编辑工具条。
+          // 批注、伴随数据存放位置各有自己的标签页（2026-10-23 设置页重新分类）。
           //
           // 顺序：把「排版」放最前——配色主题与标题样式是常调项，放上面少滚动。
           this.group("排版", section, (el) => {
@@ -382,12 +456,16 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                 });
               });
           });
-
+        },
+      },
+      {
+        title: "批注",
+        build: (section) => {
           this.group("批注", section, (el) => {
             new Setting(el)
               .setName("批注")
               .setDesc(
-                "选中文字后加批注（气泡上的按钮，或右键「添加批注」）。批注存进伴随文件（位置见下方「伴随数据存放位置」），不改正文。"
+                "选中文字后加批注（气泡上的按钮，或右键「添加批注」）。批注存进伴随文件（位置见「数据与同步」页），不改正文。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -401,7 +479,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("批注按钮全库可用")
               .setDesc(
-                "开启后不受上面「生效范围」限制，正文里也能批注。"
+                "开启后不受「编辑 → 编辑工具条」里「工具条生效范围」的限制，正文里也能批注。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -415,7 +493,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
             new Setting(el)
               .setName("在手机和平板上使用批注")
               .setDesc(
-                "关掉后，手机和平板上没有批注页、批注按钮和正文里的批注标记。如果批注文件不会同步到手机（见下方「伴随数据存放位置」），建议关掉，免得在手机上写的批注只留在手机里。重新打开工具箱后生效。"
+                "关掉后，手机和平板上没有批注页、批注按钮和正文里的批注标记。如果批注文件不会同步到手机（见「数据与同步」页的「伴随数据存放位置」），建议关掉，免得在手机上写的批注只留在手机里。重新打开工具箱后生效。"
               )
               .addToggle((toggle) =>
                 toggle
@@ -427,37 +505,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               );
           });
 
-          this.group("伴随数据存放位置", section, (el) => {
-            new Setting(el)
-              .setName("批注、快照、章纲存放在")
-              .setDesc(
-                "用 Obsidian 官方同步的请选「可同步目录」：官方同步不同步以 . 开头的隐藏目录，选隐藏目录的话批注、快照、章纲不会同步到其他设备。iCloud、坚果云、Git 等通常两种都能同步。切换时会把已有数据整体搬过去；每台设备要选同一项。"
-              )
-              .addDropdown((dd) =>
-                dd
-                  .addOption("hidden", "隐藏目录（.wt-comments 等）")
-                  .addOption("visible", "可同步目录（库根 _写作工具箱/）")
-                  .setValue(this.wt.settings.sidecarLocation)
-                  .onChange((val) => {
-                    // 先退回当前值：切换要确认、要搬家，成功后设置页会重画
-                    dd.setValue(this.wt.settings.sidecarLocation);
-                    this.wt.switchSidecarLocation(val as "hidden" | "visible");
-                  })
-              );
-            if (this.wt.settings.sidecarLocation === "visible") {
-              new Setting(el)
-                .setName("在 Obsidian 搜索里隐藏")
-                .setDesc(
-                  "把 _写作工具箱/ 加进「设置 → 文件与链接 → 排除的文件」，搜索、关系图、快速切换就不再显示批注和快照文件。"
-                )
-                .addButton((button) =>
-                  button
-                    .setButtonText("加入排除列表")
-                    .onClick(() => this.wt.addSidecarFolderToExcluded())
-                );
-            }
-          });
-
+          // 本机批注工具只在电脑上有：手机上整张卡不出现
+          if (this.wt.agentBridgeStatus().available) {
+            this.group("Agent 连接", section, (el) => this.buildAgentBridgeSettings(el));
+          }
         },
       },
       {
@@ -481,7 +532,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               new Setting(el)
                 .setName("高级：自定义快照文件夹")
                 .setDesc(
-                  "相对库根目录，优先于「写作 → 伴随数据存放位置」。清空则恢复跟随存放位置。"
+                  "相对库根目录，优先于「数据与同步 → 伴随数据存放位置」。清空则恢复跟随存放位置。"
                 )
                 .addText((text) =>
                   text
@@ -547,8 +598,9 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
         },
       },
       {
-        title: "章纲",
+        title: "作品",
         build: (section) => {
+          // 章节识别决定哪些文件算正文（字数统计、编辑台、章纲都靠它），和作品放在一起
           this.group("章节识别", section, (el) => {
             new Setting(el)
               .setName("正文章节关键词")
@@ -577,10 +629,10 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               );
           });
 
-          this.group("存储方式", section, (el) => {
+          this.group("章纲", section, (el) => {
             new Setting(el)
               .setName("章纲数据存放机制")
-              .setDesc("侧栏章纲的存放位置。推荐独立伴生文件：存在伴随数据目录里（位置见「写作 → 伴随数据存放位置」），不碰正文的 YAML。")
+              .setDesc("侧栏章纲的存放位置。推荐独立伴生文件：存在伴随数据目录里（位置见「数据与同步 → 伴随数据存放位置」），不碰正文的 YAML。")
               .addDropdown((dd) =>
                 dd
                   .addOption("sidecar", "独立伴生文件（推荐）")
@@ -593,11 +645,6 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                   })
               );
           });
-        },
-      },
-      {
-        title: "作品",
-        build: (section) => {
           this.group("新建作品", section, (el) => {
             new Setting(el)
               .setName("新作品位置")
@@ -644,6 +691,51 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
                     this.wt.settings.planBoardFile = val.trim();
                     await this.wt.saveSettings();
                   })
+              );
+          });
+        },
+      },
+      {
+        title: "数据与同步",
+        build: (section) => {
+          this.group("伴随数据存放位置", section, (el) => {
+            new Setting(el)
+              .setName("批注、快照、章纲存放在")
+              .setDesc(
+                "用 Obsidian 官方同步的请选「可同步目录」：官方同步不同步以 . 开头的隐藏目录，选隐藏目录的话批注、快照、章纲不会同步到其他设备。iCloud、坚果云、Git 等通常两种都能同步。切换时会把已有数据整体搬过去；每台设备要选同一项。"
+              )
+              .addDropdown((dd) =>
+                dd
+                  .addOption("hidden", "隐藏目录（.wt-comments 等）")
+                  .addOption("visible", "可同步目录（库根 _写作工具箱/）")
+                  .setValue(this.wt.settings.sidecarLocation)
+                  .onChange((val) => {
+                    // 先退回当前值：切换要确认、要搬家，成功后设置页会重画
+                    dd.setValue(this.wt.settings.sidecarLocation);
+                    this.wt.switchSidecarLocation(val as "hidden" | "visible");
+                  })
+              );
+            if (this.wt.settings.sidecarLocation === "visible") {
+              new Setting(el)
+                .setName("在 Obsidian 搜索里隐藏")
+                .setDesc(
+                  "把 _写作工具箱/ 加进「设置 → 文件与链接 → 排除的文件」，搜索、关系图、快速切换就不再显示批注和快照文件。"
+                )
+                .addButton((button) =>
+                  button
+                    .setButtonText("加入排除列表")
+                    .onClick(() => this.wt.addSidecarFolderToExcluded())
+                );
+            }
+          });
+          this.group("维护", section, (el) => {
+            new Setting(el)
+              .setName("修复项目统计路径")
+              .setDesc("作品文件夹改名后，检查并迁移失联的项目统计记录")
+              .addButton((button) =>
+                button
+                  .setButtonText("检查并修复")
+                  .onClick(() => void this.wt.repairProjectStatPaths())
               );
           });
         },

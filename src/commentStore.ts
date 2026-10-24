@@ -27,6 +27,7 @@ import {
   commentSidecarDeleted,
   commentWrote,
 } from "./diagnostics";
+import { sidecarFoldersOf } from "./sidecarLocation";
 
 /** 文件路径的父目录；根目录文件返回空字符串。 */
 function parentFolder(path: string): string {
@@ -272,6 +273,23 @@ export class CommentStore {
       }
     }
     return moved;
+  }
+
+  /**
+   * 有批注文件的文档路径（两档存放位置都看，去重）。批注工具「列出所有」用；
+   * 隐藏目录不进 Obsidian 索引，所以走 adapter 递归列目录。
+   */
+  async listCommentDocs(): Promise<string[]> {
+    const adapter = this.app.vault.adapter;
+    if (!adapter) return [];
+    const docs = new Set<string>();
+    for (const folder of sidecarFoldersOf("comments")) {
+      if (!(await this.exists(folder))) continue;
+      for (const full of await this.listFilesDeep(adapter, folder)) {
+        if (isSidecarPath(full)) docs.add(docPathForSidecar(full));
+      }
+    }
+    return [...docs].sort();
   }
 
   /* ---------- 路径与读写 ---------- */

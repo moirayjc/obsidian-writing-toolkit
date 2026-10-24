@@ -115,7 +115,7 @@ async function main() {
     rejectedCount: 0,
     items: [item(1, "author"), item(2, "agent"), item(3, "author", { gone: true })],
   };
-  const calls = { jump: [], resolve: [] };
+  const calls = { jump: [], resolve: [], adopt: [], copy: [] };
   const host = {
     getCommentPanelModel: async () => model,
     jumpToComment: (p, id) => calls.jump.push([p, id]),
@@ -126,6 +126,11 @@ async function main() {
     rebindComment() {},
     copyReviewPrompt() {},
     copyReplyPrompt() {},
+    adoptSuggestion: async (p, id) => {
+      calls.adopt.push([p, id]);
+      return true;
+    },
+    copyText: (text) => calls.copy.push(text),
   };
   const root = new FakeEl();
   const panel = new CommentPanelBody(root, host);
@@ -181,6 +186,54 @@ async function main() {
   panel.refresh();
   await settle();
   r.check("切换文档回到列表；没有等你的默认选「全部」", !inDetail() && activeTab() === "全部 1");
+
+  // 修改建议：差异块、只有最新一条能采纳、采纳不了时按钮变灰并写原因
+  const suggested = (status) =>
+    item(11, "author", {
+      messages: [
+        { by: "agent", text: "旧方案", suggestion: { original: "提溜了起来", replacement: "提了起来", adopted: false } },
+        { by: "author", text: "再想想" },
+        { by: "agent", text: "新方案", suggestion: { original: "提溜了起来", replacement: "拎了起来", adopted: false } },
+      ],
+      suggestion: {
+        index: 2,
+        status,
+        reason: status === "ready" ? "" : "这处已经改过，建议过期了",
+        before: "提溜了起来",
+      },
+    });
+  model = { ...model, docPath: "正文/丁.md", docName: "丁", items: [suggested("ready")] };
+  panel.refresh();
+  await settle();
+  r.check("列表行：有待采纳的建议时带「建议」标记", root.byClass("is-suggest").length === 1);
+  rows()[0].fire("click");
+  await settle();
+  const adoptBtns = root.all((e) => e.tag === "button" && e.text === "采纳");
+  r.check(
+    "详情：两条建议，只有最新一条有「采纳」，旧的标「已被新建议取代」",
+    adoptBtns.length === 1 && root.textAll().includes("修改建议 · 已被新建议取代") &&
+      root.byClass("wt-comment-suggest").length === 2
+  );
+  const dels = root.byClass("wt-comment-suggest-del").map((e) => e.text).join("");
+  const adds = root.byClass("wt-comment-suggest-add").map((e) => e.text).join("");
+  r.check("差异块：删掉的与新增的分开标", dels.includes("提溜") && adds.includes("拎"), dels + " / " + adds);
+  adoptBtns[0].fire("click");
+  await settle();
+  r.check("点「采纳」交给宿主（带文档路径）", calls.adopt.length === 1 && calls.adopt[0][0] === "正文/丁.md" && calls.adopt[0][1] === 11);
+  root.all((e) => e.tag === "button" && e.text === "复制").at(-1).fire("click");
+  r.check("「复制」复制建议的写法", calls.copy[0] === "拎了起来");
+
+  model = { ...model, items: [suggested("missing")] };
+  panel.refresh();
+  await settle();
+  const staleBtn = root.all((e) => e.tag === "button" && e.text === "采纳")[0];
+  r.check(
+    "建议过期：「采纳」变灰并写明原因",
+    staleBtn && staleBtn.disabled === true && root.textAll().includes("这处已经改过，建议过期了")
+  );
+  staleBtn.fire("click");
+  await settle();
+  r.check("变灰的「采纳」点了也不动", calls.adopt.length === 1);
 
   return r.finish();
 }

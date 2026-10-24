@@ -519,13 +519,15 @@ async function main() {
     const review = comments.buildReviewPrompt(DOC, { open: 2, rejected: 1 });
     const reply = comments.buildReplyPrompt(DOC, 3);
     r.check(
-      "批注指令：要求逐字复制原文、不改正文，并提醒已有批注与已否决",
-      review.includes("逐字复制") && review.includes("不要修改") &&
-        review.includes("已否决") && review.includes(SIDECAR)
+      "批注指令：先邀请聊感受，规矩放在最后，仍提醒逐字复制、不改正文、已有批注与已否决",
+      review.indexOf("像聊天一样") >= 0 && review.indexOf("像聊天一样") < review.indexOf("逐字复制") &&
+        review.includes("不要直接改") && review.includes("否决过") && review.includes(SIDECAR) &&
+        !review.includes("修改意见")
     );
     r.check(
-      "回复指令：只回轮到 Agent 的、写明条数、要求改正文时更新现文",
-      reply.includes("3 条") && reply.includes("现文") && reply.includes("不要删除批注条目")
+      "回复指令：写明条数、鼓励说理由和反问，保留不改已有消息、找不到原文不乱指",
+      reply.includes("3 条") && reply.includes("反问") && reply.includes("现文") &&
+        reply.includes("不要改、不要删")
     );
   }
 

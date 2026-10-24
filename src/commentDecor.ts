@@ -96,6 +96,17 @@ const ANCHOR_FLUSH_DELAY = 1500;
 /** 外部数据变化时，用它让打开的编辑器重建标记与脚注号。 */
 export const commentRefreshEffect = StateEffect.define<null>();
 
+/**
+ * 采纳建议时随替换一起发出：批注 id 的位置改到替换后的文字上。
+ * from / to 是被替换的区间（替换前的坐标）。建议的原句比批注长、把批注整个包住时，
+ * 光靠映射两头会被推到替换边上、塌成零宽，被误记成「原文已删除」。
+ */
+export const anchorReplaceEffect = StateEffect.define<{
+  id: number;
+  from: number;
+  to: number;
+}>();
+
 export function dispatchCommentRefresh(view: EditorView | undefined): void {
   if (!view) return;
   if (view.composing) {
@@ -227,6 +238,35 @@ function isUserEdit(tr: Transaction): boolean {
 }
 
 function mapAnchors(
+  anchors: Map<number, TrackedAnchor>,
+  tr: Transaction
+): Map<number, TrackedAnchor> {
+  const next = mapAnchorPositions(anchors, tr);
+  for (const effect of tr.effects) {
+    if (!effect.is(anchorReplaceEffect)) continue;
+    const { id, from, to } = effect.value;
+    const old = anchors.get(id);
+    // 批注区间和被替换的区间连在一起：新位置 = 两者的并集；
+    // 不相干（建议改的是同段别处）就照常映射。没在跟踪 / 已删除的批注直接落到替换后的文字上。
+    const live = old && !old.gone ? old : null;
+    const touches = live !== null && live.from <= to && live.to >= from;
+    if (live && !touches) continue;
+    const start = live ? Math.min(live.from, from) : from;
+    const end = live ? Math.max(live.to, to) : to;
+    const mappedFrom = tr.changes.mapPos(start, -1);
+    const mappedTo = tr.changes.mapPos(end, 1);
+    next.set(id, {
+      from: mappedFrom,
+      to: Math.max(mappedFrom, mappedTo),
+      // 留着旧文字：和现在不一样，停手后才会把新文字写回「现文」
+      base: old?.base ?? "",
+      gone: mappedTo <= mappedFrom,
+    });
+  }
+  return next;
+}
+
+function mapAnchorPositions(
   anchors: Map<number, TrackedAnchor>,
   tr: Transaction
 ): Map<number, TrackedAnchor> {

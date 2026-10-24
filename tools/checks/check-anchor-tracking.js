@@ -158,6 +158,46 @@ function main() {
     text.includes("- 原文已删除：是") && comments.parseCommentFile(text)[0].gone === true
   );
 
+  // 7) 采纳建议：替换掉批注所在的整句（原句比批注长）。被替换区间把批注整个包住，
+  //    光靠映射会把批注两头都推到替换边上、塌成「原文已删除」；anchorReplaceEffect 让它落到新文字上。
+  const adopt = (withEffect, original, insert) => {
+    let s = EditorState.create({ doc, extensions: [editorInfoField, ext] });
+    const from = doc.indexOf(original);
+    const to = from + original.length;
+    s = s.update({
+      changes: { from, to, insert },
+      ...(withEffect
+        ? { effects: decor.anchorReplaceEffect.of({ id: 3, from, to }) }
+        : {}),
+      userEvent: "input.adopt",
+    }).state;
+    return decor.pendingAnchorEdits(s).find((e) => e.id === 3);
+  };
+  const whole = adopt(true, "他把灯放下，转身出门。", "他放下灯，推门出去。");
+  r.check(
+    "采纳整句建议：标记扩到替换后的整句，交付新的现文",
+    whole && !whole.gone && whole.text === "他放下灯，推门出去。",
+    JSON.stringify(whole)
+  );
+  const collapsed = adopt(false, "他把灯放下，转身出门。", "他放下灯，推门出去。");
+  r.check(
+    "（反向）不带替换效果时同样的改动会被记成「原文已删除」",
+    collapsed && collapsed.gone === true,
+    JSON.stringify(collapsed)
+  );
+  const exact = adopt(true, "转身出门", "推门出去");
+  r.check(
+    "采纳正好替换批注圈住的文字：标记跟到新文字",
+    exact && !exact.gone && exact.text === "推门出去",
+    JSON.stringify(exact)
+  );
+  const removed = adopt(true, "转身出门", "");
+  r.check(
+    "建议是删掉这句：采纳后记为「原文已删除」",
+    removed && removed.gone === true,
+    JSON.stringify(removed)
+  );
+
   return r.finish();
 }
 

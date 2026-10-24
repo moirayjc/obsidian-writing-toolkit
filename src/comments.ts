@@ -1,15 +1,16 @@
 /**
  * 批注：数据模型、批注文件（`文档名.批注.md`）的解析与序列化、原文定位。
  *
- * 设计背景：Maureen 的创作流程是「Agent 通读稿子发起一批批注 → 她在
- * 面板里逐条回复 → Agent 再回一轮 → …… → 她逐条点已解决 / 不采纳」。
+ * 设计背景：作者的创作流程是「Agent 通读稿子发起一批批注 → 作者在
+ * 面板里逐条回复 → Agent 再回一轮 → …… → 作者逐条点已解决 / 不采纳」。
  * 每条批注是一串对话，作者与 Agent 都能发起；结案只能由作者在面板里点。
+ * Agent 不直接改正文：它在消息里附「修改建议」，作者点「采纳」才替换。
  * 批注存放在库根 `.wt-comments/` 下的独立伴随文件里（镜像正文的相对路径），
  * 正文一个字都不动。旧版同目录 `文档名.批注.md` 会自动迁移过来，读取时
  * 仍兼容旧位置。
  *
  * 定位（Agent 改稿后「原文」往往已经不在了）按四层来：
- *   1. 现文——Agent 改完写回的当前文字（协议见文件抬头，最可靠）；
+ *   1. 现文——作者改正文 / 采纳建议后插件写回的当前文字（最可靠）；
  *   2. 原文——精确匹配，其次是忽略空白的弹性匹配；
  *   3. 段内残余——用建批注时那一段里「原文前后还在的文字」夹出被改写的位置；
  *   4. 段落——整段文本匹配 / 相似度匹配（结合段落序号就近取舍）。
@@ -27,10 +28,25 @@ import {
 /** 说话人：作者 / Agent */
 export type CommentSpeaker = "author" | "agent";
 
+/**
+ * Agent 消息附带的修改建议：「把正文里的 original 改成 replacement」。
+ * Agent 不直接改正文，由作者在面板里点「采纳」，插件在编辑器里替换。
+ */
+export interface CommentSuggestion {
+  /** 要替换的正文；空串 = 这条批注现在圈住的文字 */
+  original: string;
+  /** 改成什么；空串 = 删掉 */
+  replacement: string;
+  /** 作者已采纳（插件写入，留给 Agent 下一轮看） */
+  adopted: boolean;
+}
+
 /** 对话里的一条消息 */
 export interface CommentMessage {
   by: CommentSpeaker;
   text: string;
+  /** 只有 Agent 的消息才可能带 */
+  suggestion?: CommentSuggestion;
 }
 
 /**
@@ -57,8 +73,8 @@ export interface WtComment {
   /** 对话：按文件里出现的顺序 */
   messages: CommentMessage[];
   /**
-   * 现文：这处原文现在的样子。作者在编辑器里改正文时由插件自动写回，
-   * Agent 改稿后也要写回；定位时最优先。
+   * 现文：这处原文现在的样子。作者在编辑器里改正文、采纳建议时由插件写回
+   * （Agent 不改正文，也不写它）；定位时最优先。
    */
   current: string;
   /**
@@ -121,11 +137,23 @@ export function detectCommentTampering(
     const kept =
       next.messages.length >= old.messages.length &&
       old.messages.every(
-        (m, i) => next.messages[i].by === m.by && next.messages[i].text === m.text
+        (m, i) =>
+          next.messages[i].by === m.by &&
+          next.messages[i].text === m.text &&
+          sameSuggestion(m.suggestion, next.messages[i].suggestion)
       );
     if (!kept) altered.push(old);
   }
   return { removed, altered };
+}
+
+/** 建议内容没被改（「已采纳」只由插件改，不算越权）。 */
+function sameSuggestion(
+  a: CommentSuggestion | undefined,
+  b: CommentSuggestion | undefined
+): boolean {
+  if (!a || !b) return !a && !b;
+  return a.original === b.original && a.replacement === b.replacement;
 }
 
 /** 按报告把越权改动恢复成改写前的样子；其余（Agent 正常追加的内容）保留。 */
@@ -659,6 +687,149 @@ export function locateAll(
   return result;
 }
 
+/* ---------- 修改建议 ---------- */
+
+/** 正文里某段文字的所有出现位置（批注工具校验「逐字存在且只出现一次」用）。 */
+export function findOccurrences(docText: string, needle: string): number[] {
+  return findAll(docText, needle);
+}
+
+/**
+ * 最新一条带建议的消息下标；没有返回 -1。
+ * 只有它能采纳，更早的建议算「已被新建议取代」。
+ */
+export function latestSuggestionIndex(
+  comment: Pick<WtComment, "messages">
+): number {
+  for (let i = comment.messages.length - 1; i >= 0; i--) {
+    if (comment.messages[i].suggestion) return i;
+  }
+  return -1;
+}
+
+/** 建议采纳不了的原因 */
+export type SuggestionProblem = "missing" | "ambiguous";
+
+export const SUGGESTION_PROBLEM_LABELS: Record<SuggestionProblem, string> = {
+  missing: "这处已经改过，建议过期了",
+  ambiguous: "正文里有多处相同的文字，无法确定改哪一处",
+};
+
+export type SuggestionTarget =
+  | { from: number; to: number }
+  | { problem: SuggestionProblem };
+
+/**
+ * 建议要替换的正文区间。
+ * 写了「建议原句」：正文里逐字找，只出现一次才算数；出现多次时只看批注所在的那一段。
+ * 没写：替换批注现在圈住的文字（必须是按现文 / 原文精确命中的，迁移定位不算）。
+ */
+export function suggestionTarget(
+  docText: string,
+  comment: WtComment,
+  suggestion: CommentSuggestion
+): SuggestionTarget {
+  const anchor = new AnchorLocator(docText).locate(comment);
+  const original = suggestion.original;
+  if (!original) {
+    if (
+      !anchor ||
+      (anchor.via !== "present" && anchor.via !== "exact") ||
+      anchor.to <= anchor.from
+    ) {
+      return { problem: "missing" };
+    }
+    return { from: anchor.from, to: anchor.to };
+  }
+  const hits = findAll(docText, original);
+  if (hits.length === 0) return { problem: "missing" };
+  if (hits.length === 1) return { from: hits[0], to: hits[0] + original.length };
+  if (anchor) {
+    const paragraph = paragraphAt(docText, anchor.from);
+    if (paragraph) {
+      const inside = hits.filter(
+        (at) => at < paragraph.to && at + original.length > paragraph.from
+      );
+      if (inside.length === 1) {
+        return { from: inside[0], to: inside[0] + original.length };
+      }
+    }
+  }
+  return { problem: "ambiguous" };
+}
+
+/** 字级差异的一段：相同 / 删掉 / 新增 */
+export interface DiffPiece {
+  kind: "same" | "del" | "add";
+  text: string;
+}
+
+/** 超过这个规模（中段字数之积）就不逐字比，整段算替换，免得卡界面。 */
+const DIFF_CELL_LIMIT = 250_000;
+
+/** 两段文字的字级差异（详情页显示建议用；按码点比，不拆代理对）。 */
+export function diffChars(before: string, after: string): DiffPiece[] {
+  const a = Array.from(before);
+  const b = Array.from(after);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++;
+  }
+  const midA = a.slice(head, a.length - tail);
+  const midB = b.slice(head, b.length - tail);
+  const pieces: DiffPiece[] = [];
+  const push = (kind: DiffPiece["kind"], text: string) => {
+    if (!text) return;
+    const last = pieces[pieces.length - 1];
+    if (last && last.kind === kind) last.text += text;
+    else pieces.push({ kind, text });
+  };
+  push("same", a.slice(0, head).join(""));
+  if (midA.length * midB.length > DIFF_CELL_LIMIT) {
+    push("del", midA.join(""));
+    push("add", midB.join(""));
+  } else {
+    // 最长公共子序列，从后往前回溯成删 / 增 / 同
+    const n = midA.length;
+    const m = midB.length;
+    const lcs: number[][] = Array.from({ length: n + 1 }, () =>
+      new Array<number>(m + 1).fill(0)
+    );
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        lcs[i][j] =
+          midA[i] === midB[j]
+            ? lcs[i + 1][j + 1] + 1
+            : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      }
+    }
+    let i = 0;
+    let j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && midA[i] === midB[j]) {
+        push("same", midA[i]);
+        i++;
+        j++;
+      } else if (i < n && (j >= m || lcs[i + 1][j] >= lcs[i][j + 1])) {
+        // 同一处先删后增，读起来是「把 A 换成 B」
+        push("del", midA[i]);
+        i++;
+      } else {
+        push("add", midB[j]);
+        j++;
+      }
+    }
+  }
+  push("same", a.slice(a.length - tail).join(""));
+  return pieces;
+}
+
 /* ---------- 批注文件：序列化 ---------- */
 
 /**
@@ -667,16 +838,17 @@ export function locateAll(
  */
 const SIDECAR_HELP_HEADER = [
   "<!-- 写作工具箱 · 批注文件",
-  "这是作者与 Agent 针对源文档的逐条讨论。每条批注 = 一处原文 + 一串对话，对话一行一条：「- 作者：……」或「- Agent：……」，按出现顺序就是先后顺序。",
+  "这里是作者和 Agent 一起聊这篇作品的地方：说真实的感受和想法就好，用你自己的语气。下面只是让插件读得懂的格式约定。",
+  "每条批注 = 一处原文 + 一串对话，对话一行一条：「- 作者：……」或「- Agent：……」，按出现顺序就是先后顺序。",
   "多于一行的消息，从第二行起每行缩进两格，例如：",
   "- Agent：第一点",
   "  第二点",
   "",
-  "给 Agent 的规则：",
-  "1. 发起批注：在文件末尾（「## 已否决」之前）新增「### 批注 N」（N 取现有最大编号 + 1），依次写「- 发起：Agent」「- 原文：……」「- 段落：……」「- 位置：第 X 段 · 约第 Y 行」「- 创建：YYYY-MM-DD HH:mm」「- Agent：你的意见」。「原文」必须从源文档逐字复制，取一句里有区分度的短片段；「段落」照抄原文所在的整段。同一处已有批注时，在那条里追加消息，不要新开；不要重复提出「已否决」里的意见。",
-  "2. 找位置：先在源文档里找「现文」（作者改正文时插件会自动写回），没有现文或找不到再找「原文」。都找不到就在回复里说明，绝不要改写「原文」「段落」去指向别的句子。有「- 原文已删除：是」的，说明作者已经删掉了那句，按「段落」理解上下文。",
+  "格式约定（能用「写作工具箱」的批注工具 / MCP 服务 writing-toolkit 时，请改用工具，不要直接编辑本文件）：",
+  "1. 发起批注：在文件末尾（「## 已否决」之前）新增「### 批注 N」（N 取现有最大编号 + 1），依次写「- 发起：Agent」「- 原文：……」「- 段落：……」「- 位置：第 X 段 · 约第 Y 行」「- 创建：YYYY-MM-DD HH:mm」「- Agent：你想说的」。「原文」必须从源文档逐字复制，取一句里有区分度的短片段；「段落」照抄原文所在的整段。同一处已有批注时，在那条里追加消息，不要新开；不要重复提出「已否决」里的意见。",
+  "2. 找位置：先在源文档里找「现文」（作者改正文时插件会自动写回），没有现文或找不到再找「原文」。都找不到就在回复里说明，绝不要改写「原文」「段落」「现文」去指向别的句子。有「- 原文已删除：是」的，说明作者已经删掉了那句，按「段落」理解上下文。",
   "3. 回复：只回复最后一条消息是「作者」的批注，在该条末尾追加一行「- Agent：……」。不要修改或删除任何已有消息，不要删除批注条目，不要改「已否决」。",
-  "4. 改正文：讨论中只在消息里给改写方案，不要动源文档；作者在消息里明确要求改（如「改」「就这样改」）时，才修改源文档，并把改完后该处现在的文字照抄进「现文」（- 现文：……，不加引号、不换行；已有就覆盖），再追加一条 Agent 消息说明改了什么。",
+  "4. 改正文：请不要直接修改源文档。修改建议是可选的，大多数批注说感受和想法就够了；真想到了具体写法，就在你的 Agent 消息下面紧跟两行：「- 建议原句：……」（要替换的正文，从源文档逐字复制，在全文只出现一次；省略这一行表示替换这条批注圈住的文字）和「- 建议改为：……」（改成什么；留空表示删掉）。作者在插件里点「采纳」后，插件替换正文，并把那一行标成「建议改为（已采纳）」。",
   "5. 批注是否解决只由作者在插件里决定：没有状态字段，不要自己添加，也不要删除条目来表示解决。",
   "6. 其余文字（包括本说明）请勿改动。",
   "-->",
@@ -725,6 +897,16 @@ export function serializeCommentFile(
     writeField(lines, "创建", c.createdAt);
     for (const m of c.messages) {
       writeField(lines, COMMENT_SPEAKER_LABELS[m.by], m.text);
+      if (m.suggestion) {
+        if (m.suggestion.original) {
+          writeField(lines, "建议原句", m.suggestion.original);
+        }
+        writeField(
+          lines,
+          m.suggestion.adopted ? "建议改为（已采纳）" : "建议改为",
+          m.suggestion.replacement
+        );
+      }
     }
   }
   const rejectedLines = rejected
@@ -761,6 +943,10 @@ const KNOWN_LABELS = new Set([
   "回复",
 ]);
 
+/** 建议两行的标签：「建议原句」与「建议改为」/「建议改为（已采纳）」 */
+const SUGGEST_ORIGINAL_LABEL = "建议原句";
+const SUGGEST_REPLACEMENT_RE = /^建议改为\s*(?:[（(]\s*(已采纳)\s*[）)])?$/;
+
 /** 消息标签 → 说话人；不是消息标签返回 null。 */
 function speakerOf(label: string): CommentSpeaker | null {
   if (label === "作者") return "author";
@@ -783,6 +969,8 @@ type ContinuableField =
   | "paragraph"
   | "current"
   | "message"
+  | "suggestOriginal"
+  | "suggestReplacement"
   | "legacyContent"
   | "legacyReply";
 
@@ -804,6 +992,8 @@ export function parseCommentFileData(text: string): CommentFileData {
   let current: ParsingComment | null = null;
   let lastField: ContinuableField | null = null;
   let inRejected = false;
+  /** 写了「建议改为」的消息：只有「建议原句」没有「建议改为」的不算建议 */
+  const withReplacement = new WeakSet<CommentMessage>();
 
   const appendTo = (field: ContinuableField, value: string) => {
     if (!current) return;
@@ -820,6 +1010,15 @@ export function parseCommentFileData(text: string): CommentFileData {
       case "message": {
         const last = current.messages[current.messages.length - 1];
         if (last) last.text += value;
+        break;
+      }
+      case "suggestOriginal":
+      case "suggestReplacement": {
+        const suggestion =
+          current.messages[current.messages.length - 1]?.suggestion;
+        if (!suggestion) break;
+        if (field === "suggestOriginal") suggestion.original += value;
+        else suggestion.replacement += value;
         break;
       }
       case "legacyContent":
@@ -840,7 +1039,16 @@ export function parseCommentFileData(text: string): CommentFileData {
     if (legacyContent.trim()) messages.push({ by: c.origin, text: legacyContent });
     for (const m of c.messages) {
       const text = trimLineBreaks(m.text);
-      if (text.trim()) messages.push({ by: m.by, text });
+      const suggestion =
+        m.suggestion && withReplacement.has(m)
+          ? {
+              original: trimLineBreaks(m.suggestion.original),
+              replacement: trimLineBreaks(m.suggestion.replacement),
+              adopted: m.suggestion.adopted,
+            }
+          : undefined;
+      if (!text.trim() && !suggestion) continue;
+      messages.push(suggestion ? { by: m.by, text, suggestion } : { by: m.by, text });
     }
     const legacyReply = trimLineBreaks(c.legacyReply);
     if (legacyReply.trim()) messages.push({ by: "agent", text: legacyReply });
@@ -913,6 +1121,26 @@ export function parseCommentFileData(text: string): CommentFileData {
       lastField = "message";
       continue;
     }
+    const replacementLabel = field ? SUGGEST_REPLACEMENT_RE.exec(label) : null;
+    if (field && (label === SUGGEST_ORIGINAL_LABEL || replacementLabel)) {
+      const last = current.messages[current.messages.length - 1];
+      // 建议只挂在 Agent 消息下；作者消息里碰巧有这样一行，照普通续行拼回去
+      if (last && last.by === "agent") {
+        const suggestion =
+          last.suggestion ??
+          (last.suggestion = { original: "", replacement: "", adopted: false });
+        if (replacementLabel) {
+          suggestion.replacement = field[2] ?? "";
+          suggestion.adopted = Boolean(replacementLabel[1]);
+          withReplacement.add(last);
+          lastField = "suggestReplacement";
+        } else {
+          suggestion.original = field[2] ?? "";
+          lastField = "suggestOriginal";
+        }
+        continue;
+      }
+    }
     if (field && KNOWN_LABELS.has(label)) {
       const value = field[2] ?? "";
       lastField = null;
@@ -984,44 +1212,97 @@ export function parseCommentFile(text: string): WtComment[] {
 /* ---------- 给 Agent 的现成指令 ---------- */
 
 /**
- * 「复制批注指令」：请 Agent 通读全文、发起批注。
+ * Agent 怎么写批注：tools = 通过插件在本机提供的批注工具（MCP）；
+ * file = 直接编辑批注文件（没开批注工具、或 Agent 接不了 MCP 时）。
+ */
+export type AgentChannel = "tools" | "file";
+
+/** 本机批注工具在 Agent 那边登记的服务名（连接命令与指令里共用）。 */
+export const AGENT_TOOLS_SERVER_NAME = "writing-toolkit";
+
+/**
+ * 两份指令的写法（2026-10-23 作者试用后调整）：先说想和 Agent 聊什么，规矩压到最后一小段。
+ * 规矩写多了，Agent 会把批注当成一份照章办事的作业，只剩客观、机械的挑错；
+ * 作者要的是有温度的共创者。格式上的硬要求交给工具当场校验（工具连接）或批注文件抬头（直接写文件），
+ * 这里只点一句。修改建议是可选的：大多数批注说感受和想法就够了。
+ */
+const TOOLS_NOTE = `用「写作工具箱」的批注工具（MCP 服务 ${AGENT_TOOLS_SERVER_NAME}）：先 list_comments 看看已有的讨论，同一处就接着那条聊，我否决过的就别再提了；用 create_comment 留新批注，quote 从正文原样复制，工具不认的话会告诉你怎么调。没有这些工具的话先停下来告诉我，别直接改批注文件或正文。`;
+
+const SUGGESTION_NOTE_TOOLS =
+  "真想到了具体的写法，就在批注里附一个 suggestion（original 是要换掉的原文，原样复制；replacement 是你的写法），我来决定用不用；不想改的地方就只聊，不用硬给方案";
+
+const SUGGESTION_NOTE_FILE =
+  "真想到了具体的写法，就在你那条消息下面跟两行「- 建议原句：……」（原样复制要换掉的原文，省略就是这条批注圈住的那句）和「- 建议改为：……」，我来决定用不用；不想改的地方就只聊，不用硬给方案";
+
+/** 两份指令共用的那段「想和你聊什么」 */
+const REVIEW_INVITATION =
+  `不用拘着，就像一位真正读进去了的朋友、也是懂行的编辑那样，把读的时候冒出来的念头留在正文旁边：被打动的地方、读着出戏的地方、人物让你在意的地方、你好奇的、你不同意的，都可以说；可以提问，可以夸，可以跟我争。用你自己的语气，像聊天一样就好。`;
+
+/**
+ * 「复制批注指令」：请 Agent 读全文、在正文旁边留批注。
  * 文章已有批注时同样适用，Agent 只补新的。
  */
 export function buildReviewPrompt(
   docPath: string,
-  counts?: { open: number; rejected: number }
+  counts?: { open: number; rejected: number },
+  channel: AgentChannel = "file"
 ): string {
-  const base = docBaseName(docPath);
-  const sidecar = sidecarPathFor(docPath);
+  const base = docBaseName(docPath).replace(/\.md$/i, "");
   const existing =
     counts && (counts.open > 0 || counts.rejected > 0)
-      ? `批注文件里已有 ${counts.open} 条进行中的批注${
-          counts.rejected > 0 ? `、${counts.rejected} 条已否决的意见` : ""
-        }：同一处已有批注的，在那条里追加消息，不要新开；已否决的意见不要再提。`
+      ? `这篇已经有 ${counts.open} 条在聊的批注${
+          counts.rejected > 0 ? `、${counts.rejected} 条我否决过的意见` : ""
+        }，先看一眼再动笔。`
       : "";
+  const closing = `批注留完以后，回到这边跟我聊聊整篇给你的感觉，还有你最想和我讨论的一两件事。`;
+  if (channel === "tools") {
+    return [
+      `想请你读一读《${base}》（库内路径：${docPath}）。`,
+      ``,
+      REVIEW_INVITATION,
+      `${SUGGESTION_NOTE_TOOLS}。`,
+      ``,
+      closing,
+      ``,
+      `（${existing}${TOOLS_NOTE}）`,
+    ].join("\n");
+  }
+  const sidecar = sidecarPathFor(docPath);
   return [
-    `请通读《${base}》，把你的修改意见逐条写成批注，写进「${sidecar}」（没有就新建）。`,
+    `想请你读一读《${base}》。`,
     ``,
-    `格式和规则以批注文件开头的说明为准（新建文件时照下面写）：`,
-    `1. 每处意见一条：「### 批注 N」下依次写「- 发起：Agent」「- 原文：……」「- 段落：……」「- 位置：第 X 段 · 约第 Y 行」「- 创建：YYYY-MM-DD HH:mm」「- Agent：意见」；`,
-    `2. 「原文」必须从《${base}》逐字复制，取一句里有区分度的短片段；「段落」照抄所在整段；`,
-    `3. 这一轮只提意见，不要修改《${base}》；`,
-    `4. 已有批注定位时先找「现文」，找不到再找「原文」；都找不到也不要改写它们；`,
-    ...(existing ? [`5. ${existing}`] : []),
+    REVIEW_INVITATION,
+    `${SUGGESTION_NOTE_FILE}。`,
+    ``,
+    closing,
+    ``,
+    `（${existing}批注写进「${sidecar}」，格式照文件开头的说明；没有这个文件就新建，每条写成「### 批注 N」，下面依次是「- 发起：Agent」「- 原文：……」（从正文逐字复制）「- 段落：……」（原文所在整段）「- 位置：第 X 段 · 约第 Y 行」「- 创建：YYYY-MM-DD HH:mm」「- Agent：你想说的」。同一处已有批注就接着那条聊，我否决过的别再提；请不要直接改《${base}》。）`,
   ].join("\n");
 }
 
-/** 「复制回复指令」：请 Agent 回复所有轮到它的批注。 */
-export function buildReplyPrompt(docPath: string, waiting: number): string {
-  const base = docBaseName(docPath);
+/** 「复制回复指令」：请 Agent 接着聊轮到它的那些批注。 */
+export function buildReplyPrompt(
+  docPath: string,
+  waiting: number,
+  channel: AgentChannel = "file"
+): string {
+  const base = docBaseName(docPath).replace(/\.md$/i, "");
+  const invitation = [
+    `我在《${base}》的批注里回你了，现在有 ${waiting} 条在等你，去看看我说了什么，接着聊吧。`,
+    ``,
+    `想法不一样就直说，讲讲你的理由，也可以反问我；我说「改」的地方，就把你的写法附上，我来采纳。不必每条都给方案，像聊天一样回就好；读的时候有新冒出来的想法，也可以另开一条。`,
+  ];
+  if (channel === "tools") {
+    return [
+      ...invitation,
+      ``,
+      `（库内路径：${docPath}。用 list_comments 找轮到你的那些，reply_comment 回复，附写法就带上 suggestion；没有这些工具的话先停下来告诉我，别直接改批注文件或正文。）`,
+    ].join("\n");
+  }
   const sidecar = sidecarPathFor(docPath);
   return [
-    `请处理「${sidecar}」里轮到你的批注（目前 ${waiting} 条：最后一条消息是「作者」的那些）。`,
+    ...invitation,
     ``,
-    `1. 只回复这些批注，在每条末尾追加一行「- Agent：……」；其他批注、已有消息、「已否决」一律不动；`,
-    `2. 讨论中只在消息里给改写方案，不要修改《${base}》；`,
-    `3. 作者明确要求改（如「改」「就这样改」）的，修改《${base}》，把改完后该处的文字覆盖进「现文」，再追加一条 Agent 消息说明改了什么；`,
-    `4. 定位时先找「现文」（作者自己改过的地方插件会写回），找不到再找「原文」；都找不到就在回复里说明，不要改写「原文」「段落」去指向别的句子；`,
-    `5. 不要新开批注，不要删除批注条目，不要添加状态字段。`,
+    `（批注在「${sidecar}」：轮到你的是最后一条消息是「作者」的那些，在那条末尾加一行「- Agent：……」回复；附写法就在下面跟「- 建议原句」「- 建议改为」两行。已有的消息和条目请不要改、不要删；找位置先看「现文」再看「原文」，找不到就跟我说，别把它们改去指向别的句子；请不要直接改《${base}》。）`,
   ].join("\n");
 }

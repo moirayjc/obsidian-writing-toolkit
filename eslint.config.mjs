@@ -31,7 +31,7 @@ export default defineConfig([
       // 界面文案里的专有名词：规则的大小写表里没有它们，会被要求改成小写。
       // 注意：ignoreRegex 用的是 **JS 正则**，不支持 `(?i)` 内联标志——
       // 写错会让整个 eslint 崩掉（SyntaxError: Invalid group），只能用 ignoreWords。
-      "obsidianmd/ui/sentence-case": ["warn", { ignoreWords: ["Agent"] }],
+      "obsidianmd/ui/sentence-case": ["warn", { ignoreWords: ["Agent", "MCP", "Claude", "Code", "Authorization", "Bearer"] }],
     },
   },
 ]);

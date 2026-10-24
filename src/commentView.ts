@@ -19,7 +19,27 @@ import {
   CommentTurn,
   LOCATE_VIA_LABELS,
   LocateVia,
+  diffChars,
 } from "./comments";
+
+/** 最新一条建议现在能不能采纳 */
+export type SuggestionStatus =
+  | "ready"
+  | "adopted"
+  | "missing"
+  | "ambiguous"
+  | "locked";
+
+/** 最新一条修改建议的状态（只有它能采纳，更早的显示「已被新建议取代」）。 */
+export interface CommentPanelSuggestion {
+  /** 带建议的那条消息在对话里的下标 */
+  index: number;
+  status: SuggestionStatus;
+  /** 采纳不了时给作者看的原因；能采纳时为空 */
+  reason: string;
+  /** 要被替换的正文（差异块左侧）；没写「建议原句」时是批注现在圈住的文字 */
+  before: string;
+}
 
 export interface CommentPanelItem {
   id: number;
@@ -36,6 +56,8 @@ export interface CommentPanelItem {
   locatedLine: number | null;
   /** 定位方式；null 表示锚点失效（原文已改写，需要重新绑定） */
   via: LocateVia | null;
+  /** 最新一条修改建议；没有建议时省略 */
+  suggestion?: CommentPanelSuggestion;
 }
 
 export interface CommentPanelModel {
@@ -69,6 +91,10 @@ export interface CommentPanelHost {
   resolveComment(docPath: string, id: number): void;
   /** 不采纳：整条删除并记进「已否决」区（6 秒内可撤销）。 */
   rejectComment(docPath: string, id: number): void;
+  /** 采纳这条批注最新的修改建议：在编辑器里替换正文（⌘Z 可撤回）；成功返回 true。 */
+  adoptSuggestion(docPath: string, id: number): Promise<boolean>;
+  /** 复制一段文字到剪贴板（复制建议用）。 */
+  copyText(text: string): void;
   /** 锚点失效的批注：进入「重新绑定」流程（在正文里选中新位置）。 */
   rebindComment(docPath: string, id: number): void;
   /** 复制「请 Agent 通读并发起批注」的指令；docPath 省略时作用于当前活动文档。 */
@@ -106,6 +132,9 @@ function locationText(item: CommentPanelItem): string {
     } · 改完了就点「已解决」`;
   }
   if (item.locatedLine === null) return "无法定位（原文对不上）";
+  if (item.suggestion?.status === "adopted" && item.turn === "author") {
+    return `第 ${item.locatedLine} 行附近 · 已采纳 · 满意就点「已解决」`;
+  }
   return `第 ${item.locatedLine} 行附近${
     item.via && item.via !== "exact" ? ` · ${LOCATE_VIA_LABELS[item.via]}` : ""
   }`;
@@ -207,9 +236,20 @@ export class CommentPanelBody {
           i.turn,
           i.gone ? "g" : "-",
           i.quote,
-          i.messages.map((m) => `${m.by}:${m.text}`).join("\u0004"),
+          i.messages
+            .map(
+              (m) =>
+                `${m.by}:${m.text}` +
+                (m.suggestion
+                  ? `\u0005${m.suggestion.original}\u0005${m.suggestion.replacement}\u0005${m.suggestion.adopted ? 1 : 0}`
+                  : "")
+            )
+            .join("\u0004"),
           i.locatedLine === null ? "x" : i.locatedLine,
           i.via ?? "none",
+          i.suggestion
+            ? `${i.suggestion.index}:${i.suggestion.status}:${i.suggestion.before}`
+            : "",
         ].join("\u0001")
       )
       .join("\u0002");
@@ -393,6 +433,12 @@ export class CommentPanelBody {
         text: item.gone ? "已删" : "失效",
         attr: { title: locationText(item) },
       });
+    } else if (item.suggestion?.status === "ready") {
+      head.createSpan({
+        cls: "wt-comment-row-flag is-suggest",
+        text: "建议",
+        attr: { title: "有一条修改建议等你采纳" },
+      });
     }
     const last = item.messages[item.messages.length - 1];
     if (last) {
@@ -450,7 +496,9 @@ export class CommentPanelBody {
     box.createDiv({ cls: "wt-comment-quote", text: item.quote });
 
     const thread = box.createDiv({ cls: "wt-comment-thread" });
-    for (const message of item.messages) this.renderMessage(thread, message);
+    item.messages.forEach((message, index) =>
+      this.renderMessage(thread, message, index, item)
+    );
 
     this.renderReplyBox(box, item);
 
@@ -538,7 +586,12 @@ export class CommentPanelBody {
   }
 
   /** 一条消息：作者 / Agent 用不同底色区分；详情页里完整显示，可选中复制。 */
-  private renderMessage(thread: HTMLElement, message: CommentMessage): void {
+  private renderMessage(
+    thread: HTMLElement,
+    message: CommentMessage,
+    index: number,
+    item: CommentPanelItem
+  ): void {
     const el = thread.createDiv({
       cls: `wt-comment-msg is-${message.by}`,
     });
@@ -546,7 +599,94 @@ export class CommentPanelBody {
       cls: "wt-comment-msg-who",
       text: COMMENT_SPEAKER_LABELS[message.by],
     });
-    el.createDiv({ cls: "wt-comment-msg-text", text: message.text });
+    if (message.text) {
+      el.createDiv({ cls: "wt-comment-msg-text", text: message.text });
+    }
+    if (message.suggestion) this.renderSuggestion(el, message, index, item);
+  }
+
+  /**
+   * 修改建议：删掉的字划线、新增的字高亮。只有最新一条能采纳；
+   * 采纳不了时按钮变灰并写明原因，任何时候都能复制。
+   */
+  private renderSuggestion(
+    parent: HTMLElement,
+    message: CommentMessage,
+    index: number,
+    item: CommentPanelItem
+  ): void {
+    const suggestion = message.suggestion;
+    if (!suggestion) return;
+    const latest = item.suggestion && item.suggestion.index === index
+      ? item.suggestion
+      : null;
+    const superseded = !latest && !suggestion.adopted;
+    const box = parent.createDiv({
+      cls: superseded ? "wt-comment-suggest is-superseded" : "wt-comment-suggest",
+    });
+    const label = suggestion.adopted
+      ? "修改建议 · 已采纳"
+      : superseded
+        ? "修改建议 · 已被新建议取代"
+        : "修改建议";
+    box.createDiv({ cls: "wt-comment-suggest-label", text: label });
+    const before = latest
+      ? latest.before
+      : suggestion.original || item.quote;
+    const diff = box.createDiv({ cls: "wt-comment-suggest-diff" });
+    if (!suggestion.replacement && !before) {
+      diff.setText("（空）");
+    }
+    for (const piece of diffChars(before, suggestion.replacement)) {
+      diff.createSpan({
+        cls:
+          piece.kind === "del"
+            ? "wt-comment-suggest-del"
+            : piece.kind === "add"
+              ? "wt-comment-suggest-add"
+              : undefined,
+        text: piece.text,
+      });
+    }
+    const actions = box.createDiv({ cls: "wt-comment-suggest-actions" });
+    if (latest && !suggestion.adopted) {
+      const adoptBtn = actions.createEl("button", {
+        cls: latest.status === "ready" ? "mod-cta" : undefined,
+        text: "采纳",
+        attr: {
+          title:
+            latest.status === "ready"
+              ? "把正文里的这句换成建议的写法（⌘/Ctrl + Z 可撤回）"
+              : latest.reason,
+        },
+      });
+      adoptBtn.disabled = latest.status !== "ready";
+      let adopting = false;
+      adoptBtn.addEventListener("click", () => {
+        if (adopting || latest.status !== "ready") return;
+        adopting = true;
+        adoptBtn.disabled = true;
+        void this.host
+          .adoptSuggestion(this.requireDocPath(), item.id)
+          .finally(() => {
+            adopting = false;
+            if (adoptBtn.isConnected) adoptBtn.disabled = false;
+          });
+      });
+    }
+    const copyBtn = actions.createEl("button", {
+      text: "复制",
+      attr: { title: "复制建议的写法" },
+    });
+    copyBtn.addEventListener("click", () =>
+      this.host.copyText(suggestion.replacement)
+    );
+    if (latest && !suggestion.adopted && latest.status !== "ready") {
+      actions.createSpan({
+        cls: "wt-comment-suggest-reason",
+        text: latest.reason,
+      });
+    }
   }
 
   /** 回复框：多行输入，回车换行，⌘/Ctrl + 回车或「发送」按钮发出。 */

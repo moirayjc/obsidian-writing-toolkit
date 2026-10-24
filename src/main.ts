@@ -15,6 +15,8 @@ import {
   DEFAULT_SETTINGS,
   WritingToolkitSettings,
   WritingToolkitSettingTab,
+  type AgentBridgeClient,
+  type AgentBridgeSettingsStatus,
 } from "./settings";
 import { getElectron } from "./electron";
 import { PluginHost } from "./host/pluginHost";
@@ -60,6 +62,10 @@ import {
   createCommentsModule,
   type CommentsModule,
 } from "./features/commentsModule";
+import {
+  createAgentBridgeModule,
+  type AgentBridgeModule,
+} from "./features/agentBridgeModule";
 import {
   createPomodoroModule,
   LOCKED_NOTICE,
@@ -248,6 +254,8 @@ export default class WritingToolkitPlugin extends Plugin {
   private outlineModule!: OutlineModule;
   /** 阶段 4：批注存储、装饰、文件事件、侧栏面板与管理操作。 */
   private commentsModule!: CommentsModule;
+  /** 本机批注工具（给 Agent 用的 MCP）：开关、端口、口令与监听。 */
+  private agentBridgeModule!: AgentBridgeModule;
   /** 阶段 4：计时器、番茄历史、自动快照与全部用户动作。 */
   private pomodoroModule!: PomodoroModule;
   /** 阶段 4：写作日历的数据绑定、设置热更新和实例生命周期。 */
@@ -560,14 +568,8 @@ export default class WritingToolkitPlugin extends Plugin {
         this.commentsModule.operations.addCommentForView(view),
       isMobile: () => this.commentsOffOnThisDevice(),
     });
-    this.commentsModule = createCommentsModule({
-      getRecentMarkdownPath: () => this.lastKnownPath,
-      openSidebar: () => this.openCommentsSidebar(),
-      isFormatScopeAllowed: (path) =>
-        this.formatToolbarModule.allowsPath(path),
-      onChanged: () => this.refreshCommentBadges(),
-      isMobile: () => this.commentsOffOnThisDevice(),
-    });
+    this.commentsModule = this.buildCommentsModule();
+    this.agentBridgeModule = this.buildAgentBridgeModule();
     this.sidecarLocationModule = this.buildSidecarLocationModule();
     this.pomodoroModule = this.buildPomodoroModule();
     this.calendarModule = createCalendarModule({
@@ -591,6 +593,7 @@ export default class WritingToolkitPlugin extends Plugin {
       this.hemingwayModule,
       this.formatToolbarModule,
       this.commentsModule,
+      this.agentBridgeModule,
       this.snapshotModule,
       this.snapshotUiModule,
       this.outlineModule,
@@ -1655,6 +1658,28 @@ export default class WritingToolkitPlugin extends Plugin {
     return day === this.todayStr;
   }
 
+  private buildCommentsModule(): CommentsModule {
+    return createCommentsModule({
+      getRecentMarkdownPath: () => this.lastKnownPath,
+      openSidebar: () => this.openCommentsSidebar(),
+      isFormatScopeAllowed: (path) =>
+        this.formatToolbarModule.allowsPath(path),
+      onChanged: () => this.refreshCommentBadges(),
+      isMobile: () => this.commentsOffOnThisDevice(),
+      // 本机批注工具在运行就让 Agent 走工具，否则直接写批注文件
+      agentChannel: () =>
+        this.agentBridgeModule?.operations.status().running ? "tools" : "file",
+    });
+  }
+
+  private buildAgentBridgeModule(): AgentBridgeModule {
+    return createAgentBridgeModule({
+      isDesktop: () => Platform.isDesktopApp,
+      tools: () => this.commentsModule.operations.agentTools,
+      version: this.manifest.version,
+    });
+  }
+
   /** 快照文件夹（规范化路径，去首尾斜杠）。 */
   private buildSidecarLocationModule(): SidecarLocationModule {
     return createSidecarLocationModule({
@@ -1672,6 +1697,44 @@ export default class WritingToolkitPlugin extends Plugin {
   /** 设置页：切换伴随数据存放位置（会先确认，再整体搬家）。 */
   switchSidecarLocation(target: "hidden" | "visible"): void {
     this.sidecarLocationModule.operations.switchTo(target);
+  }
+
+  /* ---------- 本机批注工具：设置页端口 ---------- */
+
+  agentBridgeStatus(): AgentBridgeSettingsStatus {
+    return this.agentBridgeModule.operations.status();
+  }
+
+  async setAgentBridgeEnabled(on: boolean): Promise<void> {
+    await this.agentBridgeModule.operations.setEnabled(on);
+    this.settingTab.display();
+  }
+
+  async setAgentBridgePort(port: number): Promise<void> {
+    try {
+      await this.agentBridgeModule.operations.setPort(port);
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+    }
+    this.settingTab.display();
+  }
+
+  async regenerateAgentBridgeToken(): Promise<void> {
+    await this.agentBridgeModule.operations.regenerateToken();
+    new Notice("已换新口令：旧的配置失效了，请在 Agent 那边重新配一次");
+    this.settingTab.display();
+  }
+
+  setAgentBridgeClient(client: AgentBridgeClient): void {
+    this.agentBridgeModule.operations.setClient(client);
+  }
+
+  copyAgentBridgeCommand(): void {
+    const config = this.agentBridgeModule.operations.connectionConfig();
+    navigator.clipboard.writeText(config.text).then(
+      () => new Notice(config.done, 12000),
+      () => new Notice("复制到剪贴板失败")
+    );
   }
 
   /** 设置页：把可同步目录加进 Obsidian 的排除列表。 */
