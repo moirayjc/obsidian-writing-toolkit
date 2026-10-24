@@ -1716,7 +1716,14 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   copyAgentBridgeCommand(): void {
-    const config = this.agentBridgeModule.operations.connectionConfig();
+    this.copyWithNotice(this.agentBridgeModule.operations.connectionConfig());
+  }
+
+  copyAgentReplyCommand(): void {
+    this.copyWithNotice(this.agentBridgeModule.operations.replyCommand());
+  }
+
+  private copyWithNotice(config: { text: string; done: string }): void {
     navigator.clipboard.writeText(config.text).then(
       () => new Notice(config.done, 12000),
       () => new Notice("复制到剪贴板失败")

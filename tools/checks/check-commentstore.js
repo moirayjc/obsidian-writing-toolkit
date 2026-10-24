@@ -519,7 +519,7 @@ async function main() {
   // 19) 给 Agent 的两份指令
   {
     const review = comments.buildReviewPrompt(DOC, { open: 2, rejected: 1 });
-    const reply = comments.buildReplyPrompt(DOC, 3);
+    const reply = comments.buildReplyPrompt(DOC, [1, 2, 4]);
     r.check(
       "批注指令：先邀请聊感受，规矩放在最后，仍提醒逐字复制、不改正文、已有批注与已否决",
       review.indexOf("像聊天一样") >= 0 && review.indexOf("像聊天一样") < review.indexOf("逐字复制") &&

@@ -84,6 +84,7 @@ export interface WritingToolkitPluginLike {
     regenerateAgentBridgeToken: () => Promise<void>;
     setAgentBridgeClient: (client: AgentBridgeClient) => void;
     copyAgentBridgeCommand: () => void;
+    copyAgentReplyCommand: () => void;
 }
 
 export class WritingToolkitSettingTab extends PluginSettingTab {
@@ -146,6 +147,16 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
           .onClick(() => {
             void this.wt.regenerateAgentBridgeToken();
           })
+      );
+
+    new Setting(el)
+      .setName("每轮的快捷命令")
+      .setDesc(
+        "批注聊起来以后，一直在同一个对话里聊，Agent 记得这本书和聊过的事，也省 token。装上这个命令，每轮你回完批注，在那个对话里敲 /pizhu 就好，不用再复制指令。用的是上面选的 Agent；不是 Claude Code / Gemini CLI 的，复制的是那段话，存成快捷短语。"
+      )
+      .setClass("wt-setting-stacked")
+      .addButton((button) =>
+        button.setButtonText("复制").onClick(() => this.wt.copyAgentReplyCommand())
       );
   }
 

@@ -10,6 +10,7 @@
  */
 import {
   AnchorLocator,
+  REPLY_COMMAND_NAME,
   WtComment,
   commentTurn,
   findOccurrences,
@@ -33,6 +34,8 @@ export interface AgentSuggestionInput {
 
 export interface AgentListInput {
   path?: string;
+  /** 只要轮到 Agent 的那些（每轮接着聊时用，免得把聊过的整串对话再读一遍） */
+  onlyYourTurn?: boolean;
 }
 
 export interface AgentCreateInput {
@@ -331,11 +334,15 @@ export const AGENT_TOOL_DEFINITIONS = [
   {
     name: "list_comments",
     description:
-      "列出批注。给 path：返回这篇文档每条批注的编号、原文 / 现文、所在段落、完整对话、轮到谁、建议状态，以及作者否决过的意见（rejected，不要再提）。不给 path：返回所有有批注的文档。",
+      "列出批注。给 path：返回这篇文档每条批注的编号、原文 / 现文、所在段落、完整对话、轮到谁、建议状态，以及作者否决过的意见（rejected，不要再提）。不给 path：返回所有有批注的文档，yourTurn 是轮到你的条数。在同一个对话里接着聊时，带上 only_your_turn 只看轮到你的那几条就够了。",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string", description: "文档在库里的路径，如「作品/正文/第3章.md」。" },
+        only_your_turn: {
+          type: "boolean",
+          description: "只返回轮到你的批注（最后一条消息是作者的）。",
+        },
       },
     },
   },
@@ -445,7 +452,11 @@ async function handleOne(
         : {}) as Record<string, unknown>;
       let run: (() => Promise<unknown>) | null = null;
       if (name === "list_comments") {
-        run = () => port.list({ path: typeof args.path === "string" ? args.path : undefined });
+        run = () =>
+          port.list({
+            path: typeof args.path === "string" ? args.path : undefined,
+            onlyYourTurn: args.only_your_turn === true || args.only_your_turn === "true",
+          });
       } else if (name === "create_comment") {
         run = () => port.create(args as unknown as AgentCreateInput);
       } else if (name === "reply_comment") {
@@ -604,6 +615,69 @@ export function buildConnectionConfig(
       return {
         text: `地址：${url}\n传输方式：Streamable HTTP\n请求头：Authorization: ${auth}`,
         done: "已复制地址和口令：按你用的 Agent 的 MCP 配置方式填进去",
+      };
+  }
+}
+
+/* ---------- 每轮接着聊的快捷命令 ---------- */
+
+const REPLY_COMMAND_DESCRIPTION = "写作工具箱：去看轮到你的批注，接着聊";
+
+/**
+ * 命令的正文：同一个对话里，Agent 已经知道这本书和之前聊过什么，这里只提醒它去看新回复，
+ * 并且只读轮到它的那几条（only_your_turn），不把聊过的整串对话再读一遍。
+ * 规矩照旧压在最后的括号里，硬要求交给工具当场校验。
+ */
+export function buildReplyCommandPrompt(serverName: string): string {
+  return [
+    `我在批注里回你了，去看看我说了什么，接着聊吧。想法不一样就直说、讲讲理由，也可以反问我；像聊天一样回就好，读的时候有新冒出来的想法也可以另开一条。`,
+    ``,
+    `（用写作工具箱的批注工具（MCP 服务 ${serverName}）：先 list_comments 不带 path，看哪些文档 yourTurn 不是 0；再对这些文档用 list_comments 带 only_your_turn: true，只看轮到你的那几条，用 reply_comment 回复，附写法就带上 suggestion。没有这些工具的话先停下来告诉我，别直接改批注文件或正文。）`,
+  ].join("\n");
+}
+
+/**
+ * 「每轮的快捷命令」：Claude Code / Gemini CLI 给一条终端命令，把命令文件写进用户级目录
+ * （~/.claude/commands/pizhu.md、~/.gemini/commands/pizhu.toml，2026-10 查证）；
+ * 其他 Agent 没有统一的自定义命令格式，只复制那段话，让作者存成自己的快捷短语。
+ * 和连接配置一样，插件不替用户写库外的文件。
+ */
+export function buildReplyCommand(
+  client: AgentClient,
+  serverName: string
+): { text: string; done: string } {
+  const prompt = buildReplyCommandPrompt(serverName);
+  switch (client) {
+    case "claude":
+      return {
+        text: [
+          `mkdir -p ~/.claude/commands && cat > ~/.claude/commands/${REPLY_COMMAND_NAME}.md <<'EOF'`,
+          `---`,
+          `description: ${REPLY_COMMAND_DESCRIPTION}`,
+          `---`,
+          ``,
+          prompt,
+          `EOF`,
+        ].join("\n"),
+        done: `已复制：粘到终端里运行一次，重开 Claude Code。以后每轮在原来的对话里敲 /${REPLY_COMMAND_NAME} 就好`,
+      };
+    case "gemini":
+      return {
+        text: [
+          `mkdir -p ~/.gemini/commands && cat > ~/.gemini/commands/${REPLY_COMMAND_NAME}.toml <<'EOF'`,
+          `description = "${REPLY_COMMAND_DESCRIPTION}"`,
+          `prompt = """`,
+          prompt,
+          `"""`,
+          `EOF`,
+        ].join("\n"),
+        done: `已复制：粘到终端里运行一次，重开 Gemini CLI。以后每轮在原来的对话里敲 /${REPLY_COMMAND_NAME} 就好`,
+      };
+    case "antigravity":
+    case "generic":
+      return {
+        text: prompt,
+        done: "已复制这段话：存成你在 Agent 里的快捷短语，以后每轮在原来的对话里发一下就好",
       };
   }
 }

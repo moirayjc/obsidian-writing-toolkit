@@ -4,6 +4,7 @@ import { AGENT_TOOLS_SERVER_NAME } from "../comments";
 import {
   DEFAULT_BRIDGE_PORT,
   buildConnectionConfig,
+  buildReplyCommand,
   handleMcpBody,
   isAgentClient,
   isValidBridgePort,
@@ -46,6 +47,8 @@ export interface AgentBridgeOperations {
   setClient(client: AgentClient): void;
   /** 当前选中 Agent 的连接配置：text 复制，done 是复制后的提示 */
   connectionConfig(): { text: string; done: string };
+  /** 当前选中 Agent 的「每轮的快捷命令」：text 复制，done 是复制后的提示 */
+  replyCommand(): { text: string; done: string };
   subscribe(listener: () => void): () => void;
 }
 
@@ -231,6 +234,9 @@ export function createAgentBridgeModule(
         stored.port,
         stored.token
       );
+    },
+    replyCommand() {
+      return buildReplyCommand(stored.client, AGENT_TOOLS_SERVER_NAME);
     },
     subscribe(listener) {
       listeners.add(listener);

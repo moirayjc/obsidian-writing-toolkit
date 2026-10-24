@@ -288,6 +288,17 @@ async function checkPure(r) {
     info
   );
   r.check("不存在的工具（比如结案）：JSON-RPC 报错", unknown.error && unknown.error.code === -32602);
+  await T.handleMcpBody(
+    { jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "list_comments", arguments: { path: DOC, only_your_turn: true } } },
+    port,
+    info
+  );
+  const listCall = calls.find(([n]) => n === "list");
+  r.check(
+    "列出：only_your_turn 传到读写端口，工具说明里写着",
+    listCall && listCall[1].onlyYourTurn === true && listCall[1].path === DOC &&
+      listed.result.tools.find((t) => t.name === "list_comments").inputSchema.properties.only_your_turn
+  );
   const note = await T.handleMcpBody({ jsonrpc: "2.0", method: "notifications/initialized" }, port, info);
   r.check("通知不回包", note === null);
 
@@ -336,8 +347,8 @@ async function checkPure(r) {
   );
 
   /* ---------- 指令 ---------- */
-  const toolsPrompt = C.buildReplyPrompt(DOC, 2, "tools");
-  const filePrompt = C.buildReplyPrompt(DOC, 2, "file");
+  const toolsPrompt = C.buildReplyPrompt(DOC, [2, 5], "tools");
+  const filePrompt = C.buildReplyPrompt(DOC, [2, 5], "file");
   const reviewTools = C.buildReviewPrompt(DOC, { open: 1, rejected: 0 }, "tools");
   r.check(
     "工具通道的指令：用工具，没有就停下，不提批注文件路径",
@@ -353,6 +364,41 @@ async function checkPure(r) {
     /像聊天一样/.test(reviewTools) && /整篇给你的感觉/.test(reviewTools) &&
       /不用硬给方案/.test(reviewTools) && !/修改意见/.test(reviewTools) &&
       reviewTools.indexOf("像聊天一样") < reviewTools.indexOf("create_comment")
+  );
+  r.check(
+    "回复指令发到同一个对话里：点明哪几条、只读这几条，不再整段重复读稿邀请",
+    toolsPrompt.includes("#2、#5") && toolsPrompt.includes("2 条") &&
+      /only_your_turn/.test(toolsPrompt) && !/被打动/.test(toolsPrompt) &&
+      filePrompt.includes("#2、#5") && !/被打动/.test(filePrompt)
+  );
+  r.check(
+    "批注指令（工具通道）先说好以后怎么接着聊：只看轮到你的、可能敲 /pizhu",
+    /only_your_turn/.test(reviewTools) && reviewTools.includes("/" + C.REPLY_COMMAND_NAME)
+  );
+
+  /* ---------- 每轮的快捷命令 ---------- */
+  const cmd = (client) => T.buildReplyCommand(client, "writing-toolkit");
+  const body = T.buildReplyCommandPrompt("writing-toolkit");
+  r.check(
+    "快捷命令的那段话：先邀请接着聊，再说只看轮到你的；没有工具就停下",
+    /像聊天一样/.test(body) && /only_your_turn/.test(body) && /yourTurn/.test(body) &&
+      /MCP 服务 writing-toolkit/.test(body) && /没有这些工具的话先停下来/.test(body) &&
+      body.indexOf("像聊天一样") < body.indexOf("list_comments")
+  );
+  r.check(
+    "Claude Code：写进用户级 ~/.claude/commands/pizhu.md，带 description",
+    cmd("claude").text.startsWith("mkdir -p ~/.claude/commands && cat > ~/.claude/commands/pizhu.md <<'EOF'\n---\ndescription: ") &&
+      cmd("claude").text.endsWith("\nEOF") && cmd("claude").text.includes(body) && /\/pizhu/.test(cmd("claude").done)
+  );
+  r.check(
+    "Gemini CLI：写进 ~/.gemini/commands/pizhu.toml，prompt 用三引号多行串",
+    cmd("gemini").text.includes("cat > ~/.gemini/commands/pizhu.toml <<'EOF'") &&
+      cmd("gemini").text.includes('prompt = """\n' + body + '\n"""\nEOF') &&
+      !body.includes('"""') && !body.includes("\\")
+  );
+  r.check(
+    "其他 Agent：只复制那段话",
+    cmd("antigravity").text === body && cmd("generic").text === body
   );
 
   return { C, T };
@@ -614,7 +660,16 @@ async function checkModule(r) {
   r.check("已采纳的不能再采纳一次", again === false && dispatched.length === 1);
 
   // 作者回复 → Agent 再给一版 → 作者改了那处 → 建议过期
+  const beforeTurn = await ops.agentTools.list({ path: DOC, onlyYourTurn: true });
   await ops.replyToComment(DOC, 1, "还是不够利落");
+  const afterTurn = await ops.agentTools.list({ path: DOC, onlyYourTurn: true });
+  const everything = await ops.agentTools.list({ path: DOC });
+  r.check(
+    "工具列出 only_your_turn：只给轮到 Agent 的，不带时照旧全给",
+    beforeTurn.comments.length === 0 && afterTurn.comments.length === 1 &&
+      afterTurn.comments[0].id === 1 && everything.comments.length === 1,
+    JSON.stringify({ beforeTurn, afterTurn })
+  );
   await ops.agentTools.reply({
     path: DOC,
     id: 1,

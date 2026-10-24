@@ -52,7 +52,7 @@ const EXPECTED = [
 ];
 
 /** Agent 连接卡里的项写在 buildAgentBridgeSettings 里，由「批注」页的 Agent 连接卡调用 */
-const BRIDGE_SETTINGS = ["允许 Agent 通过批注工具连接（仅本机）", "端口", "连接到 Agent"];
+const BRIDGE_SETTINGS = ["允许 Agent 通过批注工具连接（仅本机）", "端口", "连接到 Agent", "每轮的快捷命令"];
 
 function names(block, pattern) {
   return [...block.matchAll(pattern)].map((m) => m[1]);
@@ -100,7 +100,7 @@ function main() {
   );
   const bridge = names(helper, /\.setName\("([^"]+)"\)/g);
   r.check(
-    "Agent 连接卡：开关、端口、连接到 Agent，且只在「批注」页调用一次",
+    "Agent 连接卡：开关、端口、连接到 Agent、每轮的快捷命令，且只在「批注」页调用一次",
     bridge.join("/") === BRIDGE_SETTINGS.join("/") &&
       (blocks[2].match(/buildAgentBridgeSettings\(/g) || []).length === 1 &&
       (body.match(/buildAgentBridgeSettings\(/g) || []).length === 1,

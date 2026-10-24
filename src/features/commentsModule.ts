@@ -678,7 +678,10 @@ export function createCommentsModule(
         return { documents };
       }
       const path = agentDocPath(input.path);
-      const list = await runtime.store.reload(path);
+      const all = await runtime.store.reload(path);
+      const list = input.onlyYourTurn
+        ? all.filter((c) => commentTurn(c) === "agent")
+        : all;
       const docText = await readDocTextForLocate(path);
       return {
         path,
@@ -1108,14 +1111,17 @@ export function createCommentsModule(
 
   function copyReplyPrompt(docPath?: string): void {
     copyPrompt(docPath, (path, list) => {
-      const waiting = list.filter((c) => commentTurn(c) === "agent").length;
-      if (waiting === 0) {
+      const waiting = list
+        .filter((c) => commentTurn(c) === "agent")
+        .map((c) => c.id)
+        .sort((a, b) => a - b);
+      if (waiting.length === 0) {
         new Notice("没有等 Agent 回复的批注");
         return null;
       }
       return {
         text: buildReplyPrompt(path, waiting, options.agentChannel?.() ?? "file"),
-        done: `已复制回复指令（${waiting} 条等 Agent）：发给 Agent，它会逐条回复`,
+        done: `已复制回复指令（${waiting.length} 条等 Agent）：发到和它聊批注的那个对话里，它会接着回`,
       };
     });
   }

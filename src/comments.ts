@@ -1220,6 +1220,9 @@ export type AgentChannel = "tools" | "file";
 /** 本机批注工具在 Agent 那边登记的服务名（连接命令与指令里共用）。 */
 export const AGENT_TOOLS_SERVER_NAME = "writing-toolkit";
 
+/** 设置页「每轮的快捷命令」装进 Agent 的自定义命令名：在原来的对话里敲 /pizhu */
+export const REPLY_COMMAND_NAME = "pizhu";
+
 /**
  * 两份指令的写法（2026-10-23 作者试用后调整）：先说想和 Agent 聊什么，规矩压到最后一小段。
  * 规矩写多了，Agent 会把批注当成一份照章办事的作业，只剩客观、机械的挑错；
@@ -1264,7 +1267,7 @@ export function buildReviewPrompt(
       ``,
       closing,
       ``,
-      `（${existing}${TOOLS_NOTE}）`,
+      `（${existing}${TOOLS_NOTE}之后我在批注里回了你，会在这个对话里说一声（也可能是敲 /${REPLY_COMMAND_NAME}），到时用 list_comments 带 only_your_turn: true 只看轮到你的那几条，接着聊就好。）`,
     ].join("\n");
   }
   const sidecar = sidecarPathFor(docPath);
@@ -1280,29 +1283,30 @@ export function buildReviewPrompt(
   ].join("\n");
 }
 
-/** 「复制回复指令」：请 Agent 接着聊轮到它的那些批注。 */
+/**
+ * 「复制回复指令」：请 Agent 接着聊轮到它的那些批注。
+ * 默认发到和它聊批注的同一个对话里（2026-10-24 作者确认：新开对话要重读一遍，费 token 也丢了默契），
+ * 所以只点明是哪几条、怎么只读这几条，不再把邀请和规矩整段重复一遍。
+ */
 export function buildReplyPrompt(
   docPath: string,
-  waiting: number,
+  waitingIds: readonly number[],
   channel: AgentChannel = "file"
 ): string {
   const base = docBaseName(docPath).replace(/\.md$/i, "");
-  const invitation = [
-    `我在《${base}》的批注里回你了，现在有 ${waiting} 条在等你，去看看我说了什么，接着聊吧。`,
-    ``,
-    `想法不一样就直说，讲讲你的理由，也可以反问我；我说「改」的地方，就把你的写法附上，我来采纳。不必每条都给方案，像聊天一样回就好；读的时候有新冒出来的想法，也可以另开一条。`,
-  ];
+  const ids = waitingIds.map((id) => `#${id}`).join("、");
+  const invitation = `我在《${base}》的批注里回你了：${ids}，共 ${waitingIds.length} 条在等你，接着聊吧。想法不一样就直说、讲讲理由，也可以反问我；像聊天一样回就好。`;
   if (channel === "tools") {
     return [
-      ...invitation,
+      invitation,
       ``,
-      `（库内路径：${docPath}。用 list_comments 找轮到你的那些，reply_comment 回复，附写法就带上 suggestion；没有这些工具的话先停下来告诉我，别直接改批注文件或正文。）`,
+      `（库内路径：${docPath}。用 list_comments 带 only_your_turn: true 只看这几条，reply_comment 回复，附写法就带上 suggestion；没有这些工具的话先停下来告诉我，别直接改批注文件或正文。）`,
     ].join("\n");
   }
   const sidecar = sidecarPathFor(docPath);
   return [
-    ...invitation,
+    invitation,
     ``,
-    `（批注在「${sidecar}」：轮到你的是最后一条消息是「作者」的那些，在那条末尾加一行「- Agent：……」回复；附写法就在下面跟「- 建议原句」「- 建议改为」两行。已有的消息和条目请不要改、不要删；找位置先看「现文」再看「原文」，找不到就跟我说，别把它们改去指向别的句子；请不要直接改《${base}》。）`,
+    `（批注在「${sidecar}」：在这几条末尾各加一行「- Agent：……」回复；附写法就在下面跟「- 建议原句」「- 建议改为」两行。已有的消息和条目请不要改、不要删；找位置先看「现文」再看「原文」，找不到就跟我说，别把它们改去指向别的句子；请不要直接改《${base}》。）`,
   ].join("\n");
 }
