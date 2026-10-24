@@ -6,7 +6,7 @@ import {
   type App,
   type TAbstractFile,
 } from "obsidian";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { CommentStore } from "../commentStore";
 import {
   AnchorLocator,
@@ -45,8 +45,11 @@ import {
   anchorReplaceEffect,
   buildCommentExtensions,
   dispatchCommentRefresh,
+  commentAnchorPositions,
   type AnchorEdit,
 } from "../commentDecor";
+import { buildMarginExtension, marginFor } from "../commentMargin";
+import type { CommentDrafts } from "../commentThread";
 import {
   CommentPanelBody,
   type CommentPanelHost,
@@ -112,6 +115,8 @@ export interface CommentsOperations extends CommentPanelHost {
   refreshPanels(): void;
   addCommentForView(view: EditorView): void;
   revealInPanel(path: string, id: number): void;
+  /** 收起所有展开的页边卡（进沉浸模式 / 番茄钟锁定时由主入口调用）。 */
+  collapseMarginCards(): void;
   buildDiagnosticReport(): string;
   flush(): Promise<void>;
   subscribe(listener: (change: CommentsChange) => void): () => void;
@@ -143,11 +148,13 @@ export interface CommentsModuleOptions {
 
 type CommentPanelFactory = (
   container: HTMLElement,
-  host: CommentPanelHost
+  host: CommentPanelHost,
+  drafts: CommentDrafts
 ) => CommentPanelHandle;
 
 type CommentStoreFactory = (app: App) => CommentStoreAdapter;
 type CommentExtensionBuilder = typeof buildCommentExtensions;
+type MarginExtensionBuilder = typeof buildMarginExtension;
 type CommentDecorRefresher = (
   view: EditorView | undefined
 ) => void;
@@ -173,6 +180,7 @@ export interface CommentsModuleFactories {
   readonly createPanel?: CommentPanelFactory;
   readonly createStore?: CommentStoreFactory;
   readonly buildExtensions?: CommentExtensionBuilder;
+  readonly buildMargin?: MarginExtensionBuilder;
   readonly refreshDecor?: CommentDecorRefresher;
   readonly createDraft?: DraftPresenter;
   readonly createConfirm?: ConfirmPresenter;
@@ -180,9 +188,10 @@ export interface CommentsModuleFactories {
 
 function createDefaultPanel(
   container: HTMLElement,
-  host: CommentPanelHost
+  host: CommentPanelHost,
+  drafts: CommentDrafts
 ): CommentPanelBody {
-  return new CommentPanelBody(container, host);
+  return new CommentPanelBody(container, host, drafts);
 }
 
 function toDocPath(path: string): string {
@@ -202,6 +211,7 @@ export function createCommentsModule(
   const createPanel = factories.createPanel ?? createDefaultPanel;
   const createStore = factories.createStore ?? ((app) => new CommentStore(app));
   const buildExtensions = factories.buildExtensions ?? buildCommentExtensions;
+  const buildMargin = factories.buildMargin ?? buildMarginExtension;
   const refreshDecor = factories.refreshDecor ?? dispatchCommentRefresh;
   const createDraft = factories.createDraft ?? ((...args) => new CommentDraftModal(...args));
 
@@ -215,6 +225,8 @@ export function createCommentsModule(
   let operations: CommentsOperations | null = null;
   let mutationChain: Promise<void> = Promise.resolve();
   const mountedPanels = new Set<CommentPanelHandle>();
+  /** 没发出去的回复草稿：侧栏详情页和页边卡共用 */
+  const drafts: CommentDrafts = new Map();
   const listeners = new Set<(change: CommentsChange) => void>();
 
   function requireRuntime(): {
@@ -444,7 +456,6 @@ export function createCommentsModule(
   }
 
   async function getCommentPanelModel(): Promise<CommentPanelModel> {
-    const runtime = requireRuntime();
     const docPath = activeCommentDocPath();
     if (!docPath) {
       return {
@@ -455,6 +466,12 @@ export function createCommentsModule(
         rejectedCount: 0,
       };
     }
+    return modelForPath(docPath);
+  }
+
+  /** 某篇文档的批注模型（侧栏用活动文档，页边卡用自己编辑器里的那篇）。 */
+  async function modelForPath(docPath: string): Promise<CommentPanelModel> {
+    const runtime = requireRuntime();
     const activeFile = runtime.app.workspace.getActiveFile();
     const base = (docPath.split("/").pop() ?? docPath).replace(/\.md$/i, "");
     const docName =
@@ -927,6 +944,66 @@ export function createCommentsModule(
     events?.setTimeout(() => revealMountedCard(id), 120);
   }
 
+  /** 这篇文档的编辑器（页边卡挂在它上面）。 */
+  function editorViewForPath(path: string): EditorView | null {
+    const runtime = requireRuntime();
+    const view = markdownViewForPath(path);
+    if (!view?.editor) return null;
+    return runtime.services.editor.getViewForEditor(view.editor) ?? null;
+  }
+
+  /**
+   * 在页边卡里打开这条：编辑器滚到那处（不动光标）并展开卡片。
+   * 页边放不下、这篇没开着、或原文定位不到时返回 false，调用方退回侧栏详情页。
+   */
+  function openInMargin(docPath: string, id: number): boolean {
+    const cm = editorViewForPath(docPath);
+    const margin = marginFor(cm);
+    if (!cm || !margin?.available()) return false;
+    const pos = commentAnchorPositions(cm.state).find((p) => p.id === id);
+    if (!pos) return false;
+    const leaf = markdownViewForPath(docPath)?.leaf;
+    if (leaf) requireRuntime().services.ui.reveal(leaf);
+    cm.dispatch({
+      effects: EditorView.scrollIntoView(pos.from, { y: "center" }),
+    });
+    return margin.reveal(id);
+  }
+
+  /** 所有编辑器里展开着的页边卡；返回收起了几张。 */
+  function collapseMarginCards(): number {
+    if (!active) return 0;
+    const runtime = requireRuntime();
+    let collapsed = 0;
+    for (const leaf of runtime.services.ui.leaves("markdown")) {
+      const view = leaf.view as MarkdownView;
+      if (!view.editor) continue;
+      const margin = marginFor(runtime.services.editor.getViewForEditor(view.editor));
+      if (!margin?.expanded()) continue;
+      margin.collapse();
+      collapsed++;
+    }
+    return collapsed;
+  }
+
+  /**
+   * Esc 收起页边卡。必须挂在 window 的捕获阶段：Obsidian 的快捷键系统也在那里，
+   * 有面板认领 Esc 时会 stopPropagation，编辑器、卡片里的监听都收不到；同一层的其他监听不受影响。
+   * 真收起了卡片就把这次 Esc 吃掉，免得同时退出沉浸模式。
+   */
+  function closeOnEscape(event: KeyboardEvent): void {
+    if (event.key !== "Escape" || event.isComposing) return;
+    if (collapseMarginCards() > 0) event.stopPropagation();
+  }
+
+  /** 页边新建、一个字没写就收起：删掉这条空批注（有消息的不动）。 */
+  function discardEmptyComment(path: string, id: number): void {
+    if (!acceptingCalls) return;
+    void mutateComments(path, (list) =>
+      list.filter((comment) => comment.id !== id || comment.messages.length > 0)
+    );
+  }
+
   async function addCommentForView(view: EditorView): Promise<void> {
     const runtime = requireRuntime();
     const settings = runtime.services.settings.get();
@@ -970,6 +1047,8 @@ export function createCommentsModule(
     });
     if (!created || createdId === null || !acceptingCalls) return;
     const id = createdId;
+    // 页边放得下：直接在正文旁边出一张空白卡写第一条消息；放不下才弹居中输入框
+    if (marginFor(view)?.beginCompose(id)) return;
     createDraft(
       runtime.app,
       "添加批注",
@@ -1379,6 +1458,13 @@ export function createCommentsModule(
           assertAcceptingCalls();
           return getCommentPanelModel();
         },
+        collapseMarginCards() {
+          collapseMarginCards();
+        },
+        openInMargin(docPath, id) {
+          assertAcceptingCalls();
+          return openInMargin(docPath, id);
+        },
         jumpToComment(docPath, id) {
           assertAcceptingCalls();
           const path = docPath || activeCommentDocPath();
@@ -1529,6 +1615,7 @@ export function createCommentsModule(
         typeof context.events.onDom === "function" &&
         typeof window !== "undefined"
       ) {
+        context.events.onDom(window, "keydown", closeOnEscape, true);
         context.events.onDom(window, "focus", () => {
           if (!active) return;
           const docPath = activeCommentDocPath();
@@ -1540,19 +1627,42 @@ export function createCommentsModule(
         });
       }
 
-      context.registrations.registerEditorExtension(
+      // 正文里的标记 / 脚注号 + 页边对话卡，作为一组编辑器扩展注册
+      context.registrations.registerEditorExtension([
         buildExtensions({
           enabled: () =>
             context.services.settings.get().commentsEnabled &&
             !options.isMobile?.(),
           getComments: (path) => localStore.getCached(path),
           ensureLoaded: (path) => primeComments(path),
-          onRevealComment: (path, comment) => {
-            if (acceptingCalls) void revealInPanel(path, comment.id);
+          onRevealComment: (path, comment, view) => {
+            if (!acceptingCalls) return;
+            // 页边放得下就在正文旁边展开，不再把侧栏切到详情页
+            if (marginFor(view)?.reveal(comment.id)) return;
+            void revealInPanel(path, comment.id);
           },
           onAnchorsEdited: (path, edits) => applyAnchorEdits(path, edits),
-        })
-      );
+        }),
+        buildMargin({
+          enabled: () =>
+            context.services.settings.get().commentsEnabled &&
+            !options.isMobile?.(),
+          getModel: (path) => modelForPath(path),
+          host: {
+            replyToComment: (path, id, text) =>
+              acceptingCalls ? replyToComment(path, id, text) : Promise.resolve(false),
+            editComment: (path, id) => operations?.editComment(path, id),
+            resolveComment: (path, id) => operations?.resolveComment(path, id),
+            rejectComment: (path, id) => operations?.rejectComment(path, id),
+            adoptSuggestion: (path, id) =>
+              operations ? operations.adoptSuggestion(path, id) : Promise.resolve(false),
+            copyText: (text) => operations?.copyText(text),
+            rebindComment: (path, id) => operations?.rebindComment(path, id),
+          },
+          drafts,
+          discardEmpty: (path, id) => discardEmptyComment(path, id),
+        }),
+      ]);
 
       const unregister = context.services.ui.registerPanel(
         UI_SLOT_SIDEBAR_COMMENTS,
@@ -1560,7 +1670,7 @@ export function createCommentsModule(
           if (!active || disposed || !operations) {
             throw new Error("批注模块已停用");
           }
-          const panel = createPanel(container, operations);
+          const panel = createPanel(container, operations, drafts);
           const handle: CommentPanelHandle = {
             refresh: () => panel.refresh(),
             destroy: () => panel.destroy(),

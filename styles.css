@@ -1970,7 +1970,7 @@ body.wt-heading-style .markdown-rendered p {
   stroke: currentColor;
   stroke-width: 1.5;
 }
-:is(.theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page) {
+:is(.theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page, .theme-dark .wt-margin) {
   --wt-paper: #1d1a17;
   --wt-paper-2: #24201c;
   --wt-card-bg: #27231f;
@@ -1994,7 +1994,7 @@ body.wt-heading-style .markdown-rendered p {
 /* 编辑台 / 工具箱 / 设置页的内部还大量用 Obsidian 变量，就地改写这一层，
    没逐一重画的原生控件（开关、下拉、滑块、折叠区）自动落到同一套色上。
    主页只走 --wt-* 令牌，不在这份名单里。 */
-:is(.wt-wb, .wt-sidebar, .wt-settings-page) {
+:is(.wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   --text-normal: var(--wt-ink);
   --text-muted: var(--wt-ink-2);
   --text-faint: var(--wt-ink-3);
@@ -2014,7 +2014,7 @@ body.wt-heading-style .markdown-rendered p {
 }
 
 /* 这三个都是窄栏、小字密集，深色下墨色要比重宽栏的主页再亮一档 */
-:is(.theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page) {
+:is(.theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page, .theme-dark .wt-margin) {
   --wt-ink-3: #948876;
 }
 
@@ -6722,7 +6722,7 @@ body.wt-mobile .wt-mbar.is-on:active {
    · 不覆盖：封面 / 印章（书的内容）、差异对比的增删语义色、信纸横线。
    ========================================================================== */
 
-body.wt-theme-cool :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+body.wt-theme-cool :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   --wt-shadow-card: 0 1px 2px rgba(30, 45, 60, 0.05), 0 3px 8px -3px rgba(30, 45, 60, 0.08);
   --wt-shadow-card-hover: 0 1px 2px rgba(30, 45, 60, 0.07), 0 6px 14px -5px rgba(30, 45, 60, 0.13);
   --wt-shadow-float: 0 1px 2px rgba(30, 45, 60, 0.06), 0 10px 24px -12px rgba(30, 45, 60, 0.3);
@@ -6747,7 +6747,7 @@ body.wt-theme-cool :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
   --wt-num: "SF Pro Text", "Helvetica Neue", var(--wt-serif);
 }
 
-body.wt-theme-cool.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+body.wt-theme-cool.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   --wt-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22), 0 4px 10px -4px rgba(0, 0, 0, 0.38);
   --wt-shadow-card-hover: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 18px -6px rgba(0, 0, 0, 0.5);
   --wt-shadow-float: 0 1px 2px rgba(0, 0, 0, 0.35), 0 12px 28px -12px rgba(0, 0, 0, 0.6);
@@ -6769,7 +6769,7 @@ body.wt-theme-cool.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-pa
 }
 
 /* 窄栏的深色墨色再亮一档，与暖纸深色的做法保持一致 */
-body.wt-theme-cool.theme-dark :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
+body.wt-theme-cool.theme-dark :is(.wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   --wt-ink-3: #8593a1;
 }
 
@@ -6836,7 +6836,7 @@ body.wt-theme-cool.wt-immersive .cm-content {
    `tools/checks/check-theme-palette.js` 会拦下任何不一致。
    ========================================================================== */
 
-body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   /* Notion 高对比度皮肤复刻 · 浅色（取色自真实皮肤）
      白纸 + 炭黑字/次要灰/占位灰，发丝线 #d3d1cb，强调线 #2c2c2b。
      皮肤是平的：卡片只留发丝边，不摆投影。 */
@@ -6882,7 +6882,7 @@ body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
   --wt-tag-brown-ink: #4d3425;
 }
 
-body.wt-theme-contrast.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+body.wt-theme-contrast.theme-dark :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   /* Notion 高对比度皮肤复刻 · 深色：炭黑纸 + 近白字，平铺不投影 */
   --wt-shadow-card: none;
   --wt-shadow-card-hover: none;
@@ -6956,7 +6956,7 @@ body.wt-theme-contrast .wt-lib-row.is-current {
    ========================================================================== */
 
 /* 交互色：开关 / 链接 / 焦点环 / 主按钮统一用 Notion 的暗蓝 */
-body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) {
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   --interactive-accent: var(--wt-action);
   --interactive-accent-hover: var(--wt-action-hover);
   --text-accent: var(--wt-action);
@@ -7643,7 +7643,7 @@ body.theme-dark.wt-theme-contrast {
   --cmp-line-strong: #e6e4df;
 }
 
-:is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+:is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   --cmp-ink: var(--wt-ink);
   --cmp-ink-2: var(--wt-ink-2);
   --cmp-ink-3: var(--wt-ink-3);
@@ -7655,7 +7655,7 @@ body.theme-dark.wt-theme-contrast {
   --cmp-mark-bg: var(--wt-accent-soft);
 }
 
-:is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) {
+:is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page, .wt-margin) {
   /* 内嵌卡（.wt-pomo-card / .wt-calendar-view）：比 --wt-shadow 更轻。
      这两处原先写死 `0 2px 8px rgba(0,0,0,.04)`——中性黑，不随主题走，
      结果在暖纸上是灰调、在高对比度下几乎看不见、在深色底上完全无效。
@@ -7712,6 +7712,15 @@ body.theme-dark.wt-theme-contrast {
 
 .wt-comment-mark.is-resolved:hover {
   background: color-mix(in srgb, var(--cmp-ink-3) 10%, transparent);
+}
+
+/* 页边卡展开的那条：原文底色加深（等 Agent 的那种也一样，好对上是哪句） */
+.wt-comment-mark.is-active,
+.wt-comment-mark.is-active:hover {
+  background: color-mix(in srgb, var(--cmp-mark-line) 30%, transparent);
+  border-bottom-style: solid;
+  border-bottom-width: 2px;
+  border-bottom-color: var(--cmp-mark-line);
 }
 
 
@@ -8253,7 +8262,7 @@ body.wt-mobile .wt-comment-reply-input {
 .wt-pomo-btn:active {
   transform: scale(0.97);
 }
-:is(.theme-dark .wt-home, .theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page)  { --wt-paper: #1d1a17; --wt-paper-2: #24201c; --wt-card-bg: #27231f; --wt-ink: #ece4d6; --wt-ink-2: #b3a895; --wt-ink-3: #85796a; --wt-rule: rgba(236, 220, 190, 0.1); --wt-rule-strong: rgba(236, 220, 190, 0.18); --wt-wash: rgba(236, 220, 190, 0.05); --wt-accent: #e07a5f; --wt-accent-soft: rgba(224, 122, 95, 0.14); --wt-accent-ink: #1d1a17; --wt-jade: #8bb89a; --wt-amber: #d9a65a; --wt-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 22px -10px rgba(0, 0, 0, 0.55); }
+:is(.theme-dark .wt-home, .theme-dark .wt-wb, .theme-dark .wt-sidebar, .theme-dark .wt-settings-page, .theme-dark .wt-margin)  { --wt-paper: #1d1a17; --wt-paper-2: #24201c; --wt-card-bg: #27231f; --wt-ink: #ece4d6; --wt-ink-2: #b3a895; --wt-ink-3: #85796a; --wt-rule: rgba(236, 220, 190, 0.1); --wt-rule-strong: rgba(236, 220, 190, 0.18); --wt-wash: rgba(236, 220, 190, 0.05); --wt-accent: #e07a5f; --wt-accent-soft: rgba(224, 122, 95, 0.14); --wt-accent-ink: #1d1a17; --wt-jade: #8bb89a; --wt-amber: #d9a65a; --wt-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 22px -10px rgba(0, 0, 0, 0.55); }
 body.wt-status-only-immersive:not(.wt-immersive) .wt-status-bar {
   display: none !important;
 }
@@ -10110,12 +10119,12 @@ body.wt-mobile .wt-lock-banner-btn {
  * 按钮三连清（border / background / box-shadow），免得宿主冷灰底压在暖纸上跳出来。
  * 批注只在桌面端用，这里不写手机端适配。
  * ========================================================================== */
-.wt-tb-comments {
+:is(.wt-tb-comments, .wt-margin) {
   --wt-cmt-bubble: color-mix(in srgb, var(--wt-ink) 4%, var(--wt-card-bg));
   --wt-cmt-line: color-mix(in srgb, var(--wt-accent) 45%, transparent);
 }
 
-.wt-tb-comments button {
+:is(.wt-tb-comments, .wt-margin) button {
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -10340,7 +10349,7 @@ body.wt-mobile .wt-lock-banner-btn {
   color: var(--wt-ink-3);
 }
 
-.wt-tb-comments .wt-comment-chip {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-chip {
   padding: 1px 8px;
   border: 0;
   border-radius: var(--wt-radius-pill);
@@ -10349,20 +10358,20 @@ body.wt-mobile .wt-lock-banner-btn {
   color: var(--wt-accent);
 }
 
-.wt-tb-comments .wt-comment-chip.is-resolved {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-chip.is-resolved {
   background: var(--wt-wash);
   color: var(--wt-ink-3);
 }
 
-.wt-tb-comments .wt-comment-detail .wt-comment-card-loc {
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-loc {
   margin-top: -4px;
   font-size: var(--wt-fs-11px);
   color: var(--wt-ink-3);
 }
 
 /* 原文：强调色竖线 + 衬线，像书页上的引文 */
-.wt-tb-comments .wt-comment-detail .wt-comment-quote,
-.wt-tb-comments .wt-comment-detail .wt-comment-quote:hover {
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-quote,
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-quote:hover {
   padding: 6px 10px;
   border-left: 2.5px solid var(--wt-accent);
   border-radius: 0 var(--wt-radius-6px) var(--wt-radius-6px) 0;
@@ -10374,12 +10383,12 @@ body.wt-mobile .wt-lock-banner-btn {
 }
 
 /* ---- 对话：Agent 浅底块，作者只有一条强调色竖线；都占满整行 ---- */
-.wt-tb-comments .wt-comment-thread {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-thread {
   gap: 10px;
   margin-top: 2px;
 }
 
-.wt-tb-comments .wt-comment-msg {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-msg {
   padding: 8px 10px;
   border-radius: var(--wt-radius-8px);
   font-size: var(--wt-fs-13px);
@@ -10387,36 +10396,36 @@ body.wt-mobile .wt-lock-banner-btn {
   color: var(--wt-ink);
 }
 
-.wt-tb-comments .wt-comment-msg.is-agent {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-msg.is-agent {
   background: var(--wt-cmt-bubble);
 }
 
-.wt-tb-comments .wt-comment-msg.is-author {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-msg.is-author {
   padding: 2px 0 2px 11px;
   border-left: 2px solid var(--wt-cmt-line);
   border-radius: 0;
 }
 
-.wt-tb-comments .wt-comment-msg-who {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-msg-who {
   margin-bottom: 2px;
   font-size: var(--wt-fs-11px);
   letter-spacing: 0.08em;
   color: var(--wt-ink-3);
 }
 
-.wt-tb-comments .wt-comment-msg.is-author .wt-comment-msg-who {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-msg.is-author .wt-comment-msg-who {
   color: var(--wt-accent);
 }
 
 /* ---- 回复框 ---- */
-.wt-tb-comments .wt-comment-reply-box {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-box {
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
   margin-top: 4px;
 }
 
-.wt-tb-comments .wt-comment-reply-input {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-input {
   min-height: 72px;
   padding: 8px 10px;
   border: 0.5px solid var(--wt-rule-strong);
@@ -10428,18 +10437,18 @@ body.wt-mobile .wt-lock-banner-btn {
   color: var(--wt-ink);
 }
 
-.wt-tb-comments .wt-comment-reply-input:focus,
-.wt-tb-comments .wt-comment-reply-input:focus-visible {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-input:focus,
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-input:focus-visible {
   border-color: var(--wt-accent);
   box-shadow: 0 0 0 2px var(--wt-accent-soft);
   outline: none;
 }
 
-.wt-tb-comments .wt-comment-reply-input::placeholder {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-input::placeholder {
   color: var(--wt-ink-3);
 }
 
-.wt-tb-comments .wt-comment-reply-box button {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-box button {
   align-self: flex-end;
   height: 28px;
   padding: 0 16px;
@@ -10450,24 +10459,24 @@ body.wt-mobile .wt-lock-banner-btn {
   color: var(--wt-card-bg);
 }
 
-.wt-tb-comments .wt-comment-reply-box button:hover {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-box button:hover {
   filter: brightness(1.06);
 }
 
-.wt-tb-comments .wt-comment-reply-box button:disabled {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-reply-box button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 /* ---- 结案与其他操作：幽灵按钮，发丝线隔开 ---- */
-.wt-tb-comments .wt-comment-detail .wt-comment-card-actions {
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions {
   gap: 4px;
   margin: 2px -6px 0;
   padding-top: 8px;
   border-top: 0.5px solid var(--wt-rule);
 }
 
-.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button {
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions button {
   height: 26px;
   padding: 0 9px;
   border-radius: var(--wt-radius-6px);
@@ -10475,24 +10484,24 @@ body.wt-mobile .wt-lock-banner-btn {
   color: var(--wt-ink-2);
 }
 
-.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button:first-child {
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions button:first-child {
   color: var(--wt-accent);
   font-weight: 600;
 }
 
-.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button:hover {
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions button:hover {
   background: var(--background-modifier-hover);
 }
 
 /* 确认态：浅红底 + 红字 + 红框（必须压过上面的幽灵按钮） */
-.wt-tb-comments .wt-comment-detail .wt-comment-card-actions button.is-confirming {
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions button.is-confirming {
   border: 0.5px solid var(--text-error);
   background: color-mix(in srgb, var(--text-error) 12%, transparent);
   color: var(--text-error);
 }
 
 /* ---- 修改建议：删掉的划线、新增的高亮（配色和快照对比一致） ---- */
-.wt-tb-comments .wt-comment-suggest {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest {
   margin-top: 6px;
   padding: 7px 9px;
   border: 0.5px solid var(--wt-rule-strong);
@@ -10500,18 +10509,18 @@ body.wt-mobile .wt-lock-banner-btn {
   background: var(--wt-paper);
 }
 
-.wt-tb-comments .wt-comment-suggest.is-superseded {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest.is-superseded {
   opacity: 0.6;
 }
 
-.wt-tb-comments .wt-comment-suggest-label {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-label {
   margin-bottom: 3px;
   font-size: var(--wt-fs-11px);
   letter-spacing: 0.08em;
   color: var(--wt-ink-3);
 }
 
-.wt-tb-comments .wt-comment-suggest-diff {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-diff {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--wt-fs-13px);
@@ -10519,33 +10528,33 @@ body.wt-mobile .wt-lock-banner-btn {
   color: var(--wt-ink);
 }
 
-.wt-tb-comments .wt-comment-suggest-del {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-del {
   background: rgba(255, 92, 92, 0.22);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--wt-ink) 55%, transparent);
 }
 
-.wt-tb-comments .wt-comment-suggest-add {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-add {
   background: rgba(94, 201, 126, 0.24);
 }
 
-body.theme-dark .wt-tb-comments .wt-comment-suggest-del {
+body.theme-dark :is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-del {
   background: rgba(255, 92, 92, 0.32);
 }
 
-body.theme-dark .wt-tb-comments .wt-comment-suggest-add {
+body.theme-dark :is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-add {
   background: rgba(94, 201, 126, 0.32);
 }
 
-body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-del {
+body.wt-theme-contrast :is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-del {
   background: rgba(214, 58, 58, 0.26);
 }
 
-body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-add {
+body.wt-theme-contrast :is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-add {
   background: rgba(46, 160, 92, 0.26);
 }
 
-.wt-tb-comments .wt-comment-suggest-actions {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -10553,7 +10562,7 @@ body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-add {
   margin-top: 6px;
 }
 
-.wt-tb-comments .wt-comment-suggest-actions button {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-actions button {
   height: 26px;
   padding: 0 10px;
   border-radius: var(--wt-radius-6px);
@@ -10561,23 +10570,23 @@ body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-add {
   color: var(--wt-ink-2);
 }
 
-.wt-tb-comments .wt-comment-suggest-actions button.mod-cta {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-actions button.mod-cta {
   background: var(--wt-accent);
   font-weight: 600;
   color: var(--wt-card-bg);
 }
 
-body.wt-theme-contrast .wt-tb-comments .wt-comment-suggest-actions button.mod-cta {
+body.wt-theme-contrast :is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-actions button.mod-cta {
   background: var(--wt-action);
   color: #ffffff;
 }
 
-.wt-tb-comments .wt-comment-suggest-actions button:disabled {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.wt-tb-comments .wt-comment-suggest-reason {
+:is(.wt-tb-comments, .wt-margin) .wt-comment-suggest-reason {
   font-size: var(--wt-fs-11px);
   color: var(--wt-ink-3);
 }
@@ -10598,9 +10607,124 @@ body.wt-theme-contrast .wt-tb-comments .wt-comments-tab.is-active {
   color: var(--wt-ink);
 }
 
-body.wt-theme-contrast .wt-tb-comments .wt-comment-reply-box button {
+body.wt-theme-contrast :is(.wt-tb-comments, .wt-margin) .wt-comment-reply-box button {
   background: var(--wt-action);
   color: #ffffff;
+}
+
+/* ============================================================================
+ * 批注页边对话卡（2026-10-25，specs/comment-margin-cards.md）
+ * 卡片挂在编辑器的 .cm-scroller 里绝对定位（top / left / width 由 commentMargin.ts 写），
+ * 和正文一起原生滚动；不加位置过渡动画，免得打字时卡片「慢半拍」跟上。
+ * 对话体（原文、对话、建议、回复框、结案按钮）沿用上面侧栏详情页的样式。
+ * ========================================================================== */
+.wt-margin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  z-index: 2;
+}
+
+.wt-margin.is-hidden {
+  display: none;
+}
+
+.wt-margin .wt-mcard {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 8px 12px 10px;
+  border: 0.5px solid var(--wt-rule);
+  border-radius: var(--wt-radius-12px);
+  background: var(--wt-card-bg);
+  box-shadow: var(--wt-shadow-card);
+  font-family: var(--font-interface);
+  font-size: var(--wt-fs-13px);
+  line-height: 1.6;
+  color: var(--wt-ink);
+  cursor: pointer;
+}
+
+.wt-margin .wt-mcard:hover {
+  border-color: var(--wt-rule-strong);
+  box-shadow: var(--wt-shadow-card-hover);
+}
+
+.wt-margin .wt-mcard:focus-visible {
+  outline: 2px solid var(--wt-accent-soft);
+  outline-offset: 1px;
+}
+
+/* 等你的那张：左边一道强调色，扫一眼就知道该回哪几条 */
+.wt-margin .wt-mcard.is-your-turn {
+  border-left: 2.5px solid var(--wt-accent);
+}
+
+.wt-margin .wt-mcard.is-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 14px 14px;
+  box-shadow: var(--wt-shadow);
+  cursor: auto;
+  z-index: 1;
+}
+
+.wt-margin .wt-mcard-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+.wt-margin .wt-mcard-id {
+  font-family: var(--wt-num);
+  font-size: var(--wt-fs-12px);
+  font-variant-numeric: tabular-nums;
+  color: var(--wt-ink-3);
+}
+
+.wt-margin .wt-mcard-flag {
+  padding: 0 7px;
+  border-radius: var(--wt-radius-pill);
+  background: var(--wt-accent-soft);
+  font-size: var(--wt-fs-11px);
+  color: var(--wt-accent);
+}
+
+.wt-margin .wt-mcard-close {
+  margin-left: auto;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--wt-radius-6px);
+  font-size: var(--wt-fs-12px);
+  color: var(--wt-ink-2);
+}
+
+.wt-margin .wt-mcard-close:hover {
+  background: var(--background-modifier-hover);
+  color: var(--wt-ink);
+}
+
+/* 收起时只露最后一条消息的前两行 */
+.wt-margin .wt-mcard-last {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+  color: var(--wt-ink-2);
+}
+
+.wt-margin .wt-mcard.is-your-turn .wt-mcard-last {
+  color: var(--wt-ink);
+}
+
+/* 展开后的对话可选中复制 */
+.wt-margin .wt-mcard.is-expanded :is(.wt-comment-quote, .wt-comment-thread) {
+  user-select: text;
 }
 
 @media (prefers-reduced-motion: reduce) {

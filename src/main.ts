@@ -1085,11 +1085,21 @@ export default class WritingToolkitPlugin extends Plugin {
     }
     document.body.classList.toggle("wt-immersive", on);
     if (on) {
+      // 进沉浸（番茄钟锁定也走这里）：展开的批注页边卡全部收起，不打扰；之后仍可手动点开
+      this.collapseCommentMargins();
       this.showImmersiveHint();
     } else {
       this.immersiveHintEl?.removeClass("is-visible");
     }
     this.setParagraphHighlight(this.settings.immersiveParagraphHighlight);
+  }
+
+  private collapseCommentMargins(): void {
+    try {
+      this.commentsModule?.operations.collapseMarginCards();
+    } catch {
+      // 启动时按存盘值恢复沉浸模式，批注模块可能还没激活：这时也没有展开的卡
+    }
   }
 
   /** 进入沉浸模式时的退出提示：几秒后淡出。 */

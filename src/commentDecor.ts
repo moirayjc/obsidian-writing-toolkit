@@ -61,8 +61,8 @@ export interface CommentDecorConfig {
   getComments(path: string): WtComment[] | undefined;
   /** 触发异步加载（加载完成后由 main 调 dispatchCommentRefresh）。 */
   ensureLoaded(path: string): void;
-  /** 点击原文标记 / 脚注号：在侧栏批注面板里定位到这张卡片。 */
-  onRevealComment(path: string, comment: WtComment): void;
+  /** 点击原文标记 / 脚注号：展开页边卡，放不下时在侧栏批注面板里打开这条。 */
+  onRevealComment(path: string, comment: WtComment, view: EditorView): void;
   /** 作者在编辑器里改动了批注对应的文字（停手后批量交付）。 */
   onAnchorsEdited?(path: string, edits: AnchorEdit[]): void;
 }
@@ -95,6 +95,22 @@ const ANCHOR_FLUSH_DELAY = 1500;
 
 /** 外部数据变化时，用它让打开的编辑器重建标记与脚注号。 */
 export const commentRefreshEffect = StateEffect.define<null>();
+
+/** 页边卡展开 / 收起时，把那条批注的原文标记加深显示（null = 都不加深）。 */
+export const setActiveCommentEffect = StateEffect.define<number | null>();
+
+/** 一条批注在编辑器里现在的位置（给页边卡对齐用）。 */
+export interface CommentAnchorPos {
+  id: number;
+  from: number;
+  to: number;
+}
+
+/** 装饰字段的值：标记 / 脚注号，以及这次算出来的每条批注的位置。 */
+interface DecorState {
+  deco: DecorationSet;
+  anchors: CommentAnchorPos[];
+}
 
 /**
  * 采纳建议时随替换一起发出：批注 id 的位置改到替换后的文字上。
@@ -316,6 +332,15 @@ function collectAnchorEdits(
 /** 最近一次 buildCommentExtensions 建的跟踪表字段（检查脚本读跟踪结果用）。 */
 let currentAnchorField: StateField<Map<number, TrackedAnchor>> | null = null;
 
+/** 最近一次 buildCommentExtensions 建的装饰字段（页边卡读批注位置用）。 */
+let currentDecorField: StateField<DecorState> | null = null;
+
+/** 这个编辑器状态里每条批注现在的位置（和正文标记同一份，作者改字也跟得住）。 */
+export function commentAnchorPositions(state: EditorState): CommentAnchorPos[] {
+  const value = currentDecorField ? state.field(currentDecorField, false) : undefined;
+  return value?.anchors ?? [];
+}
+
 /** 这个编辑器状态里，作者改过、还没写回的批注位置（只读，不交付）。 */
 export function pendingAnchorEdits(state: EditorState): AnchorEdit[] {
   const anchors = currentAnchorField
@@ -327,19 +352,20 @@ export function pendingAnchorEdits(state: EditorState): AnchorEdit[] {
 function buildDecorations(
   state: EditorState,
   config: CommentDecorConfig,
-  anchors?: ReadonlyMap<number, TrackedAnchor>
-): DecorationSet {
+  anchors?: ReadonlyMap<number, TrackedAnchor>,
+  activeId: number | null = null
+): DecorState {
   // 诊断：每条「为什么没走到构建」的判据都记一笔，供内部批注诊断报告使用
   const startedAt = performance.now();
   const finish = (reason: string | null, set: DecorationSet, extra?: {
     located: number; via: Record<string, number>; marks: number; chips: number;
-  }): DecorationSet => {
+  }, positions: CommentAnchorPos[] = []): DecorState => {
     const path = readDocPath(state);
     if (reason) commentSkip(reason, path);
     else if (extra) {
       commentBuilt({ path: path ?? "（未知）", ms: performance.now() - startedAt, ...extra });
     }
-    return set;
+    return { deco: set, anchors: positions };
   };
 
   if (!config.enabled()) return finish("批注总开关关闭", Decoration.none);
@@ -376,6 +402,7 @@ function buildDecorations(
   }
 
   const ranges: Range<Decoration>[] = [];
+  const positions: CommentAnchorPos[] = [];
   const viaCount: Record<string, number> = {};
   let marks = 0;
   let chips = 0;
@@ -385,10 +412,12 @@ function buildDecorations(
     const c = item.comment;
     const migrated = isMigrated(item.via);
     viaCount[item.via] = (viaCount[item.via] ?? 0) + 1;
+    positions.push({ id: c.id, from: item.from, to: item.to });
     if (item.to > item.from && item.via !== "paragraph") {
       const classes = ["wt-comment-mark"];
       if (commentTurn(c) === "agent") classes.push("is-resolved");
       if (migrated) classes.push("is-migrated");
+      if (c.id === activeId) classes.push("is-active");
       ranges.push(
         Decoration.mark({
           class: classes.join(" "),
@@ -415,7 +444,7 @@ function buildDecorations(
     via: viaCount,
     marks,
     chips,
-  });
+  }, positions);
 }
 
 /* ---------- 扩展入口 ---------- */
@@ -436,14 +465,33 @@ export function buildCommentExtensions(config: CommentDecorConfig): Extension {
 
   currentAnchorField = anchorField;
 
+  // 页边卡展开的那条（原文标记加深）；换文件时清掉
+  const activeField = StateField.define<number | null>({
+    create: () => null,
+    update(value, tr) {
+      if (readDocPath(tr.startState) !== readDocPath(tr.state)) return null;
+      for (const effect of tr.effects) {
+        if (effect.is(setActiveCommentEffect)) value = effect.value;
+      }
+      return value;
+    },
+  });
+
   // 标记 + 脚注号都由状态字段提供，数据变化时由 dispatchCommentRefresh 重建。
-  const decorField = StateField.define<DecorationSet>({
+  const decorField = StateField.define<DecorState>({
     create: (state) => {
       commentDecorDiag.createCalls++;
-      return buildDecorations(state, config, state.field(anchorField, false));
+      return buildDecorations(
+        state,
+        config,
+        state.field(anchorField, false),
+        state.field(activeField, false) ?? null
+      );
     },
     update(value, tr) {
-      const refresh = tr.effects.some((e) => e.is(commentRefreshEffect));
+      const refresh = tr.effects.some(
+        (e) => e.is(commentRefreshEffect) || e.is(setActiveCommentEffect)
+      );
       if (
         tr.docChanged ||
         refresh ||
@@ -453,13 +501,15 @@ export function buildCommentExtensions(config: CommentDecorConfig): Extension {
         return buildDecorations(
           tr.state,
           config,
-          tr.state.field(anchorField, false)
+          tr.state.field(anchorField, false),
+          tr.state.field(activeField, false) ?? null
         );
       }
       return value;
     },
-    provide: (f) => EditorView.decorations.from(f),
+    provide: (f) => EditorView.decorations.from(f, (value) => value.deco),
   });
+  currentDecorField = decorField;
 
   // 停手 / 失焦 / 换文件 / 关闭时，把作者改过的批注位置交给宿主写回「现文」。
   const anchorFlusher = ViewPlugin.fromClass(
@@ -595,12 +645,12 @@ export function buildCommentExtensions(config: CommentDecorConfig): Extension {
       const comments = config.getComments(path) ?? [];
       const found = comments.find((c) => c.id === cid);
       if (!found) return false;
-      config.onRevealComment(path, found);
+      config.onRevealComment(path, found, view);
       return false;
     },
   });
 
-  return [anchorField, decorField, anchorFlusher, loaderPlugin, handlers];
+  return [anchorField, activeField, decorField, anchorFlusher, loaderPlugin, handlers];
 }
 
 function commentIdFromEvent(target: EventTarget | null): number | null {

@@ -125,7 +125,13 @@ function snippetSections(text) {
 function stylesSections(all, tone) {
   const base = `body.wt-theme-${tone}`;
   const pick = (predicate) => all.find(predicate) || null;
-  const has = (rule, suffix) => rule && rule.selector.includes(base + suffix);
+  // 批注页边卡（.wt-margin）挂在编辑器里，也用同一套令牌：styles.css 的令牌块里多了它这一项，
+  // 片段里没有（首帧还没有页边卡）。比对时不算它，值仍然逐令牌比。
+  const has = (rule, suffix) =>
+    rule &&
+    rule.selector
+      .replace(/, (?:\.theme-dark )?\.wt-margin(?=\))/g, "")
+      .includes(base + suffix);
 
   const main = {
     light: pick((r) =>

@@ -17,10 +17,14 @@ import {
   CommentMessage,
   CommentSpeaker,
   CommentTurn,
-  LOCATE_VIA_LABELS,
   LocateVia,
-  diffChars,
 } from "./comments";
+import {
+  CommentDrafts,
+  CommentThreadHost,
+  locationText,
+  renderThreadBody,
+} from "./commentThread";
 
 /** 最新一条建议现在能不能采纳 */
 export type SuggestionStatus =
@@ -79,24 +83,15 @@ export interface CommentPanelModel {
  * 于是「删除」会删到别的文档的批注。路径由面板在 `getCommentPanelModel()`
  * 时拿到并存下来，操作时原样传回，天然与列表内容一致。
  */
-export interface CommentPanelHost {
+export interface CommentPanelHost extends CommentThreadHost {
   /** 读当前活动文档的批注（异步，含定位信息）。 */
   getCommentPanelModel(): Promise<CommentPanelModel>;
   jumpToComment(docPath: string, id: number): void;
-  /** 作者在某条批注下追加一条消息；保存成功返回 true。 */
-  replyToComment(docPath: string, id: number, text: string): Promise<boolean>;
-  /** 编辑作者自己的最后一条消息（屏幕居中的输入框）；Agent 回复后不能再改。 */
-  editComment(docPath: string, id: number): void;
-  /** 已解决：整条删除（不归档，6 秒内可撤销）。 */
-  resolveComment(docPath: string, id: number): void;
-  /** 不采纳：整条删除并记进「已否决」区（6 秒内可撤销）。 */
-  rejectComment(docPath: string, id: number): void;
-  /** 采纳这条批注最新的修改建议：在编辑器里替换正文（⌘Z 可撤回）；成功返回 true。 */
-  adoptSuggestion(docPath: string, id: number): Promise<boolean>;
-  /** 复制一段文字到剪贴板（复制建议用）。 */
-  copyText(text: string): void;
-  /** 锚点失效的批注：进入「重新绑定」流程（在正文里选中新位置）。 */
-  rebindComment(docPath: string, id: number): void;
+  /**
+   * 在正文旁边的页边卡里打开这条（滚到那处并展开）；页边放不下 / 没有这篇的编辑器时返回 false，
+   * 面板就自己进详情页。可选：测试桩可省略。
+   */
+  openInMargin?(docPath: string, id: number): boolean;
   /** 复制「请 Agent 通读并发起批注」的指令；docPath 省略时作用于当前活动文档。 */
   copyReviewPrompt(docPath?: string): void;
   /** 复制「请 Agent 回复轮到它的批注」的指令；docPath 省略时作用于当前活动文档。 */
@@ -124,22 +119,6 @@ function byPosition(a: CommentPanelItem, b: CommentPanelItem): number {
   return la !== lb ? la - lb : a.id - b.id;
 }
 
-/** 这一条在列表 / 详情里的位置说明。 */
-function locationText(item: CommentPanelItem): string {
-  if (item.gone) {
-    return `原文已删除${
-      item.locatedLine === null ? "" : ` · 第 ${item.locatedLine} 行附近`
-    } · 改完了就点「已解决」`;
-  }
-  if (item.locatedLine === null) return "无法定位（原文对不上）";
-  if (item.suggestion?.status === "adopted" && item.turn === "author") {
-    return `第 ${item.locatedLine} 行附近 · 已采纳 · 满意就点「已解决」`;
-  }
-  return `第 ${item.locatedLine} 行附近${
-    item.via && item.via !== "exact" ? ` · ${LOCATE_VIA_LABELS[item.via]}` : ""
-  }`;
-}
-
 /**
  * 批注面板渲染体：列表页或单条详情页。数据一律经 host 获取。
  */
@@ -158,8 +137,8 @@ export class CommentPanelBody {
    * 否则焦点一飘走（侧栏、别的标签页）就可能操作到另一篇文档的批注。
    */
   private docPath: string | null = null;
-  /** 没发出去的回复草稿（键：文档路径 + 批注号）；数据变化重绘时填回去 */
-  private readonly drafts = new Map<string, string>();
+  /** 没发出去的回复草稿（和页边卡共用一张表）；数据变化重绘时填回去 */
+  private readonly drafts: CommentDrafts;
   /** 列表页选中的标签；null = 还没选过，按「有等你的就等你，否则全部」 */
   private tab: ListTab | null = null;
   /** 正在看的那条批注；null = 列表页 */
@@ -172,8 +151,11 @@ export class CommentPanelBody {
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly host: CommentPanelHost
-  ) {}
+    private readonly host: CommentPanelHost,
+    drafts?: CommentDrafts
+  ) {
+    this.drafts = drafts ?? new Map<string, string>();
+  }
 
   /** 重建面板内容（活动文件、批注数据变化时调用）。 */
   refresh(): void {
@@ -195,10 +177,6 @@ export class CommentPanelBody {
       throw new Error("批注面板：没有文档路径却要操作批注（不应发生）");
     }
     return this.docPath;
-  }
-
-  private draftKey(id: number): string {
-    return `${this.docPath ?? ""}\u0001${id}`;
   }
 
   /** 打开某条批注的详情页（正文里点标记 / 脚注号时用）。 */
@@ -448,7 +426,10 @@ export class CommentPanelBody {
       });
     }
     const open = () => {
-      this.host.jumpToComment(this.requireDocPath(), item.id);
+      const docPath = this.requireDocPath();
+      // 页边卡放得下：在正文旁边展开，侧栏留在列表；放不下才进详情页
+      if (this.host.openInMargin?.(docPath, item.id)) return;
+      this.host.jumpToComment(docPath, item.id);
       this.openDetail(item.id);
     };
     row.addEventListener("click", open);
@@ -489,47 +470,12 @@ export class CommentPanelBody {
       this.host.jumpToComment(this.requireDocPath(), item.id)
     );
 
-    box.createDiv({
-      cls: "wt-comment-card-loc",
-      text: `${item.origin === "agent" ? "Agent 发起 · " : ""}${locationText(item)}`,
+    renderThreadBody(box, item, {
+      host: this.host,
+      docPath: this.requireDocPath(),
+      drafts: this.drafts,
+      onClosed: () => this.backToList(),
     });
-    box.createDiv({ cls: "wt-comment-quote", text: item.quote });
-
-    const thread = box.createDiv({ cls: "wt-comment-thread" });
-    item.messages.forEach((message, index) =>
-      this.renderMessage(thread, message, index, item)
-    );
-
-    this.renderReplyBox(box, item);
-
-    const row = box.createDiv({ cls: "wt-comment-card-actions" });
-    this.confirmButton(row, "已解决", "再点一次：删除这条批注", () => {
-      this.host.resolveComment(this.requireDocPath(), item.id);
-      this.backToList();
-    });
-    this.confirmButton(row, "不采纳", "再点一次：删除并记进「已否决」", () => {
-      this.host.rejectComment(this.requireDocPath(), item.id);
-      this.backToList();
-    });
-    if (item.messages[item.messages.length - 1]?.by === "author") {
-      const editBtn = row.createEl("button", {
-        text: "编辑",
-        attr: { title: "修改你的最后一条消息（Agent 回复后就不能改了）" },
-      });
-      editBtn.addEventListener("click", () =>
-        this.host.editComment(this.requireDocPath(), item.id)
-      );
-    }
-    if (item.locatedLine === null || item.gone) {
-      const rebindBtn = row.createEl("button", {
-        cls: "mod-cta",
-        text: "重新绑定",
-        attr: { title: "先在正文里选中这条批注现在对应的文字，再点这里" },
-      });
-      rebindBtn.addEventListener("click", () =>
-        this.host.rebindComment(this.requireDocPath(), item.id)
-      );
-    }
   }
 
   /**
@@ -549,193 +495,5 @@ export class CommentPanelBody {
   private restoreScroll(el: HTMLElement | null, top: number): void {
     if (!el || !el.isConnected || top <= 0) return;
     el.scrollTop = top;
-  }
-
-  /**
-   * 「一次确认」按钮：第一次只把文案换成「确认」，3 秒内再点一次才执行；
-   * 执行后由宿主给 6 秒撤销（不叠弹窗）。
-   */
-  private confirmButton(
-    row: HTMLElement,
-    label: string,
-    confirmTitle: string,
-    onConfirm: () => void
-  ): void {
-    const btn = row.createEl("button", { text: label });
-    let confirming = false;
-    let resetTimer = 0;
-    const reset = () => {
-      confirming = false;
-      btn.setText(label);
-      btn.removeClass("is-confirming");
-      btn.setAttr("title", "");
-    };
-    btn.addEventListener("click", () => {
-      if (!confirming) {
-        confirming = true;
-        btn.setText("确认");
-        btn.addClass("is-confirming");
-        btn.setAttr("title", confirmTitle);
-        resetTimer = window.setTimeout(reset, 3000);
-        return;
-      }
-      window.clearTimeout(resetTimer);
-      reset();
-      onConfirm();
-    });
-  }
-
-  /** 一条消息：作者 / Agent 用不同底色区分；详情页里完整显示，可选中复制。 */
-  private renderMessage(
-    thread: HTMLElement,
-    message: CommentMessage,
-    index: number,
-    item: CommentPanelItem
-  ): void {
-    const el = thread.createDiv({
-      cls: `wt-comment-msg is-${message.by}`,
-    });
-    el.createDiv({
-      cls: "wt-comment-msg-who",
-      text: COMMENT_SPEAKER_LABELS[message.by],
-    });
-    if (message.text) {
-      el.createDiv({ cls: "wt-comment-msg-text", text: message.text });
-    }
-    if (message.suggestion) this.renderSuggestion(el, message, index, item);
-  }
-
-  /**
-   * 修改建议：删掉的字划线、新增的字高亮。只有最新一条能采纳；
-   * 采纳不了时按钮变灰并写明原因，任何时候都能复制。
-   */
-  private renderSuggestion(
-    parent: HTMLElement,
-    message: CommentMessage,
-    index: number,
-    item: CommentPanelItem
-  ): void {
-    const suggestion = message.suggestion;
-    if (!suggestion) return;
-    const latest = item.suggestion && item.suggestion.index === index
-      ? item.suggestion
-      : null;
-    const superseded = !latest && !suggestion.adopted;
-    const box = parent.createDiv({
-      cls: superseded ? "wt-comment-suggest is-superseded" : "wt-comment-suggest",
-    });
-    const label = suggestion.adopted
-      ? "修改建议 · 已采纳"
-      : superseded
-        ? "修改建议 · 已被新建议取代"
-        : "修改建议";
-    box.createDiv({ cls: "wt-comment-suggest-label", text: label });
-    const before = latest
-      ? latest.before
-      : suggestion.original || item.quote;
-    const diff = box.createDiv({ cls: "wt-comment-suggest-diff" });
-    if (!suggestion.replacement && !before) {
-      diff.setText("（空）");
-    }
-    for (const piece of diffChars(before, suggestion.replacement)) {
-      diff.createSpan({
-        cls:
-          piece.kind === "del"
-            ? "wt-comment-suggest-del"
-            : piece.kind === "add"
-              ? "wt-comment-suggest-add"
-              : undefined,
-        text: piece.text,
-      });
-    }
-    const actions = box.createDiv({ cls: "wt-comment-suggest-actions" });
-    if (latest && !suggestion.adopted) {
-      const adoptBtn = actions.createEl("button", {
-        cls: latest.status === "ready" ? "mod-cta" : undefined,
-        text: "采纳",
-        attr: {
-          title:
-            latest.status === "ready"
-              ? "把正文里的这句换成建议的写法（⌘/Ctrl + Z 可撤回）"
-              : latest.reason,
-        },
-      });
-      adoptBtn.disabled = latest.status !== "ready";
-      let adopting = false;
-      adoptBtn.addEventListener("click", () => {
-        if (adopting || latest.status !== "ready") return;
-        adopting = true;
-        adoptBtn.disabled = true;
-        void this.host
-          .adoptSuggestion(this.requireDocPath(), item.id)
-          .finally(() => {
-            adopting = false;
-            if (adoptBtn.isConnected) adoptBtn.disabled = false;
-          });
-      });
-    }
-    const copyBtn = actions.createEl("button", {
-      text: "复制",
-      attr: { title: "复制建议的写法" },
-    });
-    copyBtn.addEventListener("click", () =>
-      this.host.copyText(suggestion.replacement)
-    );
-    if (latest && !suggestion.adopted && latest.status !== "ready") {
-      actions.createSpan({
-        cls: "wt-comment-suggest-reason",
-        text: latest.reason,
-      });
-    }
-  }
-
-  /** 回复框：多行输入，回车换行，⌘/Ctrl + 回车或「发送」按钮发出。 */
-  private renderReplyBox(parent: HTMLElement, item: CommentPanelItem): void {
-    const box = parent.createDiv({ cls: "wt-comment-reply-box" });
-    const key = this.draftKey(item.id);
-    const input = box.createEl("textarea", {
-      cls: "wt-comment-reply-input",
-      attr: {
-        rows: "3",
-        placeholder: "回复…（⌘/Ctrl + 回车发送）",
-      },
-    });
-    input.value = this.drafts.get(key) ?? "";
-    const sendBtn = box.createEl("button", {
-      cls: "mod-cta",
-      text: "发送",
-    });
-    let sending = false;
-    const send = async () => {
-      const text = input.value.trim();
-      if (!text || sending) return;
-      sending = true;
-      sendBtn.disabled = true;
-      const ok = await this.host.replyToComment(
-        this.requireDocPath(),
-        item.id,
-        text
-      );
-      sending = false;
-      sendBtn.disabled = false;
-      // 只在保存成功后清草稿；失败时留着，免得白写
-      if (ok) {
-        this.drafts.delete(key);
-        if (input.isConnected) input.value = "";
-      }
-    };
-    input.addEventListener("input", () => {
-      if (input.value) this.drafts.set(key, input.value);
-      else this.drafts.delete(key);
-    });
-    input.addEventListener("keydown", (ev) => {
-      // 输入法拼字中的回车是选词，不能当发送
-      if (ev.isComposing) return;
-      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-        ev.preventDefault();
-        void send();
-      }
-    });
-    sendBtn.addEventListener("click", () => void send());
   }
 }
