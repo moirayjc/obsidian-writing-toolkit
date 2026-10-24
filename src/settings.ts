@@ -71,8 +71,6 @@ export interface WritingToolkitPluginLike {
     /** 番茄钟锁定中：番茄设置不可改。 */
     isPomodoroLocked: () => boolean;
     repairProjectStatPaths: () => Promise<void>;
-    /** 切换伴随数据存放位置（插件会先确认、再整体搬家）。 */
-    switchSidecarLocation: (target: "hidden" | "visible") => void;
     /** 把可同步目录加进 Obsidian 的排除列表。 */
     addSidecarFolderToExcluded: () => void;
     updateStatusBarVisibility: () => void;
@@ -532,7 +530,7 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               new Setting(el)
                 .setName("高级：自定义快照文件夹")
                 .setDesc(
-                  "相对库根目录，优先于「数据与同步 → 伴随数据存放位置」。清空则恢复跟随存放位置。"
+                  "相对库根目录，优先于默认的 _写作工具箱/快照。清空则恢复默认。"
                 )
                 .addText((text) =>
                   text
@@ -698,35 +696,17 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
       {
         title: "数据与同步",
         build: (section) => {
-          this.group("伴随数据存放位置", section, (el) => {
+          this.group("伴随数据", section, (el) => {
             new Setting(el)
-              .setName("批注、快照、章纲存放在")
+              .setName("在 Obsidian 搜索里隐藏")
               .setDesc(
-                "用 Obsidian 官方同步的请选「可同步目录」：官方同步不同步以 . 开头的隐藏目录，选隐藏目录的话批注、快照、章纲不会同步到其他设备。iCloud、坚果云、Git 等通常两种都能同步。切换时会把已有数据整体搬过去；每台设备要选同一项。"
+                "批注、快照、章纲和统计都存在库根 _写作工具箱/。加进「设置 → 文件与链接 → 排除的文件」后，搜索、关系图、快速切换不再显示它们。"
               )
-              .addDropdown((dd) =>
-                dd
-                  .addOption("hidden", "隐藏目录（.wt-comments 等）")
-                  .addOption("visible", "可同步目录（库根 _写作工具箱/）")
-                  .setValue(this.wt.settings.sidecarLocation)
-                  .onChange((val) => {
-                    // 先退回当前值：切换要确认、要搬家，成功后设置页会重画
-                    dd.setValue(this.wt.settings.sidecarLocation);
-                    this.wt.switchSidecarLocation(val as "hidden" | "visible");
-                  })
+              .addButton((button) =>
+                button
+                  .setButtonText("加入排除列表")
+                  .onClick(() => this.wt.addSidecarFolderToExcluded())
               );
-            if (this.wt.settings.sidecarLocation === "visible") {
-              new Setting(el)
-                .setName("在 Obsidian 搜索里隐藏")
-                .setDesc(
-                  "把 _写作工具箱/ 加进「设置 → 文件与链接 → 排除的文件」，搜索、关系图、快速切换就不再显示批注和快照文件。"
-                )
-                .addButton((button) =>
-                  button
-                    .setButtonText("加入排除列表")
-                    .onClick(() => this.wt.addSidecarFolderToExcluded())
-                );
-            }
           });
           this.group("维护", section, (el) => {
             new Setting(el)

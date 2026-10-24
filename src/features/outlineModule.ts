@@ -37,7 +37,6 @@ const REFRESH_KEYS = [
   "chapterExcludeNames",
   "snapshotFolder",
   "outlineStorageMode",
-  "sidecarLocation",
 ] as const satisfies readonly SettingsKey[];
 
 const REFRESH_KEY_SET = new Set<SettingsKey>(REFRESH_KEYS);

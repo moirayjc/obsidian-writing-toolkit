@@ -46,8 +46,8 @@ const EXPECTED = [
   },
   {
     tab: "数据与同步",
-    groups: ["伴随数据存放位置", "维护"],
-    settings: ["批注、快照、章纲存放在", "在 Obsidian 搜索里隐藏", "修复项目统计路径"],
+    groups: ["伴随数据", "维护"],
+    settings: ["在 Obsidian 搜索里隐藏", "修复项目统计路径"],
   },
 ];
 

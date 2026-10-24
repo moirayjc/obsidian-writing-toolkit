@@ -16,12 +16,12 @@ import {
 export const OUTLINE_KEY = "章纲";
 
 /**
- * 隐藏档的章纲目录。当前实际用哪个目录看存放位置设置：
- * 一律用 outlinesFolder() / getOutlinePath()，别直接用这个常量拼路径。
+ * 旧版隐藏目录里的章纲目录（只读兜底、启动时收进新位置）。
+ * 拼路径一律用 outlinesFolder() / getOutlinePath()，别直接用这个常量。
  */
 export const OUTLINES_FOLDER = SIDECAR_FOLDERS.hidden.outlines;
 
-/** 当前存放位置下的章纲目录。 */
+/** 章纲目录（默认 `_写作工具箱/章纲`；传 "hidden" 取旧版目录）。 */
 export function outlinesFolder(location?: SidecarLocation): string {
   return sidecarFolder("outlines", location);
 }
@@ -62,8 +62,8 @@ export function getOutlinePath(
 }
 
 /**
- * 实际读写的章纲路径：当前档位里有就用它；没有而另一档里有（两台设备选得不一样、
- * 或切换迁移没搬完），就地用那一份——不在这里搬，整体搬家只在切换设置时做。
+ * 实际读写的章纲路径：新位置有就用它；没有而旧版隐藏目录里有（启动时没搬走的），
+ * 就地用那一份——不在这里搬，整体搬家只在启动时做。
  */
 export async function resolveOutlinePath(
   adapter: DataAdapter,
@@ -114,7 +114,7 @@ async function listFilesDeep(
 /**
  * 正文改名/移动后，把对应的章纲伴生文件一起搬走。
  *
- * 章纲在 `.wt-outlines/` 下按正文路径镜像存放，正文一改名，
+ * 章纲在 `_写作工具箱/章纲/` 下按正文路径镜像存放，正文一改名，
  * 章纲就会"脱钩"（文件还在，但按新路径找不到了）。所以任何改名
  * —— 插件里的重命名、拖拽换卷、批量顺延，或在 Obsidian 里直接改名
  * —— 都要走这里同步一次。

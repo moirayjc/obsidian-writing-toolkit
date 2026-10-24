@@ -7,7 +7,7 @@
 
 ## 🎯 核心设计哲学
 
-1. **正文零污染**：快照、章纲、批注全部采用伴随文件或独立隐藏目录（`.wt-comments/`、`.wt-snapshots/`）隔离存储，正文不加任何脏标签，随时可直接交付出版或发布。
+1. **正文零污染**：快照、章纲、批注全部作为伴随文件存在库根 `_写作工具箱/` 下，正文不加任何脏标签，随时可直接交付出版或发布。
 2. **拒绝编辑器浮层**：正文内无任何跟随光标晃动的悬浮窗，所有交互操作均收拢于固定侧栏或屏幕居中模态框，视线不跳跃。
 3. **原生网文基因**：内建符合中文网文交稿习惯的标点字数统计、分卷目录管理与一键导出纯净稿能力。
 
@@ -40,7 +40,7 @@
 ### 4. 🤖 Agent 协同批注系统 (AI Collaborative Annotations)
 专为「Agent 通读发起批注 ➔ 作者逐条回复 ➔ Agent 再回一轮 ➔ …… ➔ 作者逐条结案」深度定制的写作协作协议：每条批注是一串对话，作者和 Agent 都能发起，只有作者能结案。
 
-- **正文零污染存储**：批注文件隔离保存在 `.wt-comments/<作品路径>/<章节名>.批注.md`，正文 Markdown 源码一个字不动。
+- **正文零污染存储**：批注文件隔离保存在 `_写作工具箱/批注/<作品路径>/<章节名>.批注.md`，正文 Markdown 源码一个字不动。
 - **视觉轻量化**：正文仅以极淡色块与行尾上标序号（如 `²`）呈现，点击直跳侧栏对应卡片，彻底消灭文字跟随浮层。
 - **按点多轮讨论**：工具箱「批注」标签里每张卡片是一段对话（作者 / Agent），底部有多行回复框；标出「等你 / 等 Agent」，等你的排前面。
 - **只有作者能结案**：「已解决」整条删除，「不采纳」删除并记进「已否决」区（Agent 下一轮不会再提），都能 6 秒内撤销；批注文件里没有状态字段，Agent 删条目或改已有消息会被发现并可一键恢复。
@@ -57,7 +57,7 @@
    ▲   │ 逐条回复 / 采纳建议 / 已解决 / 不采纳          │ 批注工具（MCP）或直接写文件：
    │   ▼                                               ▼  发起批注 / 追加回复 / 附修改建议
 ┌──────────────────────────────────────────────────────────────┐
-│            .wt-comments/伴随文件（批注 = 原文 + 对话）            │
+│        _写作工具箱/批注/ 伴随文件（批注 = 原文 + 对话）         │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,7 +87,7 @@
 
 - **新作品位置**：新建项目默认根目录（默认：`写作/新作品`）。
 - **共用资料库位置**：工作台资料库挂载目录（默认：`写作/资料库`）。
-- **伴随数据存放位置**：批注、快照、章纲默认放在隐藏目录（`.wt-comments` / `.wt-snapshots` / `.wt-outlines`）；可改为库根的「可同步目录」`_写作工具箱/`，切换时自动整体搬家。**用 Obsidian 官方同步的请选「可同步目录」**——官方同步不同步以 `.` 开头的目录，否则这三样不会同步到其他设备。iCloud、坚果云、Git 等通常两种都能同步。
+- **伴随数据存放位置**：批注、快照、章纲、统计都放在库根 `_写作工具箱/`（批注 / 快照 / 章纲 / 统计各一个子目录），Obsidian 官方同步、iCloud、坚果云、Git 都能同步。旧版的隐藏目录（`.wt-comments` / `.wt-snapshots` / `.wt-outlines`）会在启动时自动收进来。不想在搜索里看到它们，可在「设置 → 数据与同步」一键加入 Obsidian 的排除列表。
 - **非章节文件过滤**：正文目录下的辅助文档（默认：`Agent, AGENTS, CLAUDE, README`），自动排除在章节列表与字数统计之外。
 - **批注生效范围**：可配置全库启用、全库排除正文、或仅在指定作品目录中启用。
 - **在手机和平板上使用批注**：默认开；批注文件不会同步到手机时建议关掉。
@@ -137,5 +137,5 @@ npm run verify   # 全量逻辑闸门测试
 - **Dashboard & Stats**: GitHub-style annual writing calendar, daily streak, and 3 word count modes (Webnovel, Standard, Native).
 - **Novel Workbench**: Volume and chapter hierarchy, automatic chapter renumbering, clean copy button (strips annotations/markers for direct pasting to publisher portals).
 - **Zen Capsule Pomodoro**: Sleek horizontal pill-shaped timer taking minimal vertical space, integrated ring buttons, and full dark/light theme awareness.
-- **AI Agent Annotation System**: Annotations are stored separately in `.wt-comments/` to keep your markdown manuscript 100% clean. Zero popovers inside editor; full sidebar management; 4-tier anchor recovery after agent rewrites.
+- **AI Agent Annotation System**: Annotations are stored separately in `_写作工具箱/批注/` to keep your markdown manuscript 100% clean. Zero popovers inside editor; full sidebar management; 4-tier anchor recovery after agent rewrites.
 - **Writing Aids & Snapshots**: Typewriter mode with customizable vertical position, paragraph highlighting, and automated draft snapshotting with visual diff & restore.

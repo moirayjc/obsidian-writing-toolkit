@@ -5,7 +5,7 @@
  * 面板里逐条回复 → Agent 再回一轮 → …… → 作者逐条点已解决 / 不采纳」。
  * 每条批注是一串对话，作者与 Agent 都能发起；结案只能由作者在面板里点。
  * Agent 不直接改正文：它在消息里附「修改建议」，作者点「采纳」才替换。
- * 批注存放在库根 `.wt-comments/` 下的独立伴随文件里（镜像正文的相对路径），
+ * 批注存放在库根 `_写作工具箱/批注/` 下的独立伴随文件里（镜像正文的相对路径），
  * 正文一个字都不动。旧版同目录 `文档名.批注.md` 会自动迁移过来，读取时
  * 仍兼容旧位置。
  *
@@ -204,17 +204,17 @@ export const LOCATE_VIA_LABELS: Record<LocateVia, string> = {
 /* ---------- 伴随文件路径 ---------- */
 
 /**
- * 隐藏档的批注目录（镜像正文路径，和 `.wt-outlines` / `.wt-snapshots` 同级）。
- * 当前实际用哪个目录看存放位置设置：一律用 commentsFolder()，别直接用这个常量拼路径。
+ * 旧版隐藏目录里的批注目录（只读兜底、启动时收进新位置）。
+ * 拼路径一律用 commentsFolder()，别直接用这个常量。
  */
 export const COMMENTS_FOLDER = SIDECAR_FOLDERS.hidden.comments;
 
-/** 当前存放位置下的批注目录。 */
+/** 批注目录（`_写作工具箱/批注`）。 */
 export function commentsFolder(): string {
   return sidecarFolder("comments");
 }
 
-/** 路径在哪个批注目录下（两档都认）；不在任何一个下返回 null。 */
+/** 路径在哪个批注目录下（新旧都认）；不在任何一个下返回 null。 */
 function commentsFolderOf(path: string): string | null {
   return sidecarFoldersOf("comments").find((f) => path.startsWith(`${f}/`)) ?? null;
 }
@@ -237,7 +237,7 @@ export function sidecarPathFor(docPath: string): string {
 }
 
 /**
- * 另一档存放位置下的批注文件路径（两台设备选得不一样时，数据可能还在那边）。
+ * 旧版隐藏目录下的批注文件路径（启动时没搬走的还在那边）。
  * 只用于读取兜底，不往那里写新文件。
  */
 export function otherSidecarPathFor(docPath: string): string {

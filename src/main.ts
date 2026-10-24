@@ -84,7 +84,7 @@ import {
   createChapterStatusModule,
   type ChapterStatusModule,
 } from "./features/chapterStatusModule";
-import { effectiveSnapshotFolder, setSidecarLocation } from "./sidecarLocation";
+import { effectiveSnapshotFolder } from "./sidecarLocation";
 import {
   createPlanBoardModule,
   type PlanBoardModule,
@@ -145,7 +145,7 @@ import {
 import type { PomodoroPhase, PomodoroState } from "./pomodoro";
 import {
   createSidecarLocationModule,
-  resolveStartupSidecarLocation,
+  migrateLegacySidecars,
   type SidecarLocationModule,
 } from "./features/sidecarLocationModule";
 import {
@@ -570,7 +570,7 @@ export default class WritingToolkitPlugin extends Plugin {
     });
     this.commentsModule = this.buildCommentsModule();
     this.agentBridgeModule = this.buildAgentBridgeModule();
-    this.sidecarLocationModule = this.buildSidecarLocationModule();
+    this.sidecarLocationModule = createSidecarLocationModule();
     this.pomodoroModule = this.buildPomodoroModule();
     this.calendarModule = createCalendarModule({
       allWords: () => this.dailyForDisplay(),
@@ -1680,23 +1680,9 @@ export default class WritingToolkitPlugin extends Plugin {
     });
   }
 
-  /** 快照文件夹（规范化路径，去首尾斜杠）。 */
-  private buildSidecarLocationModule(): SidecarLocationModule {
-    return createSidecarLocationModule({
-      saveSettings: () => this.saveSettings(),
-      flushPending: () => this.commentsModule.operations.flush(),
-      onSwitched: () => this.settingTab.display(),
-    });
-  }
-
   /** 这台设备上关掉批注：移动端且没开「在手机和平板上使用批注」。 */
   private commentsOffOnThisDevice(): boolean {
     return Platform.isMobile && !this.settings.commentsOnMobile;
-  }
-
-  /** 设置页：切换伴随数据存放位置（会先确认，再整体搬家）。 */
-  switchSidecarLocation(target: "hidden" | "visible"): void {
-    this.sidecarLocationModule.operations.switchTo(target);
   }
 
   /* ---------- 本机批注工具：设置页端口 ---------- */
@@ -2482,10 +2468,9 @@ export default class WritingToolkitPlugin extends Plugin {
       value === undefined || value === null ? fallback : (value as T);
     const data = asRecord<Record<string, unknown>>(loaded);
     this.settings = this.host.services.settings.load(data);
-    // 伴随数据（批注 / 快照 / 章纲）存放位置：模块激活、读任何伴随文件之前就要定下来。
-    // 以库里实际有数据的那一处为准（data.json 会被同步工具在设备间互相覆盖）
-    setSidecarLocation(this.settings.sidecarLocation);
-    await resolveStartupSidecarLocation(this.app, this.settings);
+    // 伴随数据（批注 / 快照 / 章纲）固定在 `_写作工具箱/`：模块激活、读任何伴随文件之前，
+    // 先把旧版隐藏目录里的收进来
+    await migrateLegacySidecars(this.app, this.settings);
     if (data) {
       // 老格式（顶层扁平设置）与新格式共用同名字段；旧版设置由 SettingsService
       // 统一迁移。老格式如有历史数据则保留，不主动清空。

@@ -39,8 +39,7 @@ const SETTINGS_LITERAL_KEYS = [
   "pomodoroBreakMinutes", "pomodoroLongBreakEvery", "pomodoroLongBreakMinutes",
   "pomodoroAutoSnapshot", "draftKeywords", "chapterExcludeNames",
   "outlineStorageMode", "newProjectFolder", "sharedLibraryFolder",
-  "planBoardFile", "commentsOnMobile", "sidecarLocation",
-  "sidecarLocationPromptDismissed",
+  "planBoardFile", "commentsOnMobile",
 ];
 
 const SNAPSHOT_SETTING_KEYS = [

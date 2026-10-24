@@ -1,11 +1,11 @@
 /**
- * 批注存储：批注文件（`.wt-comments/<正文相对路径>.批注.md`）的读写与缓存。
+ * 批注存储：批注文件（`_写作工具箱/批注/<正文相对路径>.批注.md`）的读写与缓存。
  *
  * 缓存按「源文档路径」维度；批注文件被 Agent 或用户从外部改写时，
  * 由 main 里注册的 vault 事件调用 handleModified / handleDeleted 让缓存失效。
  *
  * 旧版把批注放在正文同目录；首次读取（或启动时统一迁移）会把旧文件搬到
- * `.wt-comments/` 的镜像位置。迁移失败时退回旧路径继续读写，绝不丢批注。
+ * 批注目录的镜像位置。迁移失败时退回旧路径继续读写，绝不丢批注。
  */
 import { App, DataAdapter, TFile } from "obsidian";
 import {
@@ -227,7 +227,7 @@ export class CommentStore {
   }
 
   /**
-   * 启动时一次性把库里的旧版同目录批注文件搬进 `.wt-comments/`。
+   * 启动时一次性把库里的旧版同目录批注文件搬进批注目录。
    * 只做 rename，不改文件内容；失败的那一个保持原样，下次读取时再试。
    */
   async migrateLegacySidecars(): Promise<number> {
@@ -276,7 +276,7 @@ export class CommentStore {
   }
 
   /**
-   * 有批注文件的文档路径（两档存放位置都看，去重）。批注工具「列出所有」用；
+   * 有批注文件的文档路径（新位置与旧版隐藏目录都看，去重）。批注工具「列出所有」用；
    * 隐藏目录不进 Obsidian 索引，所以走 adapter 递归列目录。
    */
   async listCommentDocs(): Promise<string[]> {
@@ -301,8 +301,8 @@ export class CommentStore {
   private async resolveSidecarPath(docPath: string): Promise<string> {
     const target = sidecarPathFor(docPath);
     if (await this.exists(target)) return target;
-    // 另一档存放位置里还有（两台设备选得不一样、或切换迁移没搬完）：就地读写那一份，
-    // 不在这里搬——否则两台设备会把文件来回搬。整体搬家只在切换设置时做。
+    // 旧版隐藏目录里还有（启动时没搬走的）：就地读写那一份，不在这里搬。
+    // 整体搬家只在启动时做。
     const other = otherSidecarPathFor(docPath);
     if (other !== target && (await this.exists(other))) return other;
     const legacy = legacySidecarPathFor(docPath);

@@ -16,6 +16,7 @@ import {
   buildReplyPrompt,
   buildReviewPrompt,
   commentTurn,
+  commentsFolder,
   detectCommentTampering,
   docPathForSidecar,
   formatTimestamp,
@@ -1302,7 +1303,7 @@ export function createCommentsModule(
       services = context.services;
       events = context.events;
       store = createStore(context.app);
-      // 旧版把批注放在正文同目录；启动时一次性收进 .wt-comments/。
+      // 旧版把批注放在正文同目录；启动时一次性收进批注目录。
       const migrateLegacy = store.migrateLegacySidecars;
       if (typeof migrateLegacy === "function") {
         void migrateLegacy
@@ -1310,7 +1311,7 @@ export function createCommentsModule(
           .then((moved) => {
             if (moved > 0) {
               new Notice(
-                `写作工具箱：已把 ${moved} 个批注文件移到 .wt-comments/`
+                `写作工具箱：已把 ${moved} 个批注文件移到 ${commentsFolder()}/`
               );
             }
           })
@@ -1454,13 +1455,9 @@ export function createCommentsModule(
       context.effects.add(
         context.services.settings.subscribe((change) => {
           if (!active) return;
-          if (change.keys.includes("sidecarLocation")) {
-            localStore.invalidateAll?.();
-          }
           if (
             change.keys.includes("commentsEnabled") ||
-            change.keys.includes("commentsOnMobile") ||
-            change.keys.includes("sidecarLocation")
+            change.keys.includes("commentsOnMobile")
           ) {
             refreshAllDecors();
             refreshPanels();

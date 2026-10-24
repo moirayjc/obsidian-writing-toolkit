@@ -111,8 +111,7 @@ export function createSnapshotUiModule(
         if (
           change.keys.includes("wordCountMode") ||
           change.keys.includes("snapshotMaxPerFile") ||
-          change.keys.includes("snapshotFolder") ||
-          change.keys.includes("sidecarLocation")
+          change.keys.includes("snapshotFolder")
         ) {
           refreshPanels();
         }

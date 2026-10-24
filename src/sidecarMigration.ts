@@ -1,16 +1,15 @@
 /**
- * 伴随数据存放位置切换时的整体搬家（specs/sidecar-location.md）。
+ * 伴随数据的整体搬家：启动时把旧版隐藏目录收进 `_写作工具箱/`（specs/sidecar-location.md）。
  *
  * 只依赖一个最小文件接口（Obsidian 的 DataAdapter 天然满足），方便用内存假盘检查。
  * 规矩：
- *   · 目标处已有同名文件 → 跳过、不覆盖，结束时列出来；
+ *   · 目标处已有同名文件 → 内容相同就删掉旧的；不同就跳过、不覆盖，结束时列出来；
  *   · 单个文件搬失败 → 原样留在旧位置（读取时新旧两档都认，数据不丢）；
  *   · 用户自定义过快照文件夹的，快照不搬（那是他主动选的位置）；
  *   · 搬完确认旧位置里没有任何真实文件，再整棵删掉（删不掉就留着并报出错误，不影响功能）。
  */
 import {
   SIDECAR_FOLDERS,
-  VISIBLE_DATA_ROOT,
   isCustomSnapshotFolder,
   type SidecarKind,
   type SidecarLocation,
@@ -18,6 +17,8 @@ import {
 
 export interface MigrationFs {
   exists(path: string): Promise<boolean>;
+  /** 读文本（同名文件比对内容用；可选，没有就一律跳过） */
+  read?(path: string): Promise<string>;
   /** 删文件（清掉 .DS_Store 这类系统垃圾用；可选） */
   remove?(path: string): Promise<void>;
   list(path: string): Promise<{ files: string[]; folders: string[] }>;
@@ -42,7 +43,9 @@ export interface SidecarMigrationPlan {
 
 export interface SidecarMigrationResult {
   moved: number;
-  /** 目标处已有同名文件而跳过的（源路径） */
+  /** 目标处已有内容相同的同名文件、删掉了旧的那份 */
+  deduped: number;
+  /** 目标处已有内容不同的同名文件而跳过的（源路径） */
   skipped: string[];
   /** 搬失败、留在原处的（源路径） */
   failed: string[];
@@ -117,12 +120,23 @@ async function ensureFolder(fs: MigrationFs, folder: string): Promise<void> {
   }
 }
 
+/** 两个文件内容是否完全相同；读不了就当不同（宁可留着）。 */
+async function sameContent(fs: MigrationFs, a: string, b: string): Promise<boolean> {
+  if (!fs.read) return false;
+  try {
+    return (await fs.read(a)) === (await fs.read(b));
+  } catch {
+    return false;
+  }
+}
+
 export async function runSidecarMigration(
   fs: MigrationFs,
   plan: SidecarMigrationPlan
 ): Promise<SidecarMigrationResult> {
   const result: SidecarMigrationResult = {
     moved: 0,
+    deduped: 0,
     skipped: [],
     failed: [],
     cleanupFailed: [],
@@ -130,7 +144,12 @@ export async function runSidecarMigration(
   for (const move of plan.moves) {
     try {
       if (await fs.exists(move.to)) {
-        result.skipped.push(move.from);
+        if (fs.remove && (await sameContent(fs, move.from, move.to))) {
+          await fs.remove(move.from);
+          result.deduped++;
+        } else {
+          result.skipped.push(move.from);
+        }
         continue;
       }
       await ensureFolder(fs, move.to.slice(0, move.to.lastIndexOf("/")));
@@ -142,9 +161,7 @@ export async function runSidecarMigration(
   }
   // 搬空的旧目录整棵删：先确认里面没有任何真实文件（系统垃圾不算），再递归删。
   // 逐层删在真机上会失败（2026-10-23 工作库实测留下整棵空文件夹），所以不再逐层删。
-  const roots = [...plan.sourceFolders];
-  if (plan.from === "visible") roots.push(VISIBLE_DATA_ROOT);
-  for (const root of roots) {
+  for (const root of plan.sourceFolders) {
     const error = await removeIfNoRealFiles(fs, root);
     if (error) result.cleanupFailed.push(`${root}：${error}`);
   }
@@ -179,52 +196,4 @@ async function removeIfNoRealFiles(fs: MigrationFs, folder: string): Promise<str
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
-}
-
-/** 某一档位里有没有真实数据（用户自定义了快照文件夹的，快照不算这一档的）。 */
-export async function locationHasData(
-  fs: MigrationFs,
-  location: SidecarLocation,
-  snapshotFolderSetting: string | undefined
-): Promise<boolean> {
-  const kinds: SidecarKind[] = ["comments", "outlines"];
-  if (!isCustomSnapshotFolder(snapshotFolderSetting)) kinds.push("snapshots");
-  for (const kind of kinds) {
-    if (await hasRealFiles(fs, SIDECAR_FOLDERS[location][kind])) return true;
-  }
-  return false;
-}
-
-export interface DetectedLocation {
-  location: SidecarLocation;
-  /** 两处都有真实文件（需要提示用户合并） */
-  conflict: boolean;
-}
-
-/**
- * 启动时决定读写哪一档：以库里的实际数据为准，`data.json` 里记的只当缓存。
- * 为什么不信 `data.json`：它会被同步工具在设备间互相覆盖（工作库实测，Remotely Save 同步配置目录）。
- * 只有一处有数据 → 用那一处；都没有 → 沿用缓存；两处都有 → 沿用缓存并标记冲突。
- */
-export async function detectSidecarLocation(
-  fs: MigrationFs,
-  cached: SidecarLocation,
-  snapshotFolderSetting: string | undefined
-): Promise<DetectedLocation> {
-  const [visible, hidden] = await Promise.all([
-    locationHasData(fs, "visible", snapshotFolderSetting),
-    locationHasData(fs, "hidden", snapshotFolderSetting),
-  ]);
-  if (visible && !hidden) return { location: "visible", conflict: false };
-  if (hidden && !visible) return { location: "hidden", conflict: false };
-  return { location: cached, conflict: visible && hidden };
-}
-
-/** 确认框里的一句话：「将搬 12 个文件：批注 3、快照 8、章纲 1」。 */
-export function describePlan(plan: SidecarMigrationPlan): string {
-  if (plan.moves.length === 0) return "目前没有需要搬的文件。";
-  const counts = new Map<SidecarKind, number>();
-  for (const move of plan.moves) counts.set(move.kind, (counts.get(move.kind) ?? 0) + 1);
-  const parts = [...counts].map(([kind, n]) => `${SIDECAR_KIND_LABELS[kind]} ${n}`);
-  return `将搬 ${plan.moves.length} 个文件：${parts.join("、")}。`;
 }

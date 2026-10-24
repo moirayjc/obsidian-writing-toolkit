@@ -58,7 +58,7 @@ const SAMPLE = [
 ].join("\n");
 
 const DOC = "正文/第1章.md";
-const SIDECAR = ".wt-comments/正文/第1章.批注.md";
+const SIDECAR = "_写作工具箱/批注/正文/第1章.批注.md";
 
 async function main() {
   // 直接编译模块（esbuild 会把 comments/diagnostics 一并打进来），只桩掉 obsidian。
@@ -146,7 +146,7 @@ async function main() {
     vault.files.set(SIDECAR, SAMPLE);
     const store = new CommentStore(app);
     await store.load(DOC);
-    const affected = store.handleRenamed(SIDECAR, ".wt-comments/正文/第2章.批注.md");
+    const affected = store.handleRenamed(SIDECAR, "_写作工具箱/批注/正文/第2章.批注.md");
     r.check("handleRenamed 返回受影响的文档路径", affected.length >= 1, JSON.stringify(affected));
     r.check("缓存已失效", store.getCached(DOC) === undefined);
   }
@@ -154,7 +154,7 @@ async function main() {
   // 7) 目录改名/删除：整段缓存一起失效
   {
     const { vault, app } = makeVault();
-    const second = ".wt-comments/正文/第2章.批注.md";
+    const second = "_写作工具箱/批注/正文/第2章.批注.md";
     vault.files.set(SIDECAR, SAMPLE);
     vault.files.set(second, SAMPLE.replace("第1章", "第2章"));
     const store = new CommentStore(app);
@@ -288,12 +288,12 @@ async function main() {
     );
   }
 
-  // 11) 旧版同目录批注：读取时自动迁到 .wt-comments/
+  // 11) 旧版同目录批注：读取时自动迁到批注目录
   {
     const { vault, app } = makeVault();
     const doc = "正文/旧章.md";
     const legacy = "正文/旧章.批注.md";
-    const target = ".wt-comments/正文/旧章.批注.md";
+    const target = "_写作工具箱/批注/正文/旧章.批注.md";
     vault.files.set(legacy, SAMPLE);
     const store = new CommentStore(app);
     const items = await store.load(doc);
@@ -313,10 +313,10 @@ async function main() {
     const store = new CommentStore(app);
     const moved = await store.migrateLegacySidecars();
     r.check(
-      "启动迁移把旧批注搬进 .wt-comments/",
+      "启动迁移把旧批注搬进批注目录",
       moved === 2 &&
-        vault.files.has(".wt-comments/正文/甲章.批注.md") &&
-        vault.files.has(".wt-comments/正文/乙章.批注.md") &&
+        vault.files.has("_写作工具箱/批注/正文/甲章.批注.md") &&
+        vault.files.has("_写作工具箱/批注/正文/乙章.批注.md") &&
         !vault.files.has(legacyA) &&
         !vault.files.has(legacyB)
     );
@@ -326,8 +326,8 @@ async function main() {
   {
     const { app } = makeVault();
     const disk = new Map([
-      [".wt-comments/正文/第1章.批注.md", SAMPLE],
-      [".wt-comments/正文/第2章.批注.md", SAMPLE],
+      ["_写作工具箱/批注/正文/第1章.批注.md", SAMPLE],
+      ["_写作工具箱/批注/正文/第2章.批注.md", SAMPLE],
     ]);
     app.vault.adapter = {
       async exists(p) {
@@ -355,15 +355,15 @@ async function main() {
     const store = new CommentStore(app);
     const moved = await store.migrateFolderPrefix("正文", "改名正文");
     r.check(
-      "正文目录改名同步搬 .wt-comments 镜像",
+      "正文目录改名同步搬批注镜像",
       moved === 2 &&
-        disk.has(".wt-comments/改名正文/第1章.批注.md") &&
-        disk.has(".wt-comments/改名正文/第2章.批注.md") &&
-        !disk.has(".wt-comments/正文/第1章.批注.md")
+        disk.has("_写作工具箱/批注/改名正文/第1章.批注.md") &&
+        disk.has("_写作工具箱/批注/改名正文/第2章.批注.md") &&
+        !disk.has("_写作工具箱/批注/正文/第1章.批注.md")
     );
   }
 
-  // 14) 新布局：隐藏目录走 adapter 写入与读回
+  // 14) 旧版隐藏目录里没搬走的批注：照常走 adapter 读写，不在新位置另建
   {
     const { app } = makeVault();
     const disk = new Map();
@@ -390,15 +390,17 @@ async function main() {
         };
       },
     };
-    const store = new CommentStore(app);
-    await store.save(DOC, [{
-      id: 1, origin: "author", quote: "原文", paragraph: "", paragraphHint: 0,
-      lineHint: 1, createdAt: "2026-10-18 10:00", messages: [{ by: "author", text: "内容" }], current: "",
-    }]);
     const target = ".wt-comments/正文/第1章.批注.md";
-    r.check("新批注写入 .wt-comments 走 adapter", disk.has(target));
+    disk.set(target, SAMPLE);
+    const store = new CommentStore(app);
+    const items = await store.load(DOC);
+    await store.save(DOC, [...items, { ...items[0], id: 2 }]);
+    r.check(
+      "旧隐藏目录里的批注走 adapter 写回原处，不在新位置另建",
+      disk.get(target).includes("批注 2") && !disk.has(SIDECAR) && !app.vault.files.has(SIDECAR)
+    );
     store.invalidate(DOC);
-    r.check("从隐藏目录读回批注", (await store.load(DOC)).length === 1);
+    r.check("从隐藏目录读回批注", (await store.load(DOC)).length === 2);
   }
 
   // 15) 新格式：对话往返（序列化 → 解析一致），多行消息、发起人、现文、「已否决」区
