@@ -210,6 +210,9 @@ export class WritingToolkitWorkbench extends ItemView {
   private headRefs: HeadRefs | null = null;
 
   private currentPath: string | null = null;
+  /** 编辑器里当前选中的正文范围（只对章节行生效）：路径 + 选中字数。 */
+  private selection: { path: string; words: number } | null = null;
+  private selectionTimer = 0;
   private keyboardIndex: number | null = null;
   /** 正在拖拽的章节路径（HTML5 拖拽期间有值） */
   private dragPath: string | null = null;
@@ -299,12 +302,18 @@ export class WritingToolkitWorkbench extends ItemView {
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => this.syncActive())
     );
+    // 编辑器里拖选 / 键盘扩选时，字数列跟着变成「选中 / 全章」。
+    this.registerDomEvent(document, "selectionchange", () =>
+      this.queueSelectionSync()
+    );
     // 定稿状态变了（右键切换、改名迁移）：只刷新各行的锁标记，不重建列表。
     this.register(
       this.host.caps.chapterStatus.subscribe(() => this.applyChapterStatuses())
     );
     this.footTimer = window.setInterval(() => this.renderFoot(), 1000);
     this.render();
+    // 打开编辑台时编辑器里可能已经选着一段：补读一次，别等下一次 selectionchange。
+    this.queueSelectionSync();
   }
 
   async onClose(): Promise<void> {
@@ -313,6 +322,9 @@ export class WritingToolkitWorkbench extends ItemView {
     if (this.modifyTimer) window.clearTimeout(this.modifyTimer);
     if (this.copyFeedbackTimer) window.clearTimeout(this.copyFeedbackTimer);
     if (this.searchScanTimer) window.clearTimeout(this.searchScanTimer);
+    if (this.selectionTimer) window.clearTimeout(this.selectionTimer);
+    this.selectionTimer = 0;
+    this.selection = null;
     this.searchScanToken++;
     this.statsToken++;
     this.rows.clear();
@@ -374,6 +386,90 @@ export class WritingToolkitWorkbench extends ItemView {
     }
     this.recomputeTotals();
     this.renderFoot();
+  }
+
+  // ---------- 选段字数 ----------
+
+  /**
+   * 选区变化后延迟合并：拖动选择时 selectionchange 很密，
+   * 60ms 只算一次，避免每个字符都跑一遍字数统计。
+   */
+  private queueSelectionSync(): void {
+    if (this.selectionTimer) return;
+    this.selectionTimer = window.setTimeout(() => {
+      this.selectionTimer = 0;
+      this.syncSelection();
+    }, 60);
+  }
+
+  /**
+   * 读当前编辑器选区，把选中字数画到那一章的字数列。
+   * 取的是编辑器原文（Live Preview 下也带标记），交给 countWords 统一
+   * 剥 frontmatter / 行内格式记号，口径与全章字数一致。
+   */
+  private syncSelection(): void {
+    const editor = this.host.recent.editor();
+    const path = editor ? this.host.recent.path() : null;
+    let words = 0;
+    try {
+      const text = editor?.getSelection() ?? "";
+      if (path && text) words = this.host.actions.countWords(text);
+    } catch {
+      // 编辑器已销毁 / 文件切走：按没有选区处理
+      words = 0;
+    }
+
+    const next = path && words > 0 ? { path, words } : null;
+    const prev = this.selection;
+    if (prev?.path === next?.path && prev?.words === next?.words) return;
+    this.selection = next;
+    if (prev) this.repaintChapterWords(prev.path);
+    if (next) this.repaintChapterWords(next.path);
+  }
+
+  private repaintChapterWords(path: string): void {
+    const ref = this.rows.get(path);
+    if (ref) this.paintChapterWords(ref);
+  }
+
+  /**
+   * 重画一章的字数列：有选区时「选中 / 全章」，否则只显示全章。
+   * 卷汇总与全书总数仍用 ref.words，不受选区影响。
+   */
+  private paintChapterWords(ref: RowRef): void {
+    const selected =
+      this.selection?.path === ref.entry.file.path ? this.selection.words : 0;
+    if (selected > 0) {
+      ref.wordsEl.setText(
+        `${formatNumber(selected)} / ${ref.known ? formatNumber(ref.words) : "…"}`
+      );
+      ref.wordsEl.addClass("is-selection");
+      ref.wordsEl.removeClass("is-empty");
+      ref.wordsEl.setAttr(
+        "title",
+        ref.known
+          ? `已选 ${formatNumber(selected)} 字 · 全章 ${formatNumber(ref.words)} 字`
+          : `已选 ${formatNumber(selected)} 字`
+      );
+      ref.rowEl.toggleClass("is-blank", ref.known && ref.words === 0);
+      return;
+    }
+
+    ref.wordsEl.removeClass("is-selection");
+    if (!ref.known) {
+      // 统计还没回来：保持占位，别把已知的选区数字也擦掉
+      ref.wordsEl.setText("…");
+      ref.wordsEl.removeClass("is-empty");
+      ref.wordsEl.removeAttribute("title");
+      return;
+    }
+    ref.wordsEl.setText(ref.words > 0 ? formatNumber(ref.words) : "未写");
+    ref.wordsEl.toggleClass("is-empty", ref.words === 0);
+    ref.wordsEl.setAttr(
+      "title",
+      ref.words > 0 ? `已写 ${formatNumber(ref.words)} 字` : "还没写"
+    );
+    ref.rowEl.toggleClass("is-blank", ref.words === 0);
   }
 
   /** 外部（AI/脚本）改写了某一篇：只重算那一篇，不重建 DOM。 */
@@ -509,6 +605,8 @@ export class WritingToolkitWorkbench extends ItemView {
     }
     this.renderNotice();
     this.renderFoot();
+    // 切到另一章时，上一章的选区可能还留在编辑器状态里，重新读一次。
+    this.queueSelectionSync();
   }
 
   /** 当前打开的文件属于另一本书时，给一个一键切换的提示条。 */
@@ -1634,6 +1732,7 @@ export class WritingToolkitWorkbench extends ItemView {
     };
     this.rows.set(entry.file.path, ref);
     this.applyChapterStatus(ref);
+    this.paintChapterWords(ref);
 
     if (entry.file.path === this.currentPath) row.addClass("is-current");
 
@@ -1921,10 +2020,8 @@ export class WritingToolkitWorkbench extends ItemView {
     ref.known = true;
     ref.words = words;
     // 原来每行一个状态圆点；现在空章直接在字数列写「未写」，标题跟着变淡。
-    ref.wordsEl.setText(words > 0 ? formatNumber(words) : "未写");
-    ref.wordsEl.toggleClass("is-empty", words === 0);
-    ref.wordsEl.setAttr("title", words > 0 ? `已写 ${formatNumber(words)} 字` : "还没写");
-    ref.rowEl.toggleClass("is-blank", words === 0);
+    // 有选区时由 paintChapterWords 改成「选中 / 全章」，别在这里直接覆盖。
+    this.paintChapterWords(ref);
   }
 
   private applyResourceStats(ref: ResourceRowRef, words: number): void {

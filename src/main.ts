@@ -388,7 +388,11 @@ export default class WritingToolkitPlugin extends Plugin {
       recent: {
         path: () => this.getLastKnownFilePath(),
         text: () => this.getLastKnownText(),
-        editor: () => this.getLastEditor(),
+        // 关闭标签后 lastEditor 会失效：别把已销毁编辑器的旧选区交给 Shell。
+        editor: () => {
+          const editor = this.getLastEditor();
+          return editor && this.isEditorValid(editor) ? editor : null;
+        },
       },
       caps: {
         panels: {

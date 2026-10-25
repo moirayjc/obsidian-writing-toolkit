@@ -9365,6 +9365,14 @@ body.wt-theme-contrast .wt-wb .wt-wb-ch.is-current .wt-wb-ch-title.is-untitled {
   color: var(--wt-ink-2);
 }
 
+/* 选区字数：这一章被选中一段时显示「选中 / 全章」，用强调色区分 */
+.wt-wb .wt-wb-ch .wt-wb-ch-words.is-selection,
+.wt-wb .wt-wb-ch.is-current .wt-wb-ch-words.is-selection {
+  color: var(--wt-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* 「未写」：用界面字体（衬线数字字体里的中文不好看），再淡一档 */
 .wt-wb .wt-wb-ch-words.is-empty {
   font-family: inherit;
