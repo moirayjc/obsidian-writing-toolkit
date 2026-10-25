@@ -832,14 +832,15 @@ export function createCommentsModule(
   }
 
   /**
-   * 结案：已解决 = 整条删除（不归档）；不采纳 = 删除并在「已否决」区追加一行。
-   * 两者都给 6 秒撤销（撤销只存在内存里）。
+   * 结案 / 删除：已解决与删除 = 整条删除（不归档，只是提示文案不同）；
+   * 不采纳 = 删除并在「已否决」区追加一行。都给 6 秒撤销（撤销只存在内存里）。
    */
   async function closeComment(
     path: string,
     id: number,
-    reject: boolean
+    mode: "resolve" | "reject" | "delete"
   ): Promise<void> {
+    const reject = mode === "reject";
     let removed: WtComment | null = null;
     let removedIndex = 0;
     let line = "";
@@ -857,7 +858,11 @@ export function createCommentsModule(
     if (!ok || !removed) return;
     const closed = removed;
     showActionNotice(
-      reject ? `批注 #${id} 不采纳，已记进「已否决」` : `批注 #${id} 已解决`,
+      reject
+        ? `批注 #${id} 不采纳，已记进「已否决」`
+        : mode === "delete"
+          ? `批注 #${id} 已删除`
+          : `批注 #${id} 已解决`,
       "撤销",
       6000,
       () => {
@@ -1496,12 +1501,17 @@ export function createCommentsModule(
         resolveComment(docPath, id) {
           assertAcceptingCalls();
           const path = docPath || activeCommentDocPath();
-          if (path) void closeComment(path, id, false);
+          if (path) void closeComment(path, id, "resolve");
         },
         rejectComment(docPath, id) {
           assertAcceptingCalls();
           const path = docPath || activeCommentDocPath();
-          if (path) void closeComment(path, id, true);
+          if (path) void closeComment(path, id, "reject");
+        },
+        deleteComment(docPath, id) {
+          assertAcceptingCalls();
+          const path = docPath || activeCommentDocPath();
+          if (path) void closeComment(path, id, "delete");
         },
         rebindComment(docPath, id) {
           assertAcceptingCalls();
@@ -1654,6 +1664,7 @@ export function createCommentsModule(
             editComment: (path, id) => operations?.editComment(path, id),
             resolveComment: (path, id) => operations?.resolveComment(path, id),
             rejectComment: (path, id) => operations?.rejectComment(path, id),
+            deleteComment: (path, id) => operations?.deleteComment(path, id),
             adoptSuggestion: (path, id) =>
               operations ? operations.adoptSuggestion(path, id) : Promise.resolve(false),
             copyText: (text) => operations?.copyText(text),

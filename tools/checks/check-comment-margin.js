@@ -5,6 +5,7 @@
  * 2. 卡片排布（layoutCards）：挨得近的错开不重叠、展开的那张对齐原文、上面的卡往上让、
  *    让到顶不够才整体往下、无法定位的排最下面；
  * 3. 对话体（commentThread.ts）：页边新建只画原文和输入框；侧栏里的空白注照旧能「已解决」；
+ *    「删除」一次确认后删掉并收起（不记进「已否决」）；
  * 4. 批注模块的接线：点标记先展开页边卡、放不下退回侧栏；侧栏列表行优先在页边打开；
  *    选中文字新建时页边放得下就不弹居中框；新建没写就收起会删掉空批注、有消息的不动；
  *    草稿表侧栏和页边共用；Esc 在 window 捕获阶段收起（Obsidian 快捷键系统会先拦）、
@@ -190,11 +191,13 @@ function checkPure(r, M) {
 
 /* ---------- 3：对话体 ---------- */
 function checkThread(r, T, Panel) {
+  const deleted = [];
   const host = {
     replyToComment: async () => true,
     editComment() {},
     resolveComment() {},
     rejectComment() {},
+    deleteComment: (p, id) => deleted.push([p, id]),
     adoptSuggestion: async () => true,
     copyText() {},
     rebindComment() {},
@@ -222,6 +225,23 @@ function checkThread(r, T, Panel) {
     "侧栏里的空白注：照旧有「已解决」，占位仍是「回复」",
     sidebar.byText("已解决") !== null &&
       /回复/.test(sidebar.byClass("wt-comment-reply-input")[0].attrs.placeholder)
+  );
+
+  const withMsg = new FakeEl();
+  let closed = 0;
+  T.renderThreadBody(withMsg, { ...blank, messages: [{ by: "agent", text: "意见" }] }, {
+    host, docPath: "正文/甲.md", drafts: new Map(), onClosed: () => closed++,
+  });
+  const del = withMsg.byText("删除");
+  r.check("有「删除」按钮，靠右单独放（wt-comment-delete）", del && del.hasClass("wt-comment-delete"));
+  del.fire("click");
+  const afterOne = deleted.length;
+  const confirmText = del.text;
+  del.fire("click");
+  r.check(
+    "「删除」点一次只变「确认」，再点才删并收起",
+    afterOne === 0 && confirmText === "确认" && deleted.length === 1 &&
+      deleted[0][0] === "正文/甲.md" && deleted[0][1] === 9 && closed === 1
   );
 
   const drafts = new Map();
@@ -355,11 +375,16 @@ async function checkModule(r, entryPath) {
     invalidate: (p) => cache.delete(p),
     invalidatePrefix() {},
     getRejected: () => [],
-    async save(p, list) { disk.set(p, clone(list)); cache.set(p, clone(list)); },
+    async save(p, list, rejected) {
+      disk.set(p, clone(list));
+      cache.set(p, clone(list));
+      if (rejected) lastRejected = [...rejected];
+    },
     handleModified: () => null,
     handleDeleted: () => null,
     handleRenamed: () => [],
   };
+  let lastRejected = [];
   const settings = { commentsEnabled: true, commentBubbleEverywhere: true };
   const domListeners = [];
   let sidebarOpened = 0;
@@ -504,6 +529,14 @@ async function checkModule(r, entryPath) {
   ops.addCommentForView(cm);
   await settle();
   r.check("新建批注：页边放不下仍用居中输入框", drafts.length === 1);
+
+  ops.deleteComment(DOC, 1);
+  await ops.flush();
+  r.check(
+    "删除：整条从批注文件里删掉，不记进「已否决」",
+    !disk.get(DOC).some((c) => c.id === 1) && lastRejected.length === 0,
+    JSON.stringify({ left: disk.get(DOC), lastRejected })
+  );
 }
 
 function checkMainSource(r) {

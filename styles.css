@@ -10494,6 +10494,16 @@ body.wt-mobile .wt-lock-banner-btn {
 }
 
 /* 确认态：浅红底 + 红字 + 红框（必须压过上面的幽灵按钮） */
+/* 删除：靠右、淡色，悬停才变红；确认态沿用下面的红框 */
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions button.wt-comment-delete {
+  margin-left: auto;
+  color: var(--wt-ink-3);
+}
+
+:is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions button.wt-comment-delete:hover {
+  color: var(--text-error);
+}
+
 :is(.wt-tb-comments .wt-comment-detail, .wt-margin .wt-mcard) .wt-comment-card-actions button.is-confirming {
   border: 0.5px solid var(--text-error);
   background: color-mix(in srgb, var(--text-error) 12%, transparent);

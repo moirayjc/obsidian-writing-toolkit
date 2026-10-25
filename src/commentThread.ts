@@ -25,6 +25,12 @@ export interface CommentThreadHost {
   resolveComment(docPath: string, id: number): void;
   /** 不采纳：整条删除并记进「已否决」区（6 秒内可撤销）。 */
   rejectComment(docPath: string, id: number): void;
+  /**
+   * 删除：整条删掉，不记进「已否决」（6 秒内可撤销）。做的事和「已解决」一样，
+   * 但按钮名说的是「这条写错了 / 不要了」，不是「讨论完了」——作者 2026-10-25 要求，
+   * 只有「已解决」时找不到删除入口（比如想把批注改圈两段，得先删掉这条重来）。
+   */
+  deleteComment(docPath: string, id: number): void;
   /** 采纳这条批注最新的修改建议；成功返回 true。 */
   adoptSuggestion(docPath: string, id: number): Promise<boolean>;
   /** 复制一段文字到剪贴板（复制建议用）。 */
@@ -125,6 +131,12 @@ export function renderThreadBody(
       ctx.host.rebindComment(ctx.docPath, item.id)
     );
   }
+  // 破坏性操作放最右，和结案按钮隔开
+  const deleteBtn = confirmButton(row, "删除", "再点一次：删除这条批注（不记进「已否决」）", () => {
+    ctx.host.deleteComment(ctx.docPath, item.id);
+    ctx.onClosed();
+  });
+  deleteBtn.addClass("wt-comment-delete");
 }
 
 /**
@@ -136,7 +148,7 @@ export function confirmButton(
   label: string,
   confirmTitle: string,
   onConfirm: () => void
-): void {
+): HTMLButtonElement {
   const btn = row.createEl("button", { text: label });
   let confirming = false;
   let resetTimer = 0;
@@ -159,6 +171,7 @@ export function confirmButton(
     reset();
     onConfirm();
   });
+  return btn;
 }
 
 /** 一条消息：作者 / Agent 用不同底色区分；完整显示，可选中复制。 */
