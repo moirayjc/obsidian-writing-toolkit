@@ -9,7 +9,8 @@
  * 4. 批注模块的接线：点标记先展开页边卡、放不下退回侧栏；侧栏列表行优先在页边打开；
  *    选中文字新建时页边放得下就不弹居中框；新建没写就收起会删掉空批注、有消息的不动；
  *    草稿表侧栏和页边共用；Esc 在 window 捕获阶段收起（Obsidian 快捷键系统会先拦）、
- *    真收起了才吃掉这次 Esc；进沉浸模式（番茄钟锁定也走这里）时主入口收起所有卡。
+ *    真收起了才吃掉这次 Esc；进沉浸模式（番茄钟锁定也走这里）时主入口收起所有卡；
+ *    卡里输入框给焦点不滚正文（preventScroll + 新建那条等排好位置再给）。
  *
  * 滚动是否跟手、会不会抖、输入法、各主题下的样子验证不了，只能进 Obsidian 手点。
  */
@@ -547,6 +548,28 @@ function checkMainSource(r) {
     "进沉浸模式（番茄钟锁定也走 setImmersiveMode）时收起页边卡",
     /if \(on\) \{[\s\S]*?this\.collapseCommentMargins\(\)/.test(body) &&
       /commentsModule\?\.operations\.collapseMarginCards\(\)/.test(main)
+  );
+
+  // 卡片在滚动容器里：给卡里输入框焦点不能让浏览器滚正文；新建那条要等 write 排好位置再给
+  const margin = fs.readFileSync(path.join(H.ROOT, "src", "commentMargin.ts"), "utf8");
+  const inputFocus = margin.match(/\binput\.focus\([^)]*\)/g) || [];
+  const between = (from, to) => {
+    const i = margin.indexOf(from);
+    return i >= 0 ? margin.slice(i, margin.indexOf(to, i + from.length)) : "";
+  };
+  const renderBody = between("  private render(): void {", "\n  }\n");
+  const writeBody = between("  private write(measured: Measured): void {", "\n  }\n");
+  r.check(
+    "卡里输入框给焦点都带 preventScroll（否则新建批注时正文跳走）",
+    inputFocus.length > 0 && inputFocus.every((s) => /preventScroll:\s*true/.test(s)),
+    JSON.stringify(inputFocus)
+  );
+  r.check(
+    "新建那条的输入框在 write 排好位置后才给焦点，render 里不给",
+    !/\.focus\(/.test(renderBody) &&
+      /this\.focusComposeInput\(\)/.test(writeBody) &&
+      /entry\.top === undefined\) return/.test(margin),
+    JSON.stringify({ render: renderBody.length, write: writeBody.length })
   );
 }
 

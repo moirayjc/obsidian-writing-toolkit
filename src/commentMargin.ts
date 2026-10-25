@@ -487,15 +487,21 @@ class MarginView implements CommentMarginApi {
       entry.el.remove();
       this.cards.delete(id);
     }
-    if (this.focusPending && this.composingId !== null) {
-      const input = this.cards
-        .get(this.composingId)
-        ?.el.querySelector<HTMLTextAreaElement>(".wt-comment-reply-input");
-      if (input) {
-        this.focusPending = false;
-        input.focus();
-      }
-    }
+  }
+
+  /**
+   * 新建那条的输入框：等 write 把卡片挪到原文旁边再给焦点。
+   * 卡片在滚动容器里，刚建出来还在默认位置（文档下方）；这时 focus 会让浏览器
+   * 把正文滚过去，作者看到的是正文跳走、卡片要往下翻才找得到。
+   */
+  private focusComposeInput(): void {
+    if (!this.focusPending || this.composingId === null) return;
+    const entry = this.cards.get(this.composingId);
+    if (!entry || entry.top === undefined) return;
+    const input = entry.el.querySelector<HTMLTextAreaElement>(".wt-comment-reply-input");
+    if (!input) return;
+    this.focusPending = false;
+    input.focus({ preventScroll: true });
   }
 
   private captureFocus(el: HTMLElement): { caret: number } | null {
@@ -513,7 +519,8 @@ class MarginView implements CommentMarginApi {
   private restoreFocus(el: HTMLElement, focus: { caret: number }): void {
     const input = el.querySelector<HTMLTextAreaElement>(".wt-comment-reply-input");
     if (!input) return;
-    input.focus();
+    // 重建的卡还没写位置，同样不能让浏览器跟着滚
+    input.focus({ preventScroll: true });
     const pos = Math.min(focus.caret, input.value.length);
     input.setSelectionRange(pos, pos);
   }
@@ -697,6 +704,7 @@ class MarginView implements CommentMarginApi {
           entry.left = left;
         }
       }
+      this.focusComposeInput();
     }
     if (again) this.schedule();
   }
