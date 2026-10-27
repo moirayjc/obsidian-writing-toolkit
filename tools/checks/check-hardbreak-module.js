@@ -5,6 +5,16 @@
  */
 const fs = require("fs");
 const path = require("path");
+
+// 临时编译产物位于系统临时目录；让外置的 CodeMirror 解析回仓库依赖。
+process.env.NODE_PATH = [
+  path.resolve(__dirname, "..", "..", "node_modules"),
+  process.env.NODE_PATH,
+]
+  .filter(Boolean)
+  .join(path.delimiter);
+require("module").Module._initPaths();
+
 const H = require("./_harness");
 
 function createDoc(text) {
@@ -47,13 +57,16 @@ function createView(initialText, initialFrom, initialTo = initialFrom, composing
     get state() {
       return {
         doc: createDoc(text),
-        selection: { main: { ...selection } },
+        selection: {
+          main: { ...selection },
+          ranges: [{ ...selection, empty: selection.from === selection.to }],
+        },
       };
     },
     dispatch(spec) {
       if (spec.changes) {
         const { from, to, insert } = spec.changes;
-        text = text.slice(0, from) + insert + text.slice(to);
+        text = text.slice(0, from) + (insert ?? "") + text.slice(to);
       }
       if (spec.selection) {
         selection = {
@@ -138,6 +151,139 @@ function main() {
     const actual = enter(input);
     r.check(name, actual === expected, JSON.stringify(actual));
   }
+
+  // 回车开出的空段落反悔：退格一次回到上一段行尾
+  const backspace = (marked) => {
+    const cursor = marked.indexOf("|");
+    const view = createView(marked.replace("|", ""), cursor);
+    const handled = hardBreak.applyHardBreakBackspace(view);
+    const text = view.text();
+    const at = view.selection().from;
+    return handled ? text.slice(0, at) + "|" + text.slice(at) : null;
+  };
+  const backspaceCases = [
+    ["退格撤掉段间新开的空段落，段间仍一个空行", "甲\n\n|\n\n乙", "甲|\n\n乙"],
+    ["退格撤掉文末新开的空段落", "甲\n\n|", "甲|"],
+    ["下方紧贴文字时退格后补回一个空行", "甲\n\n|\n乙", "甲|\n\n乙"],
+    ["紧贴文字下面的空行：走默认退格", "甲\n|", null],
+    ["行内退格：走默认退格", "甲乙|", null],
+    ["上方连着多个空行：走默认退格", "甲\n\n\n|", null],
+    ["段首退格一次合并到上一段末尾", "甲\n\n|乙\n\n丙", "甲|乙\n\n丙"],
+    ["段首退格：上一段是标题时走默认", "# 标题\n\n|乙", null],
+    ["段首退格：本行是列表时走默认", "甲\n\n|- 乙", null],
+    ["段首退格：上方紧贴文字时走默认", "甲\n|乙", null],
+  ];
+  for (const [name, input, expected] of backspaceCases) {
+    const actual = backspace(input);
+    r.check(name, actual === expected, JSON.stringify(actual));
+  }
+  const forwardDelete = (marked) => {
+    const cursor = marked.indexOf("|");
+    const view = createView(marked.replace("|", ""), cursor);
+    const handled = hardBreak.applyHardBreakDelete(view);
+    const text = view.text();
+    const at = view.selection().from;
+    return handled ? text.slice(0, at) + "|" + text.slice(at) : null;
+  };
+  const deleteCases = [
+    ["段尾向前删除一次把下一段接上来", "甲|\n\n乙", "甲|乙"],
+    ["段尾向前删除：下一段是列表时走默认", "甲|\n\n- 乙", null],
+    ["段尾向前删除：下方紧贴文字时走默认", "甲|\n乙", null],
+    ["行中间向前删除走默认", "甲|乙", null],
+  ];
+  for (const [name, input, expected] of deleteCases) {
+    const actual = forwardDelete(input);
+    r.check(name, actual === expected, JSON.stringify(actual));
+  }
+
+  // 粘贴整理（纯函数）
+  const pasteCases = [
+    ["粘贴：紧贴的正文行之间补一个空行", "甲\n乙\n丙", "甲\n\n乙\n\n丙"],
+    ["粘贴：正文之间的多个空行收成一个", "甲\n\n\n\n乙", "甲\n\n乙"],
+    ["粘贴：网页小说段首的全角空格去掉并分段", "　　甲\n　　乙", "甲\n\n乙"],
+    ["粘贴：段首不换行空格也去掉", "\u00a0\u00a0\u00a0\u00a0甲\n\u00a0\u00a0乙", "甲\n\n乙"],
+    ["粘贴：单行段落的段首全角空格去掉", "　　甲乙", "甲乙"],
+    ["粘贴：句中的全角空格保留", "甲　乙\n丙", "甲　乙\n\n丙"],
+    ["粘贴：列表原样保留", "说明\n- 一\n- 二\n\n\n- 三", "说明\n- 一\n- 二\n\n\n- 三"],
+    ["粘贴：表格原样保留", "| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |", "| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |"],
+    ["粘贴：代码块内部不动", "甲\n```\n一\n二\n```\n乙", "甲\n```\n一\n二\n```\n乙"],
+    ["粘贴：标题和下面的正文保持原样", "# 第一章\n正文", "# 第一章\n正文"],
+    ["粘贴：列表续行不当正文", "- 一\n  续一\n  续二", "- 一\n  续一\n  续二"],
+    ["粘贴：单行不动", "甲乙", "甲乙"],
+    ["粘贴：首尾空行不动", "\n\n甲\n乙\n\n", "\n\n甲\n\n乙\n\n"],
+  ];
+  for (const [name, input, expected] of pasteCases) {
+    const actual = hardBreak.normalizePastedParagraphs(input);
+    r.check(name, actual === expected, JSON.stringify(actual));
+  }
+
+  // 真实 CodeMirror 事务：删除选区 / 粘贴后的整理与原事务合成一次
+  const { EditorState } = require("@codemirror/state");
+  const runtime = H.compile("src/hardBreak.ts", "hard-break-runtime", [
+    "@codemirror/state",
+    "@codemirror/view",
+  ]);
+  let filterActive = true;
+  const extensions = runtime.buildHardBreakExtensions(() => filterActive);
+  const apply = (doc, selection, spec) => {
+    const state = EditorState.create({ doc, selection, extensions });
+    const tr = state.update(spec);
+    return { text: tr.state.doc.toString(), head: tr.state.selection.main.head };
+  };
+  const cutLine = apply("甲\n\n乙\n\n丙", { anchor: 3, head: 5 }, {
+    changes: { from: 3, to: 5 },
+    userEvent: "delete.cut",
+  });
+  r.check(
+    "剪切整段（含换行）后段间收回一个空行，光标在上一段末尾",
+    cutLine.text === "甲\n\n丙" && cutLine.head === 1,
+    JSON.stringify(cutLine)
+  );
+  const deleteText = apply("甲\n\n乙\n\n丙", { anchor: 3, head: 4 }, {
+    changes: { from: 3, to: 4 },
+    userEvent: "delete.backward",
+  });
+  r.check(
+    "选中一段文字删掉后段间收回一个空行",
+    deleteText.text === "甲\n\n丙" && deleteText.head === 1,
+    JSON.stringify(deleteText)
+  );
+  const deleteNearList = apply("- 一\n\n乙\n\n丙", { anchor: 5, head: 6 }, {
+    changes: { from: 5, to: 6 },
+    userEvent: "delete.backward",
+  });
+  r.check("列表旁边删除选区不动空行", deleteNearList.text === "- 一\n\n\n\n丙");
+  const typedOver = apply("甲\n\n乙\n\n丙", { anchor: 3, head: 4 }, {
+    changes: { from: 3, to: 4 },
+    userEvent: "input.type",
+  });
+  r.check("输入替换选区不整理空行", typedOver.text === "甲\n\n\n\n丙");
+  const pasted = apply("", { anchor: 0 }, {
+    changes: { from: 0, insert: "甲\n乙\n\n\n丙" },
+    userEvent: "input.paste",
+  });
+  r.check(
+    "粘贴后段间统一一个空行，光标在粘贴内容末尾",
+    pasted.text === "甲\n\n乙\n\n丙" && pasted.head === 7,
+    JSON.stringify(pasted)
+  );
+  const pastedInList = apply("- ", { anchor: 2 }, {
+    changes: { from: 2, insert: "甲\n乙" },
+    userEvent: "input.paste",
+  });
+  r.check("粘贴到列表行里不整理", pastedInList.text === "- 甲\n乙");
+  filterActive = false;
+  const pastedInactive = apply("", { anchor: 0 }, {
+    changes: { from: 0, insert: "甲\n乙" },
+    userEvent: "input.paste",
+  });
+  r.check("硬换行关闭时粘贴不整理", pastedInactive.text === "甲\n乙");
+
+  const fenceBackspace = "```\n甲\n\n\n```";
+  r.check(
+    "代码块内退格走默认",
+    hardBreak.applyHardBreakBackspace(createView(fenceBackspace, 7)) === false
+  );
 
   const blockCases = [
     ["> 引用", 4],
@@ -233,7 +379,10 @@ function main() {
   r.check("启动后注册编辑器扩展", registeredExtension !== null);
   r.check("启动后订阅设置变更", typeof listener === "function");
   const registeredKeyBinding =
-    registeredExtension?.inner?.value?.[0] ?? null;
+    (Array.isArray(registeredExtension)
+      ? registeredExtension[0]
+      : registeredExtension
+    )?.inner?.value?.[0] ?? null;
   const runRegisteredEnter = registeredKeyBinding?.run;
   r.check(
     "模块注册的是裸 Enter 键位",
