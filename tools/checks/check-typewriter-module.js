@@ -587,7 +587,7 @@ function main() {
     );
     r.check(
       "三个兼容桥只委托模块，不各自刷新编辑器",
-      /typewriterModule\?\.setEnabled\(on\)/.test(modeBridge) &&
+      /typewriterModule\?\.setEnabled\(on \|\| this\.settings\.immersiveMode\)/.test(modeBridge) &&
         /typewriterModule\?\.setOffset\(offset\)/.test(offsetBridge) &&
         /typewriterModule\?\.setParagraphHighlight\(on\)/.test(
           paragraphBridge
@@ -595,6 +595,13 @@ function main() {
         !/\.refresh\(/.test(
           modeBridge + offsetBridge + paragraphBridge
         )
+    );
+    const immersiveBridge = H.extractMethod(mainSource, "setImmersiveMode(on: boolean)");
+    r.check(
+      "沉浸模式只临时打开打字机，不改写作者的打字机开关（沉浸中重启也不会卡住）",
+      /typewriterModule\?\.setEnabled\(on \|\| this\.settings\.typewriterMode\)/.test(immersiveBridge) &&
+        !/settings\.typewriterMode\s*=/.test(immersiveBridge) &&
+        !/previousTypewriterMode/.test(mainSource)
     );
     r.check(
       "模块自己读取并订阅三项设置",

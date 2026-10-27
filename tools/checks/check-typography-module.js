@@ -359,6 +359,15 @@ async function main() {
           "headingStyle",
         ].every((key) => moduleSource.includes(`"${key}"`))
     );
+    const css = fs.readFileSync(path.join(H.ROOT, "styles.css"), "utf8");
+    r.check(
+      "信纸横线在段间空行上也画线（作者刻意如此，不要排除空行）",
+      !/body\.wt-letter-paper[^{]*:(empty|has)/.test(css)
+    );
+    r.check(
+      "段首缩进在阅读视图也生效，只作用于正文顶层段落",
+      /body\.wt-indent \.markdown-preview-view \.markdown-preview-sizer > div > p[^{]*\{\s*text-indent: 2em;/.test(css)
+    );
     r.check(
       "模块不反向依赖 main.ts",
       !/from "\.\.\/main"/.test(moduleSource)

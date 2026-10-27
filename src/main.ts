@@ -247,7 +247,6 @@ export default class WritingToolkitPlugin extends Plugin {
   private dailySaveTimer: TimerHandle | null = null;
   private typedSettleTimer: TimerHandle | null = null;
   private lastWritingActivityAt = 0;
-  private previousTypewriterMode: boolean | null = null;
   private snapshotModule!: SnapshotModule;
   private snapshotUiModule!: SnapshotUiModule;
   /** 阶段 4：章纲存储、编辑弹窗、侧栏面板与伴随文件迁移。 */
@@ -712,6 +711,8 @@ export default class WritingToolkitPlugin extends Plugin {
   // 长按出菜单后吞掉紧随其后的 click；由事件作用域统一撤销。
   this.eventScope.onDom(document, "click", handleSuppressedClick, true);
   this.eventScope.onDom(document, "keydown", (event: KeyboardEvent) => {
+    // 输入法拼字中按 Esc 是取消候选，不是退出沉浸
+    if (event.isComposing) return;
     // 锁定中短按 Esc 不退出；长按的紧急出口由番茄钟模块处理。
     if (event.key === "Escape" && this.settings.immersiveMode && !this.isPomodoroLocked()) {
       this.switchImmersiveMode(false);
@@ -865,7 +866,7 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   setTypewriterMode(on: boolean) {
-    this.typewriterModule?.setEnabled(on);
+    this.typewriterModule?.setEnabled(on || this.settings.immersiveMode);
   }
 
   setTypewriterOffset(offset: number) {
@@ -1072,21 +1073,9 @@ export default class WritingToolkitPlugin extends Plugin {
   }
 
   setImmersiveMode(on: boolean): void {
-    if (on && this.previousTypewriterMode === null) {
-      this.previousTypewriterMode = this.settings.typewriterMode;
-      if (!this.settings.typewriterMode) {
-        this.settings.typewriterMode = true;
-        this.setTypewriterMode(true);
-      }
-    }
-    if (!on && this.previousTypewriterMode !== null) {
-      const shouldRestore = this.previousTypewriterMode;
-      this.previousTypewriterMode = null;
-      if (this.settings.typewriterMode !== shouldRestore) {
-        this.settings.typewriterMode = shouldRestore;
-        this.setTypewriterMode(shouldRestore);
-      }
-    }
+    // 沉浸期间临时打开打字机，但不改作者自己的打字机开关：以前改了设置再靠内存变量
+    // 还原，沉浸中重启 Obsidian 后内存变量没了，打字机就一直关不回去。
+    this.typewriterModule?.setEnabled(on || this.settings.typewriterMode);
     document.body.classList.toggle("wt-immersive", on);
     if (on) {
       // 进沉浸（番茄钟锁定也走这里）：展开的批注页边卡全部收起，不打扰；之后仍可手动点开

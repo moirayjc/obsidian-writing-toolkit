@@ -103,6 +103,14 @@ function main() {
     mainSource.indexOf('event.key === "Escape" && this.settings.immersiveMode'),
     mainSource.indexOf('event.key === "Escape" && this.settings.immersiveMode') + 300
   );
+  const escListener = mainSource.slice(
+    mainSource.indexOf('this.eventScope.onDom(document, "keydown"'),
+    mainSource.indexOf('event.key === "Escape" && this.settings.immersiveMode')
+  );
+  r.check(
+    "6a. 输入法拼字中按 Esc（取消候选）不退出沉浸",
+    /if \(event\.isComposing\) return;/.test(escListener)
+  );
   r.check(
     "6. 侧栏入口与 Esc 都走联动方法，锁定中短按 Esc 不退出",
     /!this\.isPomodoroLocked\(\)/.test(

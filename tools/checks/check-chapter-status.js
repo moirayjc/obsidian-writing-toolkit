@@ -606,11 +606,14 @@ async function main() {
     );
     r.check(
       "硬换行写入带 userEvent（过滤器才认得出是作者输入）",
-      /insert: "\\n\\n" \},[\s\S]{0,120}userEvent: "input"/.test(source("src/hardBreak.ts"))
+      /insert: plan\.insert \},[\s\S]{0,120}userEvent: "input"/.test(source("src/hardBreak.ts"))
     );
+    const punctuationSource = source("src/punctuation.ts");
     r.check(
-      "标点辅助的两处改文档写入都带 userEvent",
-      (source("src/punctuation.ts").match(/userEvent: "input\.type"/g) || []).length === 2
+      "标点辅助每处改文档写入都带 userEvent",
+      (punctuationSource.match(/changes: \{/g) || []).length ===
+        (punctuationSource.match(/userEvent: "(input\.type|delete\.backward)"/g) || []).length &&
+        /userEvent: "delete\.backward"/.test(punctuationSource)
     );
     const workbench = source("src/workbench.ts");
     r.check(

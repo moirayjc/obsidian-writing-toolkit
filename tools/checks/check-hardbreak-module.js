@@ -22,6 +22,7 @@ function createDoc(text) {
     from += value.length + 1;
   }
   return {
+    lines: lines.length,
     line(number) {
       return lines[number - 1];
     },
@@ -113,11 +114,30 @@ function main() {
       selectedView.selection().from === 3
   );
 
-  const emptyView = createView("第一段\n\n第三段", 4);
-  r.check(
-    "空行保留默认回车",
-    handler(emptyView) === false && emptyView.text() === "第一段\n\n第三段"
-  );
+  // 「|」标光标：回车后段与段之间永远正好一个空行
+  const enter = (marked) => {
+    const cursor = marked.indexOf("|");
+    const view = createView(marked.replace("|", ""), cursor);
+    const handled = handler(view);
+    const text = view.text();
+    const at = view.selection().from;
+    return handled ? text.slice(0, at) + "|" + text.slice(at) : null;
+  };
+  const spacingCases = [
+    ["行尾、下方隔着空行：开新段落", "甲|\n\n乙", "甲\n\n|\n\n乙"],
+    ["行尾、下方紧贴一段：新段落上下各一个空行", "甲|\n乙", "甲\n\n|\n\n乙"],
+    ["全文末尾：只在上方隔一个空行", "甲|", "甲\n\n|"],
+    ["行中间：拆成两段，中间一个空行", "甲|乙", "甲\n\n|乙"],
+    ["行首、上方紧贴一段：只补一个空行拆开", "甲\n|乙", "甲\n\n|乙"],
+    ["行首、上方隔着空行：在上面开新段落", "甲\n\n|乙", "甲\n\n|\n\n乙"],
+    ["段间空行上回车：新段落上下各一个空行", "甲\n|\n乙", "甲\n\n|\n\n乙"],
+    ["已在隔好空行的空段落里：不再叠加空行", "甲\n\n|\n\n乙", "甲\n\n|\n\n乙"],
+    ["紧贴在一段下面的空行：补成一个空行", "甲\n|", "甲\n\n|"],
+  ];
+  for (const [name, input, expected] of spacingCases) {
+    const actual = enter(input);
+    r.check(name, actual === expected, JSON.stringify(actual));
+  }
 
   const blockCases = [
     ["> 引用", 4],
@@ -148,6 +168,19 @@ function main() {
     "围栏代码块结束后恢复硬换行",
     handler(afterFence) === true &&
       afterFence.text().endsWith("后文\n\n")
+  );
+  const frontmatterText = "---\nwt-status: draft\n---\n正文";
+  const insideFrontmatter = createView(frontmatterText, 10);
+  r.check(
+    "frontmatter 内保留默认回车",
+    handler(insideFrontmatter) === false &&
+      insideFrontmatter.text() === frontmatterText
+  );
+  const afterFrontmatter = createView(frontmatterText, frontmatterText.length);
+  r.check(
+    "frontmatter 之后恢复硬换行",
+    handler(afterFrontmatter) === true &&
+      afterFrontmatter.text().endsWith("正文\n\n")
   );
   const nestedFenceCases = [
     "````\n```\n代码\n````\n后文",

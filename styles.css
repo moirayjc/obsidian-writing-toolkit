@@ -8281,15 +8281,18 @@ body.wt-letter-paper .cm-editor .cm-line {
   background-clip: content-box;
   background-repeat: repeat-y;
 }
-/* 空行（段落分隔）处不画线，让信纸行以段落为边界 */
-body.wt-letter-paper .cm-editor .cm-line:empty {
-  background-image: none;
-}
+/* 段落之间的空行也画线（作者刻意如此：空一行就像信纸上空着一行）。
+   CodeMirror 的空行里有占位 <br>，所以这里不需要、也不要加 :empty 之类的排除。 */
 
 /* === 段首缩进：中文习惯两字符 ===
    纯视觉缩进（text-indent），不写入任何空格字符，文档内容不含缩进、
    不会被误删；标题/列表/引用/代码块/嵌入/脚注不缩进，保持结构。 */
 body.wt-indent .cm-editor .cm-line:not([class*="HyperMD-header-"]):not([class*="HyperMD-list-line"]):not([class*="HyperMD-task-line"]):not([class*="HyperMD-quote-"]):not([class*="HyperMD-codeblock"]):not([class*="HyperMD-embed"]):not([class*="HyperMD-footnote"]) {
+  text-indent: 2em;
+}
+/* 阅读视图：只认正文顶层段落（sizer 下一层块里的 <p>），列表 / 引用 / 标注 / 表格 / 脚注里的段落
+   天然不在这一层；整段只有图片或嵌入的不缩进，免得图片往右偏两格。 */
+body.wt-indent .markdown-preview-view .markdown-preview-sizer > div > p:not(:has(> .internal-embed:only-child, > img:only-child)) {
   text-indent: 2em;
 }
 

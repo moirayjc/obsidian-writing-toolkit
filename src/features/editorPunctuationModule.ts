@@ -33,7 +33,9 @@ export function createPunctuationModule(): PunctuationModule {
         })
       );
       context.registrations.registerEditorExtension(
-        buildPunctuationExtensions(() => active && enabled)
+        buildPunctuationExtensions(() => active && enabled, {
+          canAutoClose: () => !context.services.settings.get().hemingwayMode,
+        })
       );
     },
     setEnabled(next) {

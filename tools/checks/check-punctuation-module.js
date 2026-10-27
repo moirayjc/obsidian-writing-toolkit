@@ -8,32 +8,54 @@ const fs = require("fs");
 const path = require("path");
 const H = require("./_harness");
 
-function createView(initialText, initialSelection) {
-  let text = initialText;
-  let selection = { ...initialSelection };
+let EditorState = null;
+
+/**
+ * 用真实 EditorState 驱动的最小视图：输入处理器只用到 state 与 dispatch。
+ * 文本里的「|」标光标，「[」「]」标选区。
+ */
+function createView(marked) {
+  const anchor = marked.indexOf("[") >= 0 ? marked.indexOf("[") : marked.indexOf("|");
+  const plain = marked.replace(/[|[\]]/g, "");
+  const head = marked.indexOf("]") >= 0 ? marked.indexOf("]") - 1 : anchor;
+  let state = EditorState.create({ doc: plain, selection: { anchor, head } });
   return {
-    state: {
-      sliceDoc(from, to) {
-        return text.slice(from, to);
-      },
+    get state() {
+      return state;
     },
     dispatch(spec) {
-      if (spec.changes) {
-        const { from, to, insert } = spec.changes;
-        text = text.slice(0, from) + insert + text.slice(to);
-      }
-      if (spec.selection) selection = { ...spec.selection };
+      state = state.update(spec).state;
     },
-    text() {
-      return text;
-    },
-    selection() {
-      return selection;
+    /** 当前文本，光标处插回「|」（有选区时用「[]」）。 */
+    marked() {
+      const { from, to, empty } = state.selection.main;
+      const doc = state.doc.toString();
+      if (empty) return doc.slice(0, from) + "|" + doc.slice(from);
+      return doc.slice(0, from) + "[" + doc.slice(from, to) + "]" + doc.slice(to);
     },
   };
 }
 
+/** 模拟输入法提交一个字符：处理器不接管时按默认行为插入。 */
+function type(handler, view, text) {
+  const { from, to } = view.state.selection.main;
+  if (!handler(view, from, to, text)) {
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+    });
+  }
+  return view;
+}
+
+function typeAll(handler, marked, chars) {
+  const view = createView(marked);
+  for (const ch of chars) type(handler, view, ch);
+  return view.marked();
+}
+
 function main() {
+  ({ EditorState } = H.compile("node_modules/@codemirror/state/dist/index.js", "punctuation-cm-state"));
   const punctuation = H.compile("src/punctuation.ts", "punctuation");
   const { EffectScope } = H.compile("src/host/effectScope.ts", "punctuation-scope");
   const { createPunctuationModule } = H.compile(
@@ -43,69 +65,100 @@ function main() {
   const r = H.createReporter("中文标点辅助 Feature Module");
 
   let active = false;
-  const handler = punctuation.createPunctuationInputHandler(() => active);
+  let autoClose = true;
+  const handler = punctuation.createPunctuationInputHandler(() => active, {
+    canAutoClose: () => autoClose,
+  });
+  const backspace = (marked) => {
+    const view = createView(marked);
+    const handled = punctuation.applyPunctuationBackspace(view);
+    return { handled, marked: view.marked() };
+  };
 
-  const disabledView = createView("", { anchor: 0, head: 0 });
-  r.check(
-    "关闭时输入处理器不接管",
-    handler(disabledView, 0, 0, "“") === false &&
-      disabledView.text() === ""
-  );
+  r.check("关闭时输入处理器不接管", handler(createView("|"), 0, 0, "“") === false);
 
   active = true;
-  const multiView = createView("", { anchor: 0, head: 0 });
-  r.check(
-    "多字符输入不接管",
-    handler(multiView, 0, 0, "“”") === false &&
-      multiView.text() === ""
-  );
+  r.check("多字符输入不接管", handler(createView("|"), 0, 0, "“”") === false);
+  r.check("普通文字输入不接管", handler(createView("|"), 0, 0, "雪") === false);
 
-  const pairView = createView("", { anchor: 0, head: 0 });
+  // —— 双引号：不管输入法给的是左还是右，都按上下文定方向 ——
+  r.check("引号外输入左引号：补成一对", typeAll(handler, "|", "“") === "“|”");
+  r.check("引号外输入法给了右引号：仍当开头补成一对", typeAll(handler, "他说：|", "”") === "他说：“|”");
   r.check(
-    "空光标输入左括号自动补右括号",
-    handler(pairView, 0, 0, "“") === true &&
-      pairView.text() === "“”" &&
-      pairView.selection().anchor === 1
+    "引号里输入右引号：跳过已补的右引号",
+    typeAll(handler, "|", "“好”") === "“好”|"
   );
+  r.check(
+    "引号里输入法给了左引号：仍当收尾跳过",
+    typeAll(handler, "|", "“好“") === "“好”|"
+  );
+  r.check(
+    "一整句对话：输入法左右错乱也打得对",
+    typeAll(handler, "|", "”走吧”，他说，“快”") === "“走吧”，他说，“快”|"
+  );
+  r.check(
+    "正文前插引号只补左边，收尾时补右引号",
+    typeAll(handler, "|走吧", "”") === "“|走吧" &&
+      typeAll(handler, "“走吧|", "“") === "“走吧”|"
+  );
+  r.check(
+    "孤立右引号前输入引号：只补左边让它配上",
+    typeAll(handler, "|好”", "“") === "“|好”" && typeAll(handler, "|”", "“") === "“|”"
+  );
+  r.check(
+    "上一段没闭合的引号不影响下一段",
+    typeAll(handler, "“上一段\n|", "”") === "“上一段\n“|”"
+  );
+  r.check(
+    "有选区时用引号包裹并保持选中",
+    typeAll(handler, "[雪夜]", "”") === "“[雪夜]”"
+  );
+  r.check(
+    "单引号同样按上下文判断",
+    typeAll(handler, "“他说|”", "’好’") === "“他说‘好’|”"
+  );
+  r.check("英文撇号不当引号", typeAll(handler, "it|", "’") === "it’|");
 
-  const wrapView = createView("雪夜", { anchor: 0, head: 2 });
+  // —— 方向明确的括号 ——
   r.check(
     "有选区时包裹并保持正文选中",
-    handler(wrapView, 0, 2, "《") === true &&
-      wrapView.text() === "《雪夜》" &&
-      wrapView.selection().anchor === 1 &&
-      wrapView.selection().head === 3
+    typeAll(handler, "[雪夜]", "《") === "《[雪夜]》"
+  );
+  r.check(
+    "输入已补出的右括号时只移动光标",
+    typeAll(handler, "（|）", "）") === "（）|"
+  );
+  r.check("括号可以嵌套", typeAll(handler, "（|）", "（") === "（（|））");
+  r.check(
+    "孤立右括号前再输右括号照常插入",
+    typeAll(handler, "甲|）", "）") === "甲）|）"
+  );
+  r.check("没有相邻右括号时不接管右括号输入", handler(createView("|"), 0, 0, "）") === false);
+  r.check("正文前插左括号不凭空补右括号", typeAll(handler, "|雪夜", "（") === "（|雪夜");
+  r.check(
+    "补齐直角引号与书名号等",
+    typeAll(handler, "|", "「") === "「|」" &&
+      typeAll(handler, "|", "『") === "『|』" &&
+      typeAll(handler, "|", "〈") === "〈|〉"
   );
 
-  const skipCloseView = createView("（）", { anchor: 1, head: 1 });
+  // —— 海明威模式：光标会被拉回文末，不能补右半边 ——
+  autoClose = false;
   r.check(
-    "输入已存在的右括号时只移动光标",
-    handler(skipCloseView, 1, 1, "）") === true &&
-      skipCloseView.text() === "（）" &&
-      skipCloseView.selection().anchor === 2
+    "不能自动补全时只插左半边，收尾照样判断方向",
+    typeAll(handler, "|", "”好”") === "“好”|" && typeAll(handler, "|", "（") === "（|"
   );
+  autoClose = true;
 
-  const loneCloseView = createView("", { anchor: 0, head: 0 });
+  // —— 退格 ——
+  const bsPair = backspace("（|）");
+  const bsQuote = backspace("说“|”");
+  const bsText = backspace("“好|”");
   r.check(
-    "没有相邻右括号时不接管右括号输入",
-    handler(loneCloseView, 0, 0, "）") === false &&
-      loneCloseView.text() === ""
+    "空的一对中间退格连右半边一起删",
+    bsPair.handled && bsPair.marked === "|" && bsQuote.handled && bsQuote.marked === "说|"
   );
-
-  const skipOpenView = createView("”", { anchor: 0, head: 0 });
-  r.check(
-    "光标后已有右括号时不重复补全",
-    handler(skipOpenView, 0, 0, "“") === true &&
-      skipOpenView.text() === "”" &&
-      skipOpenView.selection().anchor === 1
-  );
-
-  const plainView = createView("", { anchor: 0, head: 0 });
-  r.check(
-    "普通文字输入不接管",
-    handler(plainView, 0, 0, "雪") === false &&
-      plainView.text() === ""
-  );
+  r.check("不是空的一对时退格不接管", bsText.handled === false && bsText.marked === "“好|”");
 
   const module = createPunctuationModule();
   const effects = new EffectScope("punctuation-test");
