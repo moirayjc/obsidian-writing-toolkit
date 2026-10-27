@@ -1,5 +1,4 @@
-import { PluginSettingTab, Setting, App, Plugin } from "obsidian";
-import { AGENT_CLIENT_LABELS, type AgentClient } from "./agentTools";
+import { PluginSettingTab, Setting, App, Plugin, Platform } from "obsidian";
 import type { WordCountMode } from "./wordcount";
 import { DEFAULT_CHAPTER_EXCLUDE_NAMES } from "./outlineText";
 import { setupSelectArrows, setupSliderFills } from "./settingControls";
@@ -37,20 +36,6 @@ export const DAILY_DISPLAY_MODE_LABELS: Record<DailyDisplayMode, string> = {
   duration: "时长",
 };
 
-/** 本机批注工具在设置页显示的状态。 */
-export interface AgentBridgeSettingsStatus {
-  /** 桌面端才有 */
-  available: boolean;
-  enabled: boolean;
-  running: boolean;
-  port: number;
-  error: string | null;
-  /** 「复制给」上次选的 Agent */
-  client: AgentBridgeClient;
-}
-
-/** 「复制给」的 Agent */
-export type AgentBridgeClient = AgentClient;
 
 /**
  * 设置页需要的插件接口。刻意不与 Obsidian 的 Plugin 类型交叉，
@@ -77,86 +62,26 @@ export interface WritingToolkitPluginLike {
     refreshMobileStatusBar: () => void;
     /** 批注总开关变化后，刷新已打开文档里的批注痕迹 */
     refreshAllCommentDecors: () => void;
-    /** 本机批注工具（给 Agent 用的 MCP）：开关、端口、口令都只存在这台电脑上 */
-    agentBridgeStatus: () => AgentBridgeSettingsStatus;
-    setAgentBridgeEnabled: (on: boolean) => Promise<void>;
-    setAgentBridgePort: (port: number) => Promise<void>;
-    regenerateAgentBridgeToken: () => Promise<void>;
-    setAgentBridgeClient: (client: AgentBridgeClient) => void;
-    copyAgentBridgeCommand: () => void;
+    /** 每轮的快捷命令（/pizhu）：复制一段通用的话 */
     copyAgentReplyCommand: () => void;
 }
 
 export class WritingToolkitSettingTab extends PluginSettingTab {
   private wt: WritingToolkitPluginLike;
 
-  /** 批注工具：只在桌面端显示；开着时多出端口、连接命令和换口令。 */
-  private buildAgentBridgeSettings(el: HTMLElement): void {
-    const status = this.wt.agentBridgeStatus();
-    if (!status.available) return;
+  /** 每轮的快捷命令（/pizhu）：装进 Agent 的自定义命令，只在电脑上显示。 */
+  private buildReplyCommandSettings(el: HTMLElement): void {
     new Setting(el)
-      .setName("允许 Agent 通过批注工具连接（仅本机）")
+      .setName("每轮的快捷命令")
       .setDesc(
-        "打开后，插件在这台电脑上提供批注工具（MCP），Claude Code、Gemini CLI、Antigravity 等 Agent 用它列出、发起、回复批注：写入前当场校验原文，也没有结案和改正文的工具。只接受这台电脑上带口令的连接，别的电脑和网页都连不进来。需要 Obsidian 开着。"
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(status.enabled).onChange((value) => {
-          void this.wt.setAgentBridgeEnabled(value);
-        })
-      );
-    if (!status.enabled) return;
-
-    const state = status.running
-      ? `运行中：http://127.0.0.1:${status.port}/mcp`
-      : status.error ?? "启动中…";
-    new Setting(el)
-      .setName("端口")
-      .setDesc(`${state}。被占用时换一个 1024–65535 之间的数，改完要在 Agent 那边重新配一次。`)
-      .addText((text) => {
-        text.setValue(String(status.port));
-        text.inputEl.inputMode = "numeric";
-        text.inputEl.addEventListener("change", () => {
-          const port = Number(text.getValue().trim());
-          void this.wt.setAgentBridgePort(port);
-        });
-      });
-
-    new Setting(el)
-      .setName("连接到 Agent")
-      .setDesc(
-        "选你用的 Agent 再点复制，照弹出的提示配一次就好（每台电脑各配一次）。别的 Agent 选「通用」，按它的方式填地址和口令。"
+        "批注聊起来以后，一直在同一个对话里聊，Agent 记得这本书和聊过的事，也省 token。把这段话存成你 Agent 里的快捷短语或自定义命令（比如叫 /pizhu），每轮你回完批注，在那个对话里发一下就好，不用再复制指令。"
       )
       .setClass("wt-setting-stacked")
-      .addDropdown((dd) => {
-        for (const [value, label] of Object.entries(AGENT_CLIENT_LABELS)) {
-          dd.addOption(value, label);
-        }
-        dd.setValue(status.client).onChange((value) =>
-          this.wt.setAgentBridgeClient(value as AgentBridgeClient)
-        );
-      })
       .addButton((button) =>
         button
           .setButtonText("复制")
           .setCta()
-          .onClick(() => this.wt.copyAgentBridgeCommand())
-      )
-      .addButton((button) =>
-        button
-          .setButtonText("换新口令")
-          .onClick(() => {
-            void this.wt.regenerateAgentBridgeToken();
-          })
-      );
-
-    new Setting(el)
-      .setName("每轮的快捷命令")
-      .setDesc(
-        "批注聊起来以后，一直在同一个对话里聊，Agent 记得这本书和聊过的事，也省 token。装上这个命令，每轮你回完批注，在那个对话里敲 /pizhu 就好，不用再复制指令。用的是上面选的 Agent；不是 Claude Code / Gemini CLI 的，复制的是那段话，存成快捷短语。"
-      )
-      .setClass("wt-setting-stacked")
-      .addButton((button) =>
-        button.setButtonText("复制").onClick(() => this.wt.copyAgentReplyCommand())
+          .onClick(() => this.wt.copyAgentReplyCommand())
       );
   }
 
@@ -514,9 +439,9 @@ export class WritingToolkitSettingTab extends PluginSettingTab {
               );
           });
 
-          // 本机批注工具只在电脑上有：手机上整张卡不出现
-          if (this.wt.agentBridgeStatus().available) {
-            this.group("Agent 连接", section, (el) => this.buildAgentBridgeSettings(el));
+          // 快捷命令要在终端里装：手机上整张卡不出现
+          if (Platform.isDesktopApp) {
+            this.group("Agent 快捷命令", section, (el) => this.buildReplyCommandSettings(el));
           }
         },
       },

@@ -10,7 +10,6 @@ const path = require("path");
 const H = require("./_harness");
 
 const MODULE_FILES = {
-  "agentBridgeModule.ts": "agent-bridge",
   "calendarModule.ts": "calendar",
   "chapterStatusModule.ts": "chapter-status",
   "commentsModule.ts": "comments",
@@ -101,34 +100,32 @@ function main() {
     ])
   );
 
-  // 1. 16 个模块 id 与文件一一对应，无重复。
+  // 1. 15 个模块 id 与文件一一对应，无重复。
   const ids = Object.entries(MODULE_FILES).map(([file, id]) => {
     const defined = new RegExp(`id:\\s*"${id.replace(/\./g, "\\.")}"`).test(sources[file]);
     return defined ? id : null;
   });
   r.check(
-    "16 个 Feature Module 文件都声明了约定的模块 id",
-    featureFiles.length === 16 && ids.every(Boolean)
+    "15 个 Feature Module 文件都声明了约定的模块 id",
+    featureFiles.length === 15 && ids.every(Boolean)
   );
   r.check(
     "模块 id 无重复且集合稳定",
-    new Set(ids).size === 16 && sameSet(ids, Object.values(MODULE_FILES))
+    new Set(ids).size === 15 && sameSet(ids, Object.values(MODULE_FILES))
   );
 
-  // 2. 只有 snapshots.ui → snapshots.core、agent-bridge → comments 两处依赖。
+  // 2. 只有 snapshots.ui → snapshots.core 一处依赖（agent-bridge 2026-10-27 随 MCP 去掉）。
   const withDepends = Object.entries(sources)
     .filter(([, source]) => /dependsOn:/.test(source))
     .sort(([a], [b]) => a.localeCompare(b));
   r.check(
-    "只有 snapshots.ui（→ snapshots.core）与 agent-bridge（→ comments）声明依赖",
-    withDepends.length === 2 &&
-      withDepends[0][0] === "agentBridgeModule.ts" &&
-      /dependsOn:\s*\["comments"\]/.test(withDepends[0][1]) &&
-      withDepends[1][0] === "snapshotUiModule.ts" &&
-      /dependsOn:\s*\["snapshots\.core"\]/.test(withDepends[1][1])
+    "只有 snapshots.ui（→ snapshots.core）声明依赖",
+    withDepends.length === 1 &&
+      withDepends[0][0] === "snapshotUiModule.ts" &&
+      /dependsOn:\s*\["snapshots\.core"\]/.test(withDepends[0][1])
   );
 
-  // 3. main.ts 恰好创建并激活 16 个模块。
+  // 3. main.ts 恰好创建并激活 15 个模块。
   const mainSource = readFile("src/main.ts");
   const factoryCalls = (mainSource.match(/create[A-Za-z]+Module\s*\(/g) || []).length;
   const activateBlock = mainSource.slice(
@@ -137,8 +134,8 @@ function main() {
   );
   const activated = (activateBlock.match(/this\.[A-Za-z]+Module,/g) || []).length;
   r.check(
-    "main.ts 创建并激活恰好 16 个模块",
-    factoryCalls === 16 && activated === 16,
+    "main.ts 创建并激活恰好 15 个模块",
+    factoryCalls === 15 && activated === 15,
     "factories=" + factoryCalls + ", activated=" + activated
   );
 

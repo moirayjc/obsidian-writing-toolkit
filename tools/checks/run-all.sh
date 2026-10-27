@@ -35,7 +35,7 @@ CHECKS=(
   "check-anchor-tracking.js:批注位置跟踪（作者改正文）"
   "check-comment-panel.js:批注面板（标签 / 列表 / 详情）"
   "check-comment-margin.js:批注页边对话卡"
-  "check-agent-tools.js:修改建议 + 本机批注工具（MCP）"
+  "check-comment-suggestions.js:修改建议、采纳与给 Agent 的指令"
   "check-cnote-contrast.js:批注实心序号对比度"
   "check-sidecar-location.js:伴随数据存放位置"
   "check-onload.js:onload 体量守卫"

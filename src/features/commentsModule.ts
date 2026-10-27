@@ -30,17 +30,8 @@ import {
   restoreTamperedComments,
   sidecarPathFor,
   suggestionTarget,
-  type AgentChannel,
   type CommentFileData,
 } from "../comments";
-import {
-  AgentToolError,
-  buildAgentComment,
-  buildAgentReply,
-  describeComment,
-  normalizeAgentPath,
-  type AgentToolsPort,
-} from "../agentTools";
 import {
   anchorReplaceEffect,
   buildCommentExtensions,
@@ -120,8 +111,6 @@ export interface CommentsOperations extends CommentPanelHost {
   buildDiagnosticReport(): string;
   flush(): Promise<void>;
   subscribe(listener: (change: CommentsChange) => void): () => void;
-  /** 本机批注工具（MCP）落到这里读写批注。 */
-  readonly agentTools: AgentToolsPort;
 }
 
 export interface CommentsModule extends FeatureModule {
@@ -142,8 +131,6 @@ export interface CommentsModuleOptions {
    * （批注文件不随同步时，手机上写的批注会孤立在手机里）。为真时不画批注痕迹、不给添加入口。
    */
   isMobile?(): boolean;
-  /** 复制给 Agent 的指令走哪条路：本机批注工具开着就用工具，否则直接写批注文件。 */
-  agentChannel?(): AgentChannel;
 }
 
 type CommentPanelFactory = (
@@ -640,113 +627,6 @@ export function createCommentsModule(
     );
   }
 
-  /* ---------- 本机批注工具（MCP）的读写端口 ---------- */
-
-  function agentDocPath(raw: unknown): string {
-    const runtime = requireRuntime();
-    if (!runtime.services.settings.get().commentsEnabled) {
-      throw new AgentToolError("作者关掉了批注功能（设置 → 批注），现在不能读写批注。");
-    }
-    const adapter = runtime.app.vault.adapter as { getBasePath?: () => string } | undefined;
-    const path = normalizeAgentPath(raw, adapter?.getBasePath?.() ?? null);
-    if (isSidecarPath(path) || isInternalPath(path)) {
-      throw new AgentToolError("path 要给正文文档本身，不是批注文件或插件的内部文件。");
-    }
-    const file = runtime.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile) || file.extension.toLowerCase() !== "md") {
-      throw new AgentToolError(`库里没有「${path}」这篇文档。请给出库内相对路径，比如「作品/正文/第3章.md」。`);
-    }
-    return path;
-  }
-
-  async function agentDocText(path: string): Promise<string> {
-    const text = await readDocTextForLocate(path);
-    if (text === null) throw new AgentToolError(`读不到「${path}」的正文。`);
-    return text;
-  }
-
-  async function agentSave(
-    path: string,
-    mutator: (list: WtComment[]) => WtComment[]
-  ): Promise<void> {
-    const ok = await mutateComments(path, mutator);
-    if (!ok) throw new AgentToolError("保存批注失败，请稍后再试一次。");
-  }
-
-  const agentTools: AgentToolsPort = {
-    async list(input) {
-      assertAcceptingCalls();
-      const runtime = requireRuntime();
-      if (input.path === undefined) {
-        if (!runtime.services.settings.get().commentsEnabled) {
-          throw new AgentToolError("作者关掉了批注功能（设置 → 批注），现在不能读写批注。");
-        }
-        const docs = (await runtime.store.listCommentDocs?.()) ?? [];
-        const documents = [];
-        for (const docPath of docs) {
-          const list = await runtime.store.load(docPath);
-          if (list.length === 0) continue;
-          documents.push({
-            path: docPath,
-            comments: list.length,
-            yourTurn: list.filter((c) => commentTurn(c) === "agent").length,
-          });
-        }
-        return { documents };
-      }
-      const path = agentDocPath(input.path);
-      const all = await runtime.store.reload(path);
-      const list = input.onlyYourTurn
-        ? all.filter((c) => commentTurn(c) === "agent")
-        : all;
-      const docText = await readDocTextForLocate(path);
-      return {
-        path,
-        comments: list.map((comment) => describeComment(docText, comment)),
-        rejected: rejectedOf(path),
-      };
-    },
-    async create(input) {
-      assertAcceptingCalls();
-      const runtime = requireRuntime();
-      const path = agentDocPath(input.path);
-      const docText = await agentDocText(path);
-      // 先按最新的盘上内容校验一次，错误原样返回给 Agent；写入时再按写入那一刻的列表编号
-      const draft = buildAgentComment(docText, await runtime.store.reload(path), input);
-      let id = draft.id;
-      await agentSave(path, (list) => {
-        id = nextCommentId(list);
-        return [...list, { ...draft, id }];
-      });
-      return { ok: true, id, message: `已发起第 ${id} 条批注` };
-    },
-    async reply(input) {
-      assertAcceptingCalls();
-      const runtime = requireRuntime();
-      const path = agentDocPath(input.path);
-      const docText = await readDocTextForLocate(path);
-      const list = await runtime.store.reload(path);
-      const message = buildAgentReply(
-        docText,
-        list.find((c) => c.id === input.id),
-        input
-      );
-      let appended = false;
-      await agentSave(path, (fresh) =>
-        fresh.map((item) => {
-          // 写盘前重读过：这一刻仍轮到 Agent 才追加，免得连发两条
-          if (item.id !== input.id || commentTurn(item) !== "agent") return item;
-          appended = true;
-          return { ...item, messages: [...item.messages, message] };
-        })
-      );
-      if (!appended) {
-        throw new AgentToolError(`第 ${input.id} 条刚刚变了（被结案或已经回复过），先用 list_comments 再看一次。`);
-      }
-      return { ok: true, id: input.id, message: `已回复第 ${input.id} 条批注` };
-    },
-  };
-
   /** 编辑作者自己的最后一条消息；Agent 已回复（最后一条不是作者）时不能改。 */
   function openCommentEditor(path: string, comment: WtComment): void {
     const runtime = requireRuntime();
@@ -1181,14 +1061,10 @@ export function createCommentsModule(
 
   function copyReviewPrompt(docPath?: string): void {
     copyPrompt(docPath, (path, list) => ({
-      text: buildReviewPrompt(
-        path,
-        {
-          open: list.length,
-          rejected: rejectedOf(path).length,
-        },
-        options.agentChannel?.() ?? "file"
-      ),
+      text: buildReviewPrompt(path, {
+        open: list.length,
+        rejected: rejectedOf(path).length,
+      }),
       done: "已复制批注指令：发给 Agent，它会通读全文、把意见写成批注",
     }));
   }
@@ -1204,7 +1080,7 @@ export function createCommentsModule(
         return null;
       }
       return {
-        text: buildReplyPrompt(path, waiting, options.agentChannel?.() ?? "file"),
+        text: buildReplyPrompt(path, waiting),
         done: `已复制回复指令（${waiting.length} 条等 Agent）：发到和它聊批注的那个对话里，它会接着回`,
       };
     });
@@ -1527,7 +1403,6 @@ export function createCommentsModule(
           assertAcceptingCalls();
           copyText(text);
         },
-        agentTools,
         copyReviewPrompt(docPath) {
           assertAcceptingCalls();
           copyReviewPrompt(docPath);

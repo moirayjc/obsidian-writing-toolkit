@@ -689,11 +689,6 @@ export function locateAll(
 
 /* ---------- 修改建议 ---------- */
 
-/** 正文里某段文字的所有出现位置（批注工具校验「逐字存在且只出现一次」用）。 */
-export function findOccurrences(docText: string, needle: string): number[] {
-  return findAll(docText, needle);
-}
-
 /**
  * 最新一条带建议的消息下标；没有返回 -1。
  * 只有它能采纳，更早的建议算「已被新建议取代」。
@@ -844,7 +839,7 @@ const SIDECAR_HELP_HEADER = [
   "- Agent：第一点",
   "  第二点",
   "",
-  "格式约定（能用「写作工具箱」的批注工具 / MCP 服务 writing-toolkit 时，请改用工具，不要直接编辑本文件）：",
+  "格式约定：",
   "1. 发起批注：在文件末尾（「## 已否决」之前）新增「### 批注 N」（N 取现有最大编号 + 1），依次写「- 发起：Agent」「- 原文：……」「- 段落：……」「- 位置：第 X 段 · 约第 Y 行」「- 创建：YYYY-MM-DD HH:mm」「- Agent：你想说的」。「原文」必须从源文档逐字复制，取一句里有区分度的短片段；「段落」照抄原文所在的整段。同一处已有批注时，在那条里追加消息，不要新开；不要重复提出「已否决」里的意见。",
   "2. 找位置：先在源文档里找「现文」（作者改正文时插件会自动写回），没有现文或找不到再找「原文」。都找不到就在回复里说明，绝不要改写「原文」「段落」「现文」去指向别的句子。有「- 原文已删除：是」的，说明作者已经删掉了那句，按「段落」理解上下文。",
   "3. 回复：只回复最后一条消息是「作者」的批注，在该条末尾追加一行「- Agent：……」。不要修改或删除任何已有消息，不要删除批注条目，不要改「已否决」。",
@@ -1211,35 +1206,26 @@ export function parseCommentFile(text: string): WtComment[] {
 
 /* ---------- 给 Agent 的现成指令 ---------- */
 
-/**
- * Agent 怎么写批注：tools = 通过插件在本机提供的批注工具（MCP）；
- * file = 直接编辑批注文件（没开批注工具、或 Agent 接不了 MCP 时）。
- */
-export type AgentChannel = "tools" | "file";
-
-/** 本机批注工具在 Agent 那边登记的服务名（连接命令与指令里共用）。 */
-export const AGENT_TOOLS_SERVER_NAME = "writing-toolkit";
-
 /** 设置页「每轮的快捷命令」装进 Agent 的自定义命令名：在原来的对话里敲 /pizhu */
 export const REPLY_COMMAND_NAME = "pizhu";
 
 /**
  * 两份指令的写法（2026-10-23 作者试用后调整）：先说想和 Agent 聊什么，规矩压到最后一小段。
  * 规矩写多了，Agent 会把批注当成一份照章办事的作业，只剩客观、机械的挑错；
- * 作者要的是有温度的共创者。格式上的硬要求交给工具当场校验（工具连接）或批注文件抬头（直接写文件），
- * 这里只点一句。修改建议是可选的：大多数批注说感受和想法就够了。
+ * 作者要的是有温度的共创者。格式上的硬要求交给批注文件开头的说明，这里只点一句。
+ * 修改建议是可选的：大多数批注说感受和想法就够了。
+ * （2026-10-27 起去掉了本机批注工具（MCP），Agent 一律直接读写批注文件。）
  */
-const TOOLS_NOTE = `用「写作工具箱」的批注工具（MCP 服务 ${AGENT_TOOLS_SERVER_NAME}）：先 list_comments 看看已有的讨论，同一处就接着那条聊，我否决过的就别再提了；用 create_comment 留新批注，quote 从正文原样复制，工具不认的话会告诉你怎么调。没有这些工具的话先停下来告诉我，别直接改批注文件或正文。`;
-
-const SUGGESTION_NOTE_TOOLS =
-  "真想到了具体的写法，就在批注里附一个 suggestion（original 是要换掉的原文，原样复制；replacement 是你的写法），我来决定用不用；不想改的地方就只聊，不用硬给方案";
-
-const SUGGESTION_NOTE_FILE =
+const SUGGESTION_NOTE =
   "真想到了具体的写法，就在你那条消息下面跟两行「- 建议原句：……」（原样复制要换掉的原文，省略就是这条批注圈住的那句）和「- 建议改为：……」，我来决定用不用；不想改的地方就只聊，不用硬给方案";
 
 /** 两份指令共用的那段「想和你聊什么」 */
 const REVIEW_INVITATION =
   `不用拘着，就像一位真正读进去了的朋友、也是懂行的编辑那样，把读的时候冒出来的念头留在正文旁边：被打动的地方、读着出戏的地方、人物让你在意的地方、你好奇的、你不同意的，都可以说；可以提问，可以夸，可以跟我争。用你自己的语气，像聊天一样就好。`;
+
+/** 回复批注时共用的规矩：只追加，不改不删，不碰正文。 */
+const REPLY_RULES =
+  "在这几条末尾各加一行「- Agent：……」回复；附写法就在下面跟「- 建议原句」「- 建议改为」两行。已有的消息和条目请不要改、不要删；找位置先看「现文」再看「原文」，找不到就跟我说，别把它们改去指向别的句子";
 
 /**
  * 「复制批注指令」：请 Agent 读全文、在正文旁边留批注。
@@ -1247,8 +1233,7 @@ const REVIEW_INVITATION =
  */
 export function buildReviewPrompt(
   docPath: string,
-  counts?: { open: number; rejected: number },
-  channel: AgentChannel = "file"
+  counts?: { open: number; rejected: number }
 ): string {
   const base = docBaseName(docPath).replace(/\.md$/i, "");
   const existing =
@@ -1258,24 +1243,12 @@ export function buildReviewPrompt(
         }，先看一眼再动笔。`
       : "";
   const closing = `批注留完以后，回到这边跟我聊聊整篇给你的感觉，还有你最想和我讨论的一两件事。`;
-  if (channel === "tools") {
-    return [
-      `想请你读一读《${base}》（库内路径：${docPath}）。`,
-      ``,
-      REVIEW_INVITATION,
-      `${SUGGESTION_NOTE_TOOLS}。`,
-      ``,
-      closing,
-      ``,
-      `（${existing}${TOOLS_NOTE}之后我在批注里回了你，会在这个对话里说一声（也可能是敲 /${REPLY_COMMAND_NAME}），到时用 list_comments 带 only_your_turn: true 只看轮到你的那几条，接着聊就好。）`,
-    ].join("\n");
-  }
   const sidecar = sidecarPathFor(docPath);
   return [
     `想请你读一读《${base}》。`,
     ``,
     REVIEW_INVITATION,
-    `${SUGGESTION_NOTE_FILE}。`,
+    `${SUGGESTION_NOTE}。`,
     ``,
     closing,
     ``,
@@ -1286,27 +1259,45 @@ export function buildReviewPrompt(
 /**
  * 「复制回复指令」：请 Agent 接着聊轮到它的那些批注。
  * 默认发到和它聊批注的同一个对话里（2026-10-24 作者确认：新开对话要重读一遍，费 token 也丢了默契），
- * 所以只点明是哪几条、怎么只读这几条，不再把邀请和规矩整段重复一遍。
+ * 所以只点明是哪几条，不再把邀请和规矩整段重复一遍。
  */
 export function buildReplyPrompt(
   docPath: string,
-  waitingIds: readonly number[],
-  channel: AgentChannel = "file"
+  waitingIds: readonly number[]
 ): string {
   const base = docBaseName(docPath).replace(/\.md$/i, "");
   const ids = waitingIds.map((id) => `#${id}`).join("、");
-  const invitation = `我在《${base}》的批注里回你了：${ids}，共 ${waitingIds.length} 条在等你，接着聊吧。想法不一样就直说、讲讲理由，也可以反问我；像聊天一样回就好。`;
-  if (channel === "tools") {
-    return [
-      invitation,
-      ``,
-      `（库内路径：${docPath}。用 list_comments 带 only_your_turn: true 只看这几条，reply_comment 回复，附写法就带上 suggestion；没有这些工具的话先停下来告诉我，别直接改批注文件或正文。）`,
-    ].join("\n");
-  }
   const sidecar = sidecarPathFor(docPath);
   return [
-    invitation,
+    `我在《${base}》的批注里回你了：${ids}，共 ${waitingIds.length} 条在等你，接着聊吧。想法不一样就直说、讲讲理由，也可以反问我；像聊天一样回就好。`,
     ``,
-    `（批注在「${sidecar}」：在这几条末尾各加一行「- Agent：……」回复；附写法就在下面跟「- 建议原句」「- 建议改为」两行。已有的消息和条目请不要改、不要删；找位置先看「现文」再看「原文」，找不到就跟我说，别把它们改去指向别的句子；请不要直接改《${base}》。）`,
+    `（批注在「${sidecar}」：${REPLY_RULES}；请不要直接改《${base}》。）`,
   ].join("\n");
+}
+
+/* ---------- 每轮接着聊的快捷命令（/pizhu） ---------- */
+
+/**
+ * 命令的正文：同一个对话里，Agent 已经知道这本书和之前聊过什么，这里只提醒它去看新回复。
+ * 命令是一次装好、每轮复用的，写不进具体文档和编号，所以让它自己去批注目录里找
+ * 「最后一条是作者」的那几条。
+ */
+export function buildReplyCommandPrompt(): string {
+  const folder = SIDECAR_FOLDERS.visible.comments;
+  return [
+    `我在批注里回你了，去看看我说了什么，接着聊吧。想法不一样就直说、讲讲理由，也可以反问我；像聊天一样回就好，读的时候有新冒出来的想法也可以另开一条。`,
+    ``,
+    `（批注文件在库里的「${folder}/」下，以「.批注.md」结尾；最后一条消息是「- 作者：」的那几条就是在等你。${REPLY_RULES}；请不要直接改正文。）`,
+  ].join("\n");
+}
+
+/**
+ * 「每轮的快捷命令」：只复制那段话，一种通用写法（2026-10-27 作者要求：不用选 Agent，点一下就复制）。
+ * 作者在自己的 Agent 里存成快捷短语或自定义命令（建议叫 /pizhu）；插件不替用户写库外的文件。
+ */
+export function buildReplyCommand(): { text: string; done: string } {
+  return {
+    text: buildReplyCommandPrompt(),
+    done: `已复制：存成你在 Agent 里的快捷短语或自定义命令（比如叫 /${REPLY_COMMAND_NAME}），以后每轮在原来的对话里发一下就好`,
+  };
 }

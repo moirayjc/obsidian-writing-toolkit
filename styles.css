@@ -7024,6 +7024,18 @@ body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) .setting-item
   border-color: transparent;
   background: var(--wt-hover);
 }
+/* 主按钮（setCta / setWarning）：上面的透明底优先级更高，会把它变成「白底白字」、
+   悬停才看得见；和 .wt-btn.is-primary 一样用实心暗蓝 */
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) .setting-item-control button:is(.mod-cta, .mod-warning) {
+  border-color: var(--wt-action);
+  background: var(--wt-action);
+  color: var(--wt-action-ink);
+}
+body.wt-theme-contrast :is(.wt-wb, .wt-sidebar, .wt-settings-page) .setting-item-control button:is(.mod-cta, .mod-warning):hover {
+  border-color: var(--wt-action-hover);
+  background: var(--wt-action-hover);
+  color: var(--wt-action-ink);
+}
 
 /* 输入框 / 下拉：白底 + 1px 发丝边；焦点用暗蓝细环（Notion 的焦点语言） */
 body.wt-theme-contrast :is(.wt-home, .wt-wb, .wt-sidebar, .wt-settings-page) :is(input[type="text"], input[type="search"], input[type="number"], input[type="password"], select, .dropdown, .combobox-button) {

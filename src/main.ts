@@ -15,9 +15,8 @@ import {
   DEFAULT_SETTINGS,
   WritingToolkitSettings,
   WritingToolkitSettingTab,
-  type AgentBridgeClient,
-  type AgentBridgeSettingsStatus,
 } from "./settings";
+import { buildReplyCommand } from "./comments";
 import { getElectron } from "./electron";
 import { PluginHost } from "./host/pluginHost";
 import {
@@ -62,10 +61,6 @@ import {
   createCommentsModule,
   type CommentsModule,
 } from "./features/commentsModule";
-import {
-  createAgentBridgeModule,
-  type AgentBridgeModule,
-} from "./features/agentBridgeModule";
 import {
   createPomodoroModule,
   LOCKED_NOTICE,
@@ -202,6 +197,9 @@ interface DailyPomodoro {
   words: number;
 }
 
+/** 已去掉的本机批注工具（MCP）当年存设置用的键，启动时清掉。 */
+const LEGACY_AGENT_BRIDGE_KEY = "writing-toolkit-agent-bridge";
+
 export default class WritingToolkitPlugin extends Plugin {
   settings!: WritingToolkitSettings;
   dailyHistory: DailyHistory = {};
@@ -254,7 +252,6 @@ export default class WritingToolkitPlugin extends Plugin {
   /** 阶段 4：批注存储、装饰、文件事件、侧栏面板与管理操作。 */
   private commentsModule!: CommentsModule;
   /** 本机批注工具（给 Agent 用的 MCP）：开关、端口、口令与监听。 */
-  private agentBridgeModule!: AgentBridgeModule;
   /** 阶段 4：计时器、番茄历史、自动快照与全部用户动作。 */
   private pomodoroModule!: PomodoroModule;
   /** 阶段 4：写作日历的数据绑定、设置热更新和实例生命周期。 */
@@ -572,7 +569,7 @@ export default class WritingToolkitPlugin extends Plugin {
       isMobile: () => this.commentsOffOnThisDevice(),
     });
     this.commentsModule = this.buildCommentsModule();
-    this.agentBridgeModule = this.buildAgentBridgeModule();
+    this.clearLegacyAgentBridge();
     this.sidecarLocationModule = createSidecarLocationModule();
     this.pomodoroModule = this.buildPomodoroModule();
     this.calendarModule = createCalendarModule({
@@ -596,7 +593,6 @@ export default class WritingToolkitPlugin extends Plugin {
       this.hemingwayModule,
       this.formatToolbarModule,
       this.commentsModule,
-      this.agentBridgeModule,
       this.snapshotModule,
       this.snapshotUiModule,
       this.outlineModule,
@@ -1669,17 +1665,6 @@ export default class WritingToolkitPlugin extends Plugin {
         this.formatToolbarModule.allowsPath(path),
       onChanged: () => this.refreshCommentBadges(),
       isMobile: () => this.commentsOffOnThisDevice(),
-      // 本机批注工具在运行就让 Agent 走工具，否则直接写批注文件
-      agentChannel: () =>
-        this.agentBridgeModule?.operations.status().running ? "tools" : "file",
-    });
-  }
-
-  private buildAgentBridgeModule(): AgentBridgeModule {
-    return createAgentBridgeModule({
-      isDesktop: () => Platform.isDesktopApp,
-      tools: () => this.commentsModule.operations.agentTools,
-      version: this.manifest.version,
     });
   }
 
@@ -1688,42 +1673,16 @@ export default class WritingToolkitPlugin extends Plugin {
     return Platform.isMobile && !this.settings.commentsOnMobile;
   }
 
-  /* ---------- 本机批注工具：设置页端口 ---------- */
-
-  agentBridgeStatus(): AgentBridgeSettingsStatus {
-    return this.agentBridgeModule.operations.status();
-  }
-
-  async setAgentBridgeEnabled(on: boolean): Promise<void> {
-    await this.agentBridgeModule.operations.setEnabled(on);
-    this.settingTab.display();
-  }
-
-  async setAgentBridgePort(port: number): Promise<void> {
-    try {
-      await this.agentBridgeModule.operations.setPort(port);
-    } catch (error) {
-      new Notice(error instanceof Error ? error.message : String(error));
-    }
-    this.settingTab.display();
-  }
-
-  async regenerateAgentBridgeToken(): Promise<void> {
-    await this.agentBridgeModule.operations.regenerateToken();
-    new Notice("已换新口令：旧的配置失效了，请在 Agent 那边重新配一次");
-    this.settingTab.display();
-  }
-
-  setAgentBridgeClient(client: AgentBridgeClient): void {
-    this.agentBridgeModule.operations.setClient(client);
-  }
-
-  copyAgentBridgeCommand(): void {
-    this.copyWithNotice(this.agentBridgeModule.operations.connectionConfig());
-  }
+  /* ---------- 每轮的快捷命令（/pizhu） ---------- */
 
   copyAgentReplyCommand(): void {
-    this.copyWithNotice(this.agentBridgeModule.operations.replyCommand());
+    this.copyWithNotice(buildReplyCommand());
+  }
+
+  /** 2026-10-27 去掉了本机批注工具（MCP）：清掉它存在这台电脑上的开关 / 端口 / 口令。 */
+  private clearLegacyAgentBridge(): void {
+    if (this.app.loadLocalStorage(LEGACY_AGENT_BRIDGE_KEY) === null) return;
+    this.app.saveLocalStorage(LEGACY_AGENT_BRIDGE_KEY, null);
   }
 
   private copyWithNotice(config: { text: string; done: string }): void {

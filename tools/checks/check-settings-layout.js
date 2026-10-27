@@ -25,7 +25,7 @@ const EXPECTED = [
   },
   {
     tab: "批注",
-    groups: ["批注", "Agent 连接"],
+    groups: ["批注", "Agent 快捷命令"],
     settings: ["批注", "批注按钮全库可用", "在手机和平板上使用批注"],
   },
   {
@@ -51,8 +51,8 @@ const EXPECTED = [
   },
 ];
 
-/** Agent 连接卡里的项写在 buildAgentBridgeSettings 里，由「批注」页的 Agent 连接卡调用 */
-const BRIDGE_SETTINGS = ["允许 Agent 通过批注工具连接（仅本机）", "端口", "连接到 Agent", "每轮的快捷命令"];
+/** Agent 快捷命令卡里的项写在 buildReplyCommandSettings 里，由「批注」页的同名卡调用 */
+const BRIDGE_SETTINGS = ["每轮的快捷命令"];
 
 function names(block, pattern) {
   return [...block.matchAll(pattern)].map((m) => m[1]);
@@ -95,20 +95,26 @@ function main() {
   });
 
   const helper = source.slice(
-    source.indexOf("private buildAgentBridgeSettings"),
+    source.indexOf("private buildReplyCommandSettings"),
     source.indexOf("private card(")
   );
   const bridge = names(helper, /\.setName\("([^"]+)"\)/g);
   r.check(
-    "Agent 连接卡：开关、端口、连接到 Agent、每轮的快捷命令，且只在「批注」页调用一次",
+    "Agent 快捷命令卡：只有「每轮的快捷命令」，且只在「批注」页调用一次",
     bridge.join("/") === BRIDGE_SETTINGS.join("/") &&
-      (blocks[2].match(/buildAgentBridgeSettings\(/g) || []).length === 1 &&
-      (body.match(/buildAgentBridgeSettings\(/g) || []).length === 1,
+      (blocks[2].match(/buildReplyCommandSettings\(/g) || []).length === 1 &&
+      (body.match(/buildReplyCommandSettings\(/g) || []).length === 1,
     bridge.join("/")
   );
   r.check(
-    "Agent 连接卡只在电脑上出现（按 available 判断）",
-    /if \(this\.wt\.agentBridgeStatus\(\)\.available\)\s*\{\s*this\.group\("Agent 连接"/.test(blocks[2])
+    "Agent 快捷命令卡只在电脑上出现",
+    /if \(Platform\.isDesktopApp\)\s*\{\s*this\.group\("Agent 快捷命令"/.test(blocks[2])
+  );
+
+  const css = fs.readFileSync(path.join(H.ROOT, "styles.css"), "utf8");
+  r.check(
+    "高对比度配色下设置页主按钮是实心暗蓝（不被透明底盖成白底白字）",
+    /body\.wt-theme-contrast :is\(\.wt-wb, \.wt-sidebar, \.wt-settings-page\) \.setting-item-control button:is\(\.mod-cta, \.mod-warning\) \{\s*border-color: var\(--wt-action\);\s*background: var\(--wt-action\);\s*color: var\(--wt-action-ink\);/.test(css)
   );
 
   const counts = new Map();
